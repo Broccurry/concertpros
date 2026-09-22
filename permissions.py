@@ -207,13 +207,15 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
     if group_ids:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT hold_group_id, id, show_date, status, version FROM events "
-                "WHERE hold_group_id = ANY(%(gids)s) ORDER BY show_date",
+                "SELECT e.hold_group_id, e.id, e.show_date, e.status, e.version, e.venue_id, v.name AS venue "
+                "FROM events e JOIN venues v ON v.id = e.venue_id "
+                "WHERE e.hold_group_id = ANY(%(gids)s) ORDER BY e.show_date",
                 {"gids": list(group_ids)},
             )
-            for gid, eid, show_date, status, version in cur.fetchall():
+            for gid, eid, show_date, status, version, venue_id, venue in cur.fetchall():
                 members_by_group.setdefault(gid, []).append(
-                    {"id": eid, "show_date": show_date, "status": status, "version": version})
+                    {"id": eid, "show_date": show_date, "status": status, "version": version,
+                     "venue_id": venue_id, "venue": venue})
         for gid, members in members_by_group.items():
             anchor_by_group[gid] = min(m["id"] for m in members)
 

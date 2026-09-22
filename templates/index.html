@@ -280,7 +280,8 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
                      text-decoration:underline;cursor:pointer;flex:1 1 220px;text-align:left}
 .openslots-row select{width:auto;flex:1 1 140px;font-size:12px;padding:4px 6px}
 .openslots-row input[type=time]{flex:0 0 100px;font-size:12px;padding:4px 6px}
-.holddaterow{display:grid;grid-template-columns:110px 1fr 32px;gap:8px;align-items:center;margin-bottom:6px}
+.holddaterow{display:grid;grid-template-columns:1fr 130px 32px;gap:8px;align-items:center;margin-bottom:6px}
+.holddaterow>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
 
 .msgthread{display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:10px}
 .msgrow{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px}
@@ -666,7 +667,7 @@ function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace
 var store = {events:[], venues:[], roles:[], people:[], artists:[], visionNotes:[], maOffers:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:""};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
@@ -909,10 +910,57 @@ function openDay(ds, list){
 /* ============================== list view ============================= */
 function statusPill(ev){ return el("span","pill " + st(ev).cls, st(ev).label); }
 
+function searchShows(query){
+  // History search: every show ever, not just what venue/showDead filters
+  // currently allow through — a dead show never happened (excluded
+  // outright) and a band marked "can't do it" on a bill didn't actually
+  // play that show (excluded per-show, even if the show itself is fine).
+  var n = normName(query);
+  if(!n) return [];
+  return store.events.filter(function(ev){
+    if(ev.status === "dead") return false;
+    return (ev.artists||[]).some(function(a){ return !a.declined && normName(a.name).indexOf(n) >= 0; });
+  }).slice().sort(function(a,b){ return a.show_date < b.show_date ? 1 : a.show_date > b.show_date ? -1 : 0; });
+}
 function renderListView(){
   var host = document.getElementById("view-list");
   host.innerHTML = "";
-  var rows = visibleEvents();
+
+  var searchWrap = el("div","field"); searchWrap.style.marginBottom = "14px";
+  var searchInput = document.createElement("input");
+  searchInput.type = "search";
+  searchInput.placeholder = "Search shows by band name...";
+  searchInput.value = ui.listSearch || "";
+  searchInput.oninput = function(){ ui.listSearch = searchInput.value; renderListView(); };
+  searchWrap.appendChild(searchInput);
+  host.appendChild(searchWrap);
+
+  if((ui.listSearch||"").trim()){
+    var results = searchShows(ui.listSearch);
+    host.appendChild(el("h3","section", results.length + " show" + (results.length===1?"":"s") + ' matching "' + ui.listSearch.trim() + '"'));
+    if(!results.length){
+      host.appendChild(el("p","hint","No shows found — dead shows and bands marked “can't do it” are left out on purpose."));
+    } else {
+      var sw = el("div","tablewrap"), st = document.createElement("table");
+      var sh = document.createElement("thead"), shr = document.createElement("tr");
+      ["Date","Venue","Show","Status"].forEach(function(h){ shr.appendChild(el("th",null,h)); });
+      sh.appendChild(shr); st.appendChild(sh);
+      var stb = document.createElement("tbody");
+      results.forEach(function(ev){
+        var tr = document.createElement("tr");
+        tr.onclick = function(){ openEvent(ev.id); };
+        tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
+        tr.appendChild(el("td",null, ev.venue));
+        var td = el("td","title-cell"); td.appendChild(actsNodes(ev)); tr.appendChild(td);
+        var stc = document.createElement("td"); stc.appendChild(statusPill(ev)); tr.appendChild(stc);
+        stb.appendChild(tr);
+      });
+      st.appendChild(stb); sw.appendChild(st); host.appendChild(sw);
+    }
+    return;
+  }
+
+  var rows = visibleEvents().filter(function(ev){ return ev.status !== "complete"; });
   if(!rows.length){
     var e = el("div","empty");
     e.appendChild(el("h3",null,"No shows yet"));
@@ -960,7 +1008,10 @@ function renderListView(){
   t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
 
   if(canBook()){
-    var done = rows.filter(function(e){ return e.status === "complete"; });
+    // Complete-but-unsettled only — once the finals are filled in and
+    // marked settled, a show is done needing attention here and just
+    // lives on the calendar as history from then on.
+    var done = visibleEvents().filter(function(e){ return e.status === "complete" && !(e.settlement && e.settlement.settled); });
     if(done.length){
       host.appendChild(el("h3","section","Finals & payouts"));
       var w2 = el("div","tablewrap"), t2 = document.createElement("table");
@@ -1639,7 +1690,7 @@ function renderSheet(){
       var datesList = el("div","memberlist");
       members.forEach(function(m){
         var row = el("div","holddaterow");
-        row.appendChild(el("span",null, shortDate(m.show_date) + (m.id === draft.id ? " (this one)" : "")));
+        row.appendChild(el("span",null, shortDate(m.show_date) + " · " + m.venue + (m.id === draft.id ? " (this one)" : "")));
         row.appendChild(selectKV(STATUS_ORDER.map(function(k){ return {value:k, label:STATUS[k].label}; }), m.status,
           function(v){ updateHoldDateStatus(m.id, v, m.version); }));
         var del = el("button","rowdel","✕");
@@ -1665,9 +1716,17 @@ function renderSheet(){
     var addOneRow = el("div","actrow");
     var newDateInput = input("date", "", function(){});
     addOneRow.appendChild(newDateInput);
+    var newVenueSel = selectKV(store.venues.map(function(v){ return {value:v.id, label:v.name}; }),
+      draft.venue_id, function(){});
+    addOneRow.appendChild(newVenueSel);
     var addOneBtn = el("button","btn","+ Add date");
     addOneBtn.type = "button";
-    addOneBtn.onclick = async function(){ await addHoldDates([newDateInput.value]); };
+    addOneBtn.onclick = async function(){
+      // Venue is per-date, not shared — "1st hold at Frankies, 2nd hold
+      // at Cla-Zel" is two members of the same group at two rooms.
+      if(draftIsNew) await addHoldDates([newDateInput.value]);
+      else await addHoldDates([{date: newDateInput.value, venue_id: Number(newVenueSel.value)}]);
+    };
     addOneRow.appendChild(addOneBtn);
     datesField.appendChild(addOneRow);
 

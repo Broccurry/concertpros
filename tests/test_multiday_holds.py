@@ -24,6 +24,8 @@ class MultiDayHolds(unittest.TestCase):
         self.booker_id = cur.fetchone()[0]
         cur.execute("SELECT id FROM venues WHERE name = 'Frankies'")
         self.venue_id = cur.fetchone()[0]
+        cur.execute("SELECT id FROM venues WHERE name = 'Cla-Zel Theater'")
+        self.other_venue_id = cur.fetchone()[0]
         self.conn.commit()
 
         self.booker_email = self._email(self.booker_id)
@@ -139,6 +141,58 @@ class MultiDayHolds(unittest.TestCase):
         self.assertEqual(rem.status_code, 200, rem.get_json())
         mine = self._mine(client, event_id)
         self.assertEqual(len(mine["group_members"]), 2)
+
+    def test_a_hold_date_can_be_at_a_different_venue(self):
+        """"1st hold at Frankies, 2nd hold at Cla-Zel" — the same
+        prospective show held at two different rooms."""
+        client = self.app.test_client()
+        self._login(client)
+        r = client.post("/api/events", json={
+            "venue_id": self.venue_id, "acts": [self.artist_name], "show_date": "2027-12-01",
+        })
+        event_id = r.get_json()["id"]
+        self.event_ids = [event_id]
+
+        add = client.post(f"/api/events/{event_id}/hold_dates",
+                           json={"dates": [{"date": "2027-12-01", "venue_id": self.other_venue_id}]})
+        self.assertEqual(add.status_code, 201, add.get_json())
+        self.event_ids += add.get_json()["ids"]
+
+        events = client.get("/api/events").get_json()["events"]
+        second = next(e for e in events if e["id"] == add.get_json()["ids"][0])
+        self.assertEqual(second["venue_id"], self.other_venue_id)
+        first = next(e for e in events if e["id"] == event_id)
+        self.assertEqual(first["venue_id"], self.venue_id, "the original date's venue must be untouched")
+
+        mine = self._mine(client, event_id)
+        venues_in_group = {m["venue_id"] for m in mine["group_members"]}
+        self.assertEqual(venues_in_group, {self.venue_id, self.other_venue_id})
+
+    def test_a_hold_date_without_a_venue_defaults_to_the_anchors_venue(self):
+        client = self.app.test_client()
+        self._login(client)
+        r = client.post("/api/events", json={
+            "venue_id": self.venue_id, "acts": [self.artist_name], "show_date": "2027-12-01",
+        })
+        event_id = r.get_json()["id"]
+        self.event_ids = [event_id]
+        add = client.post(f"/api/events/{event_id}/hold_dates", json={"dates": ["2027-12-05"]})
+        self.event_ids += add.get_json()["ids"]
+        events = client.get("/api/events").get_json()["events"]
+        second = next(e for e in events if e["id"] == add.get_json()["ids"][0])
+        self.assertEqual(second["venue_id"], self.venue_id)
+
+    def test_adding_a_hold_date_with_an_unknown_venue_is_rejected(self):
+        client = self.app.test_client()
+        self._login(client)
+        r = client.post("/api/events", json={
+            "venue_id": self.venue_id, "acts": [self.artist_name], "show_date": "2027-12-01",
+        })
+        event_id = r.get_json()["id"]
+        self.event_ids = [event_id]
+        add = client.post(f"/api/events/{event_id}/hold_dates",
+                           json={"dates": [{"date": "2027-12-05", "venue_id": 999999}]})
+        self.assertEqual(add.status_code, 400)
 
     def test_cannot_remove_the_last_date(self):
         client = self.app.test_client()

@@ -745,35 +745,52 @@ def create_app():
         """Adds one or more candidate dates to this show's hold, creating
         the hold_group on first use if it wasn't already part of one.
         Each new date starts on the same status as the event you're
-        adding from — edit it individually afterward."""
+        adding from — edit it individually afterward. Each entry in
+        `dates` is either a plain date string (defaults to this event's
+        own venue) or {"date": ..., "venue_id": ...} — "1st hold at
+        Frankies, 2nd hold at Cla-Zel" is the same show held at two
+        different rooms on the same or different dates."""
         body = request.get_json(silent=True) or {}
         dates_raw = body.get("dates")
         if not isinstance(dates_raw, list) or not dates_raw:
             return jsonify(error="dates_required"), 400
-        dates = []
-        for d in dates_raw:
-            try:
-                dates.append(date.fromisoformat(d))
-            except (TypeError, ValueError):
-                return jsonify(error="invalid_date"), 400
 
         cur = g.db.cursor()
         cur.execute("SELECT hold_group_id, venue_id, status FROM events WHERE id = %s", (event_id,))
         row = cur.fetchone()
         if row is None:
             return jsonify(error="not_found"), 404
-        group_id, venue_id, status = row
+        group_id, default_venue_id, status = row
+
+        entries = []
+        for item in dates_raw:
+            if isinstance(item, dict):
+                raw_date, raw_venue = item.get("date"), item.get("venue_id")
+            else:
+                raw_date, raw_venue = item, None
+            try:
+                parsed_date = date.fromisoformat(raw_date)
+            except (TypeError, ValueError):
+                return jsonify(error="invalid_date"), 400
+            venue_id = default_venue_id
+            if raw_venue:
+                cur.execute("SELECT 1 FROM venues WHERE id = %s", (raw_venue,))
+                if cur.fetchone() is None:
+                    return jsonify(error="unknown_venue"), 400
+                venue_id = raw_venue
+            entries.append((parsed_date, venue_id))
+
         if group_id is None:
             cur.execute("INSERT INTO hold_groups DEFAULT VALUES RETURNING id")
             group_id = cur.fetchone()[0]
             cur.execute("UPDATE events SET hold_group_id = %s WHERE id = %s", (group_id, event_id))
 
         created_ids = []
-        for d in dates:
+        for parsed_date, venue_id in entries:
             cur.execute(
                 "INSERT INTO events (venue_id, show_date, status, hold_group_id, created_by) "
                 "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                (venue_id, d, status, group_id, g.viewer.id),
+                (venue_id, parsed_date, status, group_id, g.viewer.id),
             )
             created_ids.append(cur.fetchone()[0])
         audit.record(g.db, g.viewer, "event", event_id, "add_hold_dates", {"dates": dates_raw})
