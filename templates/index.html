@@ -60,6 +60,18 @@
   .staffRow .role{color:var(--ink-3);width:110px;flex:none}
   .staffRow button{border:0;background:none;color:#9a3b3b;cursor:pointer;font-size:13px;margin-left:auto}
 
+  #settlementPanel{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+                   padding:14px 16px;margin:-6px 0 16px}
+  #settlementPanel .row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  #settlementPanel .field{flex:1;min-width:120px}
+  #settlementPanel label{display:block;font-size:11px;color:var(--ink-3);margin-bottom:3px}
+  #settlementPanel input{width:100%;padding:7px 8px;border:1px solid var(--line);border-radius:6px;
+                          font-size:13.5px}
+  #settlementPanel .actions{display:flex;gap:8px;align-items:center}
+  #setSaveBtn{border:0;background:var(--accent);color:#fff;font-weight:600;border-radius:6px;
+              padding:8px 14px;font-size:13px;cursor:pointer}
+  #setError{color:#9a3b3b;font-size:12.5px}
+
   table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);
         border-radius:8px;overflow:hidden}
   th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);font-size:13.5px}
@@ -169,6 +181,39 @@
       <div class="field" style="flex:0">
         <button type="button" id="staffAddBtn">+ Assign</button>
       </div>
+    </div>
+  </div>
+
+  <div id="settlementPanel" style="display:none">
+    <div class="row">
+      <div class="field">
+        <label for="setTickets">Tickets sold</label>
+        <input id="setTickets" type="number" min="0">
+      </div>
+      <div class="field">
+        <label for="setGross">Gross</label>
+        <input id="setGross" type="number" step="0.01">
+      </div>
+      <div class="field">
+        <label for="setExpenses">Expenses</label>
+        <input id="setExpenses" type="number" step="0.01">
+      </div>
+      <div class="field">
+        <label for="setPayout">Artist payout</label>
+        <input id="setPayout" type="number" step="0.01">
+      </div>
+    </div>
+    <div class="row" style="align-items:center">
+      <div class="field" style="flex:0;white-space:nowrap">
+        <label style="font-weight:normal;display:flex;align-items:center;gap:6px">
+          <input id="setSettled" type="checkbox" style="width:auto"> Settled and paid
+        </label>
+      </div>
+      <div class="field" id="setNet" style="color:var(--ink-3);font-size:13px;flex:2"></div>
+    </div>
+    <div class="actions">
+      <button type="button" id="setSaveBtn">Save finals</button>
+      <span id="setError"></span>
     </div>
   </div>
 
@@ -408,6 +453,34 @@ function openEditForm(eventId) {
   document.getElementById("bookForm").style.display = "block";
   document.getElementById("staffPanel").style.display = "block";
   renderStaffList();
+
+  const showSettlement = e.status === "complete";
+  document.getElementById("settlementPanel").style.display = showSettlement ? "block" : "none";
+  if (showSettlement) {
+    const s = e.settlement || {};
+    document.getElementById("setTickets").value = s.tickets_sold ?? "";
+    document.getElementById("setGross").value = s.gross ?? "";
+    document.getElementById("setExpenses").value = s.expenses ?? "";
+    document.getElementById("setPayout").value = s.artist_payout ?? "";
+    document.getElementById("setSettled").checked = !!s.settled;
+    document.getElementById("setError").textContent = "";
+    updateNetDisplay();
+  }
+}
+
+function updateNetDisplay() {
+  const num = (id) => {
+    const v = document.getElementById(id).value;
+    return v === "" ? null : Number(v);
+  };
+  const gross = num("setGross"), expenses = num("setExpenses"), payout = num("setPayout");
+  const net = document.getElementById("setNet");
+  if (gross === null && expenses === null && payout === null) {
+    net.textContent = "";
+    return;
+  }
+  const total = (gross || 0) - (expenses || 0) - (payout || 0);
+  net.textContent = `Net to the room: $${total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (gross − expenses − artist payout)`;
 }
 
 function switchView(view) {
@@ -466,6 +539,7 @@ document.getElementById("bookBtn").addEventListener("click", () => {
   document.getElementById("bookForm").style.display = "block";
   document.getElementById("bookDate").valueAsDate = new Date();
   document.getElementById("staffPanel").style.display = "none";  // no event_id yet to assign against
+  document.getElementById("settlementPanel").style.display = "none";
 });
 
 document.getElementById("staffAddBtn").addEventListener("click", async () => {
@@ -483,6 +557,35 @@ document.getElementById("staffAddBtn").addEventListener("click", async () => {
     document.getElementById("bookError").textContent = body.error || "Could not assign that person.";
   }
 });
+document.getElementById("bookStatus").addEventListener("change", () => {
+  if (!editingId) return;  // a brand-new unsaved show has nothing to settle yet
+  const showSettlement = document.getElementById("bookStatus").value === "complete";
+  document.getElementById("settlementPanel").style.display = showSettlement ? "block" : "none";
+  if (showSettlement) updateNetDisplay();
+});
+
+["setGross", "setExpenses", "setPayout"].forEach(id => {
+  document.getElementById(id).addEventListener("input", updateNetDisplay);
+});
+
+document.getElementById("setSaveBtn").addEventListener("click", async () => {
+  if (!editingId) return;
+  const payload = {
+    tickets_sold: document.getElementById("setTickets").value,
+    gross: document.getElementById("setGross").value,
+    expenses: document.getElementById("setExpenses").value,
+    artist_payout: document.getElementById("setPayout").value,
+    settled: document.getElementById("setSettled").checked,
+  };
+  const {ok, body} = await api(`/api/events/${editingId}/settlement`, {method: "PUT", body: JSON.stringify(payload)});
+  if (ok) {
+    document.getElementById("setError").textContent = "";
+    await loadEvents();
+  } else {
+    document.getElementById("setError").textContent = body.error || "Could not save the finals.";
+  }
+});
+
 document.getElementById("bookCancel").addEventListener("click", () => {
   document.getElementById("bookForm").style.display = "none";
   document.getElementById("staffPanel").style.display = "none";
@@ -506,6 +609,7 @@ document.getElementById("bookForm").addEventListener("submit", async (e) => {
   if (ok) {
     document.getElementById("bookForm").style.display = "none";
     document.getElementById("staffPanel").style.display = "none";
+    document.getElementById("settlementPanel").style.display = "none";
     document.getElementById("bookForm").reset();
     document.getElementById("bookError").textContent = "";
     editingId = null;

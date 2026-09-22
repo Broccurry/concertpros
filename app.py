@@ -556,6 +556,85 @@ def create_app():
                      {"role_id": role_id, "person_id": person_id})
         return jsonify(ok=True)
 
+    @app.put("/api/events/<int:event_id>/settlement")
+    @require_booker
+    def upsert_settlement(event_id):
+        """One row per event (settlements.event_id is its own primary
+        key), so this is a plain upsert rather than separate create/update
+        endpoints — there's no meaningful 'doesn't exist yet' state a
+        caller needs to distinguish. Crew never reaches this at all
+        (require_booker), and never sees the result either — events_for's
+        crew branch doesn't join settlements in the first place."""
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+
+        cur.execute(
+            "SELECT tickets_sold, gross, expenses, artist_payout, settled, notes "
+            "FROM settlements WHERE event_id = %s",
+            (event_id,),
+        )
+        row = cur.fetchone()
+        before_cols = ["tickets_sold", "gross", "expenses", "artist_payout", "settled", "notes"]
+        # settled is NOT NULL DEFAULT FALSE on the table — default it the
+        # same way here for a first-ever save, or the INSERT below fails.
+        before = dict(zip(before_cols, row)) if row else {
+            "tickets_sold": None, "gross": None, "expenses": None,
+            "artist_payout": None, "settled": False, "notes": None,
+        }
+
+        body = request.get_json(silent=True) or {}
+        values = {}
+        if "tickets_sold" in body:
+            v = body["tickets_sold"]
+            if v in (None, ""):
+                values["tickets_sold"] = None
+            else:
+                try:
+                    values["tickets_sold"] = int(v)
+                except (TypeError, ValueError):
+                    return jsonify(error="invalid_tickets_sold"), 400
+        for key in ("gross", "expenses", "artist_payout"):
+            if key in body:
+                v = body[key]
+                if v in (None, ""):
+                    values[key] = None
+                else:
+                    try:
+                        values[key] = float(v)
+                    except (TypeError, ValueError):
+                        return jsonify(error=f"invalid_{key}"), 400
+        if "settled" in body:
+            values["settled"] = bool(body["settled"])
+        if "notes" in body:
+            values["notes"] = body["notes"]
+
+        if not values:
+            return jsonify(error="no_fields_to_update"), 400
+
+        # Fill anything not sent this call from what's already stored, so a
+        # partial save (just ticking "settled") doesn't null out the rest.
+        merged = {**before, **values}
+        cur.execute(
+            """INSERT INTO settlements (event_id, tickets_sold, gross, expenses, artist_payout, settled, notes)
+               VALUES (%(event_id)s, %(tickets_sold)s, %(gross)s, %(expenses)s, %(artist_payout)s,
+                       %(settled)s, %(notes)s)
+               ON CONFLICT (event_id) DO UPDATE SET
+                   tickets_sold = EXCLUDED.tickets_sold, gross = EXCLUDED.gross,
+                   expenses = EXCLUDED.expenses, artist_payout = EXCLUDED.artist_payout,
+                   settled = EXCLUDED.settled, notes = EXCLUDED.notes, updated_at = now()""",
+            {"event_id": event_id, **merged},
+        )
+        audit.record(
+            g.db, g.viewer, "event", event_id, "settle",
+            {
+                "before": {k: audit.jsonable(before.get(k)) for k in values},
+                "after": {k: audit.jsonable(v) for k, v in values.items()},
+            },
+        )
+        return jsonify(ok=True)
+
     return app
 
 
