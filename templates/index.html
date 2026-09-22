@@ -69,7 +69,8 @@ button{cursor:pointer}
            width:320px;box-shadow:var(--shadow);margin:80px auto}
 #loginCard h1{font-size:24px;text-align:center;margin-bottom:20px}
 #loginCard label{display:block;font-size:12px;color:var(--ink-3);margin:12px 0 4px}
-#loginCard input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px}
+#loginCard input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px;
+                  background:var(--ground);color:var(--ink)}
 #loginCard button{width:100%;margin-top:18px;padding:10px;border:0;border-radius:6px;
                    background:var(--accent);color:#fff;font-size:14px;font-weight:600}
 #loginError{color:var(--dead);font-size:12.5px;margin-top:10px;min-height:1em}
@@ -220,6 +221,8 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .msgbody{margin:0;font-size:13.5px;white-space:pre-wrap;line-height:1.4}
 .msgcompose{display:flex;gap:8px;align-items:flex-end}
 .msgcompose textarea{flex:1;resize:vertical;min-height:44px}
+.expandwrap textarea{width:100%;resize:vertical}
+.expandbtn{margin-top:6px}
 
 /* A show's bill: each act starts lowercase/normal weight as a tentative
    hold; double-clicking one marks it confirmed (bold caps) — see
@@ -845,59 +848,58 @@ function renderArtistsView(){
     return;
   }
 
+  // The filter bar's inputs are built ONCE — re-rendering just the results
+  // below on every keystroke, rather than the whole view, so typing a
+  // second letter doesn't destroy the input you're still focused in.
   var bar = el("div","row-3","");
   var tierSel = selectKV([{value:"",label:"Any tier"},{value:"Local",label:"Local"},
     {value:"Regional",label:"Regional"},{value:"National",label:"National"}], artistFilter.tier,
-    function(v){ artistFilter.tier = v; renderArtistsView(); });
+    function(v){ artistFilter.tier = v; renderArtistsResults(); });
   bar.appendChild(field("Tier", tierSel));
-  var genreInput = input("text", artistFilter.genre, function(v){ artistFilter.genre = v; renderArtistsView(); });
+  var genreInput = input("text", artistFilter.genre, function(v){ artistFilter.genre = v; renderArtistsResults(); });
   genreInput.placeholder = "e.g. metal";
   bar.appendChild(field("Genre", genreInput));
-  var tagInput = input("text", artistFilter.tag, function(v){ artistFilter.tag = v; renderArtistsView(); });
+  var tagInput = input("text", artistFilter.tag, function(v){ artistFilter.tag = v; renderArtistsResults(); });
   tagInput.placeholder = "e.g. local, acoustic";
   bar.appendChild(field("Tag", tagInput));
   host.appendChild(bar);
 
-  var rows = filteredArtists();
-  var wrap = el("div","tablewrap"), t = document.createElement("table");
-  var thead = document.createElement("thead"), hr = document.createElement("tr");
-  ["Artist","Tier","Genre","Tags","From","Shows","Played","Total paid","Last played",""].forEach(function(h){
-    var th = el("th",null,h);
-    if(["Shows","Played","Total paid"].indexOf(h) >= 0) th.className = "num";
-    hr.appendChild(th);
-  });
-  thead.appendChild(hr); t.appendChild(thead);
-  var tb = document.createElement("tbody");
-  rows.slice().sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); }).forEach(function(a){
-    var tot = artistTotals(a.name);
-    var tr = document.createElement("tr");
-    tr.onclick = function(){
-      var d = new Date();
-      openEvent(null, iso(d.getFullYear(),d.getMonth(),d.getDate()));
-      draft.artists = [{name: a.name, confirmed:false, guarantee:"", paid:"", walkups:""}];
-      renderSheet();
-    };
-    tr.appendChild(el("td","title-cell", a.name));
-    var tierTd = document.createElement("td");
-    if(a.tier) tierTd.appendChild(el("span","pill s-complete", a.tier)); else { tierTd.className="sub"; tierTd.textContent="—"; }
-    tr.appendChild(tierTd);
-    tr.appendChild(el("td", a.genre ? null : "sub", a.genre || "—"));
-    tr.appendChild(el("td", (a.tags||[]).length ? null : "sub", (a.tags||[]).length ? a.tags.join(", ") : "—"));
-    tr.appendChild(el("td", a.location ? null : "sub", a.location || "—"));
-    tr.appendChild(el("td","num", tot.count ? String(tot.count) : "—"));
-    tr.appendChild(el("td","num", tot.played ? String(tot.played) : "—"));
-    tr.appendChild(el("td","num", tot.paid ? money(tot.paid) : "—"));
-    tr.appendChild(el("td","date-col", tot.last ? shortDate(tot.last) : "—"));
-    var editTd = document.createElement("td");
-    var editBtn = el("button","btn","Edit");
-    editBtn.type = "button";
-    editBtn.onclick = function(e){ e.stopPropagation(); openArtistForm(a.id); };
-    editTd.appendChild(editBtn);
-    tr.appendChild(editTd);
-    tb.appendChild(tr);
-  });
-  t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
-  host.appendChild(el("p","notice", rows.length + " of " + store.artists.length + " artists. Click a row to start booking them, or Edit to update their card."));
+  var resultsHost = el("div");
+  host.appendChild(resultsHost);
+
+  function renderArtistsResults(){
+    resultsHost.innerHTML = "";
+    var rows = filteredArtists();
+    var wrap = el("div","tablewrap"), t = document.createElement("table");
+    var thead = document.createElement("thead"), hr = document.createElement("tr");
+    ["Artist","Tier","Genre","Tags","From","Shows","Played","Total paid","Last played"].forEach(function(h){
+      var th = el("th",null,h);
+      if(["Shows","Played","Total paid"].indexOf(h) >= 0) th.className = "num";
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr); t.appendChild(thead);
+    var tb = document.createElement("tbody");
+    rows.slice().sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); }).forEach(function(a){
+      var tot = artistTotals(a.name);
+      var tr = document.createElement("tr");
+      tr.onclick = function(){ openArtistForm(a.id); };
+      tr.appendChild(el("td","title-cell", a.name));
+      var tierTd = document.createElement("td");
+      if(a.tier) tierTd.appendChild(el("span","pill s-complete", a.tier)); else { tierTd.className="sub"; tierTd.textContent="—"; }
+      tr.appendChild(tierTd);
+      tr.appendChild(el("td", a.genre ? null : "sub", a.genre || "—"));
+      tr.appendChild(el("td", (a.tags||[]).length ? null : "sub", (a.tags||[]).length ? a.tags.join(", ") : "—"));
+      tr.appendChild(el("td", a.location ? null : "sub", a.location || "—"));
+      tr.appendChild(el("td","num", tot.count ? String(tot.count) : "—"));
+      tr.appendChild(el("td","num", tot.played ? String(tot.played) : "—"));
+      tr.appendChild(el("td","num", tot.paid ? money(tot.paid) : "—"));
+      tr.appendChild(el("td","date-col", tot.last ? shortDate(tot.last) : "—"));
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); wrap.appendChild(t); resultsHost.appendChild(wrap);
+    resultsHost.appendChild(el("p","notice", rows.length + " of " + store.artists.length + " artists. Click a band to open its card."));
+  }
+  renderArtistsResults();
 }
 
 function artistShowHistory(artistId){
@@ -923,6 +925,7 @@ function openArtistForm(artistId){
     tags: a ? (a.tags||[]).join(", ") : "",
     instagram: a ? (a.instagram||"") : "", facebook: a ? (a.facebook||"") : "",
     website: a ? (a.website||"") : "", spotify: a ? (a.spotify||"") : "",
+    notes: a ? (a.notes||"") : "",
     members: a ? (a.members||[]).map(function(m){ return {name:m.name, phone:m.phone||"", email:m.email||""}; }) : [],
   };
 
@@ -972,6 +975,11 @@ function openArtistForm(artistId){
     rS2.appendChild(field("Spotify", spInput));
     fsS.appendChild(rS2);
     body.appendChild(fsS);
+
+    var fsN = document.createElement("fieldset");
+    fsN.appendChild(el("legend",null,"Notes"));
+    fsN.appendChild(expandableTextarea(draftA.notes, function(v){ draftA.notes = v; }, 4));
+    body.appendChild(fsN);
 
     var fsM = document.createElement("fieldset");
     fsM.appendChild(el("legend",null,"Band members"));
@@ -1047,6 +1055,7 @@ function openArtistForm(artistId){
       var r = await api("/api/artists/" + id, {method:"PATCH", body: JSON.stringify({
         tier: draftA.tier || null, genre: draftA.genre, location: draftA.location, tags: tags,
         instagram: draftA.instagram, facebook: draftA.facebook, website: draftA.website, spotify: draftA.spotify,
+        notes: draftA.notes,
       })});
       if(!r.ok){ errLine.textContent = r.body.error || "Could not save."; return; }
       await api("/api/artists/" + id + "/members", {method:"PUT", body: JSON.stringify({members: members})});
@@ -1156,6 +1165,27 @@ function input(type, value, onInput){
   i.type = type; i.value = (value == null ? "" : value);
   i.oninput = function(){ onInput(i.value); };
   return i;
+}
+/* A textarea with an Expand toggle for growing it into a much bigger box
+   when there's a lot to read/write — used for notes fields that can get
+   long (show notes, a band's notes). */
+function expandableTextarea(value, onInput, rows){
+  var wrap = el("div","expandwrap");
+  var ta = document.createElement("textarea");
+  ta.value = value || "";
+  ta.rows = rows || 4;
+  ta.oninput = function(){ onInput(ta.value); };
+  wrap.appendChild(ta);
+  var expandBtn = el("button","btn expandbtn","Expand");
+  expandBtn.type = "button";
+  var expanded = false;
+  expandBtn.onclick = function(){
+    expanded = !expanded;
+    ta.rows = expanded ? 18 : (rows || 4);
+    expandBtn.textContent = expanded ? "Collapse" : "Expand";
+  };
+  wrap.appendChild(expandBtn);
+  return wrap;
 }
 function selectKV(options, value, onChange){
   var s = document.createElement("select");
@@ -1495,10 +1525,7 @@ function renderSheet(){
 
   var fs8 = document.createElement("fieldset");
   fs8.appendChild(el("legend",null,"Notes"));
-  var ta = document.createElement("textarea");
-  ta.value = draft.notes || "";
-  ta.oninput = function(){ draft.notes = ta.value; };
-  fs8.appendChild(ta);
+  fs8.appendChild(expandableTextarea(draft.notes, function(v){ draft.notes = v; }, 6));
   body.appendChild(fs8);
 
   if(!draftIsNew){

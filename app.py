@@ -291,7 +291,7 @@ def create_app():
         normalization/dedup rule everywhere."""
         cur = g.db.cursor()
         cur.execute(
-            "SELECT tier, genre, tags, location, instagram, facebook, website, spotify "
+            "SELECT tier, genre, tags, location, instagram, facebook, website, spotify, notes "
             "FROM artists WHERE id = %s",
             (artist_id,),
         )
@@ -299,7 +299,7 @@ def create_app():
         if row is None:
             return jsonify(error="not_found"), 404
         before = dict(zip(
-            ["tier", "genre", "tags", "location", "instagram", "facebook", "website", "spotify"], row))
+            ["tier", "genre", "tags", "location", "instagram", "facebook", "website", "spotify", "notes"], row))
 
         body = request.get_json(silent=True) or {}
         updates = {}
@@ -312,6 +312,8 @@ def create_app():
             updates["genre"] = (body["genre"] or "").strip() or None
         if "location" in body:
             updates["location"] = (body["location"] or "").strip() or None
+        if "notes" in body:
+            updates["notes"] = (body["notes"] or "").strip() or None
         for key in ("instagram", "facebook", "website", "spotify"):
             if key in body:
                 updates[key] = (body[key] or "").strip() or None

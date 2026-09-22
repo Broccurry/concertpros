@@ -173,6 +173,15 @@ class ArtistProfile(unittest.TestCase):
         self.assertEqual(mine["instagram"], "instagram.com/test")
         self.assertEqual(mine["website"], "https://test.band")
 
+    def test_notes_round_trip(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.patch(f"/api/artists/{self.artist_id}", json={"notes": "Only plays weeknights, needs 2 comps"})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        artists = client.get("/api/artists").get_json()["artists"]
+        mine = next(a for a in artists if a["id"] == self.artist_id)
+        self.assertEqual(mine["notes"], "Only plays weeknights, needs 2 comps")
+
     def test_band_members_round_trip(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)
