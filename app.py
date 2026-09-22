@@ -1305,6 +1305,22 @@ def create_app():
         )
         cols = [c.name for c in cur.description]
         messages = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        if messages:
+            cur.execute(
+                "SELECT a.message_id, a.person_id, p.name AS person_name, a.created_at "
+                "FROM event_message_acks a JOIN people p ON p.id = a.person_id "
+                "WHERE a.message_id = ANY(%(ids)s) ORDER BY a.created_at",
+                {"ids": [m["id"] for m in messages]},
+            )
+            acols = [c.name for c in cur.description]
+            acks_by_message: dict[int, list[dict]] = {}
+            for row in cur.fetchall():
+                d = dict(zip(acols, row))
+                acks_by_message.setdefault(d.pop("message_id"), []).append(d)
+            for m in messages:
+                m["acks"] = acks_by_message.get(m["id"], [])
+
         # Opening this thread is what "reading" a mention means here — no
         # separate mark-as-read click.
         cur.execute(
@@ -1314,6 +1330,25 @@ def create_app():
             (g.viewer.id, event_id),
         )
         return jsonify(messages=messages)
+
+    @app.post("/api/messages/<int:message_id>/ack")
+    @require_booker
+    def ack_message(message_id):
+        """A lightweight "seen this" — separate from a mention's read_at
+        (private, per-recipient inbox state); an ack is public, so anyone
+        opening the thread can see who's already acknowledged it and skip
+        chasing them. Acking twice is a no-op, not an error."""
+        cur = g.db.cursor()
+        cur.execute("SELECT event_id FROM event_messages WHERE id = %s", (message_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        cur.execute(
+            "INSERT INTO event_message_acks (message_id, person_id) VALUES (%s, %s) "
+            "ON CONFLICT (message_id, person_id) DO NOTHING",
+            (message_id, g.viewer.id),
+        )
+        return jsonify(ok=True)
 
     def _record_mentions(conn, message_id, text):
         """@Name in a message body — matched against real booker/owner

@@ -321,6 +321,16 @@ CREATE TABLE event_message_mentions (
 );
 CREATE INDEX idx_message_mentions_unread ON event_message_mentions(person_id) WHERE read_at IS NULL;
 
+-- A lightweight "seen this, no reply needed" — separate from a mention's
+-- read_at, which is a private per-recipient inbox flag. An ack is public:
+-- everyone in the thread sees who's acknowledged a message.
+CREATE TABLE event_message_acks (
+    message_id  INTEGER NOT NULL REFERENCES event_messages(id) ON DELETE CASCADE,
+    person_id   INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (message_id, person_id)
+);
+
 -- Seed data matching what's already live in the artifact prototype.
 INSERT INTO venues (name) VALUES ('Frankies'), ('Ottawa Tavern'), ('Cla-Zel Theater');
 INSERT INTO roles (name) VALUES

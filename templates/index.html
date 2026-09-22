@@ -265,6 +265,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
             display:grid;place-items:center;padding:0}
 .msghead .x:hover{color:var(--dead);background:var(--surface)}
 .msgbody{margin:0;font-size:13.5px;white-space:pre-wrap;line-height:1.4}
+.msgactions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}
 .msgcompose{display:flex;gap:8px;align-items:flex-end}
 .msgcompose textarea{flex:1;resize:vertical;min-height:44px}
 .msgcompose .expandwrap{flex:1}
@@ -301,7 +302,6 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .actlistrow{border:1px solid var(--line);border-radius:var(--radius);padding:8px;background:var(--surface-2)}
 .actlistrow-top{display:flex;align-items:center;gap:8px}
 .actname{flex:1;cursor:pointer;user-select:none}
-.actlistrow-figs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
 .rowbtn{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);width:28px;height:28px;
         color:var(--ink-2);display:grid;place-items:center;padding:0;font-size:11px;line-height:1}
 .rowbtn:disabled{opacity:.35;cursor:default}
@@ -311,17 +311,29 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .actlistrow .x:hover{color:var(--dead);background:var(--surface)}
 .actrow{display:flex;gap:8px;align-items:flex-start}
 .actrow input{flex:1}
-@media (max-width: 480px){
-  .actlistrow-figs{grid-template-columns:1fr}
-}
 
 /* A band that can't do the show: struck through and pushed to the end of
    the bill (both in storage order and here) so a booker scanning the list
-   sees who's out at a glance. Tap-to-move reordering (act-picked-up) reuses
-   the accent color already used for focus/active state elsewhere. */
+   sees who's out at a glance. */
 .act-declined-row{opacity:.6}
 .act-declined-row .actname{text-decoration:line-through}
-.act-picked-up{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+
+/* Press-and-drag reorder (10-12 band bills change order right up to the
+   show) — a dedicated grip rather than the whole row, so a tap on the
+   name/role/notes never gets mistaken for the start of a drag. */
+.actgrip{cursor:grab;touch-action:none;color:var(--ink-3);font-size:15px;line-height:1;padding:0 2px;user-select:none}
+.act-dragging{position:relative;z-index:5;opacity:.85;box-shadow:var(--shadow);cursor:grabbing}
+
+/* Role + contact log share one compact line; wraps only if the viewport
+   genuinely can't fit them (narrow phone), never by default. */
+.actmidrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.actmidrow select{width:auto;flex:none}
+.actmidrow-fig{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink-3)}
+.actmidrow-fig input{width:70px}
+.actnotesrow{display:flex;gap:6px;align-items:flex-start;margin-top:6px}
+.actnotesrow textarea{flex:1;resize:vertical;min-height:30px;border:1px solid var(--line);border-radius:var(--radius);
+                       padding:6px 8px;font-size:13px;font-family:inherit}
+.actnotesrow .expandbtn{flex:none;margin-top:0}
 .btn-sm{padding:4px 10px;font-size:12px;border-radius:var(--radius)}
 .actcontact{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
 .actcontact-entry{margin:0 0 4px;font-size:12px;color:var(--ink-3)}
@@ -1299,7 +1311,6 @@ function renderStaffView(){
 
 /* ============================== the editor ============================= */
 var draft = null, draftIsNew = false;
-var actMoveFromIdx = null; // "picked up" act row index, for the tap-to-move reorder — reset whenever the editor (re)opens
 
 function field(label, node){
   var f = el("div","field");
@@ -1350,7 +1361,6 @@ function selectKV(options, value, onChange){
 function select(options, value, onChange){ return selectKV(options.map(function(o){ return {value:o,label:o}; }), value, onChange); }
 
 async function openEvent(id, dateHint){
-  actMoveFromIdx = null;
   if(!canBook()){
     // Crew never gets the booker sheet — it's built around fields
     // (status, deal, settlement) their own /api/events response never
@@ -1606,25 +1616,52 @@ function renderSheet(){
   body.appendChild(dl);
 
   var actsField = el("div","field"); actsField.style.marginTop = "10px";
-  actsField.appendChild(el("label", null, "Acts — top of the list is the headliner. Tap a name, then tap another act's row to move it there."));
+  actsField.appendChild(el("label", null, "Acts — top of the list is the headliner. Drag the grip to reorder."));
   var actList = el("div","actlist");
   var showHasHappened = draft.show_date && draft.show_date <= todayISO();
   (draft.artists||[]).forEach(function(a, idx){
-    var row = el("div","actlistrow" + (a.declined ? " act-declined-row" : "") + (actMoveFromIdx === idx ? " act-picked-up" : ""));
+    var row = el("div","actlistrow" + (a.declined ? " act-declined-row" : ""));
     var top = el("div","actlistrow-top");
 
-    var name = el("span","actname " + (a.confirmed ? "act-confirmed" : "act-pending"), a.name);
-    name.title = actMoveFromIdx === null ? "Tap to pick up and move; double-tap to " + (a.confirmed ? "un-confirm" : "confirm")
-      : (actMoveFromIdx === idx ? "Tap again to put it back" : "Tap to move the picked-up act here");
-    name.onclick = function(){
-      if(actMoveFromIdx === null){ actMoveFromIdx = idx; renderSheet(); return; }
-      if(actMoveFromIdx === idx){ actMoveFromIdx = null; renderSheet(); return; }
-      var moved = draft.artists.splice(actMoveFromIdx, 1)[0];
-      draft.artists.splice(idx, 0, moved);
-      actMoveFromIdx = null;
+    var grip = el("span","actgrip","⠿");
+    grip.title = "Drag to reorder";
+    var dragState = null;
+    grip.addEventListener("pointerdown", function(e){
+      e.preventDefault();
+      grip.setPointerCapture(e.pointerId);
+      dragState = {startY: e.clientY, fromIdx: idx};
+      row.classList.add("act-dragging");
+    });
+    grip.addEventListener("pointermove", function(e){
+      if(!dragState) return;
+      row.style.transform = "translateY(" + (e.clientY - dragState.startY) + "px)";
+    });
+    function endDrag(e){
+      if(!dragState) return;
+      row.style.transform = "";
+      row.classList.remove("act-dragging");
+      var siblings = Array.prototype.slice.call(actList.children);
+      var targetIdx = siblings.length - 1;
+      for(var i = 0; i < siblings.length; i++){
+        if(siblings[i] === row) continue;
+        var rect = siblings[i].getBoundingClientRect();
+        if(e.clientY < rect.top + rect.height / 2){ targetIdx = i; break; }
+      }
+      var from = dragState.fromIdx;
+      dragState = null;
+      var to = targetIdx > from ? targetIdx - 1 : targetIdx;
+      if(to === from) return;
+      var moved = draft.artists.splice(from, 1)[0];
+      draft.artists.splice(to, 0, moved);
       renderSheet();
       scheduleAutosave();
-    };
+    }
+    grip.addEventListener("pointerup", endDrag);
+    grip.addEventListener("pointercancel", endDrag);
+    top.appendChild(grip);
+
+    var name = el("span","actname " + (a.confirmed ? "act-confirmed" : "act-pending"), a.name);
+    name.title = "Double-tap to " + (a.confirmed ? "un-confirm" : "confirm");
     name.ondblclick = async function(){
       if(a.id){
         // Flip the local copy first — draft.artists is in UNSAVED_FIELDS so
@@ -1666,46 +1703,71 @@ function renderSheet(){
     top.appendChild(x);
     row.appendChild(top);
 
-    var roleRow = el("div","row");
-    roleRow.appendChild(field("Role on this bill", selectKV(
-      [{value:"",label:"—"}].concat(BILL_ROLES.map(function(r){ return {value:r,label:r}; })),
-      a.bill_role || "", function(v){ a.bill_role = v || null; })));
-    row.appendChild(roleRow);
-
-    var figs = el("div","actlistrow-figs");
-    figs.appendChild(field("Guarantee", input("number", a.guarantee, function(v){ a.guarantee = v; })));
+    // Role + contact log on one compact line — guarantee lives in the
+    // show-level Deal fieldset now, not per act; if a booker needs to note
+    // a one-off figure for a specific act it goes in that act's notes.
+    var midRow = el("div","actmidrow");
+    midRow.appendChild(selectKV(
+      [{value:"",label:"Role —"}].concat(BILL_ROLES.map(function(r){ return {value:r,label:r}; })),
+      a.bill_role || "", function(v){ a.bill_role = v || null; }));
     if(showHasHappened){
-      figs.appendChild(field("Paid", input("number", a.paid, function(v){ a.paid = v; })));
-      figs.appendChild(field("Walk-ups", input("number", a.walkups, function(v){ a.walkups = v; })));
+      var paidWrap = el("span","actmidrow-fig");
+      paidWrap.appendChild(document.createTextNode("Paid "));
+      paidWrap.appendChild(input("number", a.paid, function(v){ a.paid = v; }));
+      midRow.appendChild(paidWrap);
+      var walkupsWrap = el("span","actmidrow-fig");
+      walkupsWrap.appendChild(document.createTextNode("Walk-ups "));
+      walkupsWrap.appendChild(input("number", a.walkups, function(v){ a.walkups = v; }));
+      midRow.appendChild(walkupsWrap);
     }
-    row.appendChild(figs);
-
-    var notesField = el("div","field"); notesField.style.marginTop = "8px";
-    notesField.appendChild(el("label",null,"Notes for this band, this show"));
-    notesField.appendChild(expandableTextarea(a.notes, function(v){ a.notes = v; }, 2));
-    row.appendChild(notesField);
-
     if(a.id){
+      var methodSel = selectKV([{value:"phone",label:"Phone"},{value:"text",label:"Text"},{value:"email",label:"Email"}], "phone", function(){});
+      midRow.appendChild(methodSel);
+      var logBtn = el("button","btn btn-sm","Log contact");
+      logBtn.type = "button";
+      logBtn.onclick = async function(){
+        var r = await api("/api/event_artists/" + a.id + "/contacts", {method:"POST", body: JSON.stringify({method: methodSel.value})});
+        if(r.ok){
+          // Append locally and re-render immediately rather than
+          // refreshDraft() — "artists" is in UNSAVED_FIELDS so a refresh
+          // would re-apply this same stale draft.artists over the fresh
+          // server copy and the new contact would never appear.
+          a.contacts = a.contacts || [];
+          a.contacts.push({method: methodSel.value, person_name: me.name, created_at: new Date().toISOString()});
+          renderSheet();
+        }
+      };
+      midRow.appendChild(logBtn);
+    }
+    row.appendChild(midRow);
+    if(a.id && (a.contacts||[]).length){
       var contactWrap = el("div","actcontact");
-      var contactHead = el("div","hint","Contact log");
-      contactWrap.appendChild(contactHead);
-      (a.contacts||[]).forEach(function(c){
+      a.contacts.forEach(function(c){
         contactWrap.appendChild(el("p","actcontact-entry",
           c.method + " — " + (c.person_name||"someone") + " — " + messageTime(c.created_at)));
       });
-      var logRow = el("div","actrow");
-      var methodSel = selectKV([{value:"phone",label:"Phone"},{value:"text",label:"Text"},{value:"email",label:"Email"}], "phone", function(){});
-      logRow.appendChild(methodSel);
-      var logBtn = el("button","btn","Log contact");
-      logBtn.type = "button";
-      logBtn.onclick = async function(){
-        await api("/api/event_artists/" + a.id + "/contacts", {method:"POST", body: JSON.stringify({method: methodSel.value})});
-        await refreshDraft();
-      };
-      logRow.appendChild(logBtn);
-      contactWrap.appendChild(logRow);
       row.appendChild(contactWrap);
     }
+
+    // Notes: one line, with Expand at the end of that same line rather
+    // than a separate row below it.
+    var notesRow = el("div","actnotesrow");
+    var notesTa = document.createElement("textarea");
+    notesTa.rows = 1;
+    notesTa.value = a.notes || "";
+    notesTa.placeholder = "Notes for this band, this show";
+    notesTa.oninput = function(){ a.notes = notesTa.value; scheduleAutosave(); };
+    notesRow.appendChild(notesTa);
+    var notesExpandBtn = el("button","btn btn-sm expandbtn","Expand");
+    notesExpandBtn.type = "button";
+    var notesExpanded = false;
+    notesExpandBtn.onclick = function(){
+      notesExpanded = !notesExpanded;
+      notesTa.rows = notesExpanded ? 6 : 1;
+      notesExpandBtn.textContent = notesExpanded ? "Collapse" : "Expand";
+    };
+    notesRow.appendChild(notesExpandBtn);
+    row.appendChild(notesRow);
 
     actList.appendChild(row);
   });
@@ -1948,6 +2010,38 @@ function renderSheet(){
       row.appendChild(head);
       var bodyP = el("p","msgbody"); bodyP.appendChild(messageBodyNodes(m.body));
       row.appendChild(bodyP);
+
+      var iAcked = (m.acks||[]).some(function(a){ return a.person_id === me.id; });
+      var actionsRow = el("div","msgactions");
+      var replyBtn = el("button","btn btn-sm","Reply");
+      replyBtn.type = "button";
+      replyBtn.onclick = function(){
+        // @mentioning the original author reuses the existing notify
+        // path — no separate "this is a reply" concept needed. Replying
+        // to your own message just focuses the box; there's no one to
+        // notify and overwriting whatever they'd already started typing
+        // would be a worse bug than the one this button fixes.
+        if(m.person_id && m.person_id !== me.id && !msgInput.value.includes("@" + m.person_name)){
+          msgInput.value = "@" + m.person_name + " " + msgInput.value;
+        }
+        msgInput.focus();
+        msgInput.setSelectionRange(msgInput.value.length, msgInput.value.length);
+      };
+      actionsRow.appendChild(replyBtn);
+      var ackBtn = el("button","btn btn-sm", iAcked ? "✓ Acknowledged" : "Acknowledge");
+      ackBtn.type = "button";
+      ackBtn.disabled = iAcked;
+      ackBtn.onclick = async function(){
+        await api("/api/messages/" + m.id + "/ack", {method:"POST"});
+        await refreshEventMessages();
+      };
+      actionsRow.appendChild(ackBtn);
+      if((m.acks||[]).length){
+        actionsRow.appendChild(el("span","hint",
+          "Seen by " + m.acks.map(function(a){ return a.person_name; }).join(", ")));
+      }
+      row.appendChild(actionsRow);
+
       thread.appendChild(row);
     });
     fs9.appendChild(thread);

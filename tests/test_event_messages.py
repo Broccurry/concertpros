@@ -192,6 +192,46 @@ class EventMessages(unittest.TestCase):
         cur.execute("SELECT count(*) FROM event_message_mentions WHERE message_id = %s", (message_id,))
         self.assertEqual(cur.fetchone()[0], 0, "crew is never a valid @mention target")
 
+    def test_acknowledging_a_message_shows_up_for_everyone(self):
+        booker_client = self.app.test_client()
+        self._login(booker_client, self.booker_email)
+        self._book_show(booker_client)
+        r = booker_client.post(f"/api/events/{self.event_id}/messages", json={"body": "doors moved to 6:30"})
+        message_id = r.get_json()["id"]
+
+        owner_client = self.app.test_client()
+        self._login(owner_client, self.owner_email)
+        ack = owner_client.post(f"/api/messages/{message_id}/ack")
+        self.assertEqual(ack.status_code, 200, ack.get_json())
+
+        messages = booker_client.get(f"/api/events/{self.event_id}/messages").get_json()["messages"]
+        mine = next(m for m in messages if m["id"] == message_id)
+        self.assertEqual(len(mine["acks"]), 1)
+        self.assertEqual(mine["acks"][0]["person_name"], "Test Owner")
+
+    def test_acknowledging_twice_is_not_an_error_and_does_not_duplicate(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book_show(client)
+        r = client.post(f"/api/events/{self.event_id}/messages", json={"body": "heads up"})
+        message_id = r.get_json()["id"]
+
+        self.assertEqual(client.post(f"/api/messages/{message_id}/ack").status_code, 200)
+        self.assertEqual(client.post(f"/api/messages/{message_id}/ack").status_code, 200)
+        messages = client.get(f"/api/events/{self.event_id}/messages").get_json()["messages"]
+        self.assertEqual(len(messages[0]["acks"]), 1)
+
+    def test_crew_cannot_acknowledge_a_message(self):
+        booker_client = self.app.test_client()
+        self._login(booker_client, self.booker_email)
+        self._book_show(booker_client)
+        r = booker_client.post(f"/api/events/{self.event_id}/messages", json={"body": "heads up"})
+        message_id = r.get_json()["id"]
+
+        crew_client = self.app.test_client()
+        self._login(crew_client, self.crew_email)
+        self.assertEqual(crew_client.post(f"/api/messages/{message_id}/ack").status_code, 403)
+
 
 if __name__ == "__main__":
     unittest.main()
