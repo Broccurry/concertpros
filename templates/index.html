@@ -142,13 +142,19 @@ function fmtTime(t) {
   return m ? `${h12}:${String(m).padStart(2,"0")}${ap}` : `${h12}${ap}`;
 }
 
+let lastEvents = [];
+let canBook = false;
+let editingId = null;
+let editingVersion = null;
+
 async function loadEvents() {
   const {ok, body} = await api("/api/events");
   const host = document.getElementById("eventsHost");
   if (!ok) { host.innerHTML = "<div id='empty'>Could not load events.</div>"; return; }
   if (!body.events.length) { host.innerHTML = "<div id='empty'>Nothing booked yet.</div>"; return; }
+  lastEvents = body.events;
   const rows = body.events.map(e => `
-    <tr>
+    <tr data-id="${e.id}" style="${canBook ? "cursor:pointer" : ""}">
       <td>${fmtDate(e.show_date)}</td>
       <td>${e.venue}</td>
       <td><strong>${e.headliner}</strong>${e.support ? `<div style="color:var(--ink-3);font-size:12px">${e.support}</div>` : ""}</td>
@@ -156,6 +162,11 @@ async function loadEvents() {
       <td>${e.status ? `<span class="pill">${e.status}</span>` : ""}</td>
     </tr>`).join("");
   host.innerHTML = `<table><thead><tr><th>Date</th><th>Venue</th><th>Show</th><th>Doors</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+  if (canBook) {
+    host.querySelectorAll("tr[data-id]").forEach(tr => {
+      tr.addEventListener("click", () => openEditForm(Number(tr.dataset.id)));
+    });
+  }
 }
 
 async function loadBookingForm() {
@@ -170,11 +181,32 @@ async function loadBookingForm() {
   }
 }
 
+function openEditForm(eventId) {
+  const e = lastEvents.find(x => x.id === eventId);
+  if (!e || e.version == null) return;  // crew's shape has no version; also just a safety guard
+  editingId = e.id;
+  editingVersion = e.version;
+  document.getElementById("bookVenue").value = e.venue_id;
+  document.getElementById("bookBand").value = e.headliner;
+  document.getElementById("bookDate").value = e.show_date;
+  document.getElementById("bookStatus").innerHTML = `
+    <option value="hold1">1st hold</option>
+    <option value="hold2">2nd hold</option>
+    <option value="hold3">3rd hold</option>
+    <option value="confirmed">Confirmed</option>
+    <option value="complete">Complete</option>
+    <option value="dead">Didn't work out</option>`;
+  document.getElementById("bookStatus").value = e.status;
+  document.getElementById("bookSubmit").textContent = "Save changes";
+  document.getElementById("bookError").textContent = "";
+  document.getElementById("bookForm").style.display = "block";
+}
+
 async function boot() {
   const me = await api("/api/me");
   if (me.ok) {
     document.getElementById("whoami").textContent = `${me.body.name} · ${me.body.access_level}`;
-    const canBook = me.body.access_level === "booker" || me.body.access_level === "owner";
+    canBook = me.body.access_level === "booker" || me.body.access_level === "owner";
     document.getElementById("bookBtn").style.display = canBook ? "inline-block" : "none";
     if (canBook) loadBookingForm();
     showApp();
@@ -199,6 +231,16 @@ document.getElementById("logoutBtn").addEventListener("click", async () => {
 });
 
 document.getElementById("bookBtn").addEventListener("click", () => {
+  editingId = null;
+  editingVersion = null;
+  document.getElementById("bookForm").reset();
+  document.getElementById("bookStatus").innerHTML = `
+    <option value="hold1">1st hold</option>
+    <option value="hold2">2nd hold</option>
+    <option value="hold3">3rd hold</option>
+    <option value="confirmed">Confirmed</option>`;
+  document.getElementById("bookSubmit").textContent = "Book it";
+  document.getElementById("bookError").textContent = "";
   document.getElementById("bookForm").style.display = "block";
   document.getElementById("bookDate").valueAsDate = new Date();
 });
@@ -214,15 +256,26 @@ document.getElementById("bookForm").addEventListener("submit", async (e) => {
     show_date: document.getElementById("bookDate").value,
     status: document.getElementById("bookStatus").value,
   };
-  const {ok, body} = await api("/api/events", {method: "POST", body: JSON.stringify(payload)});
+  let ok, body;
+  if (editingId) {
+    payload.version = editingVersion;
+    ({ok, body} = await api(`/api/events/${editingId}`, {method: "PATCH", body: JSON.stringify(payload)}));
+  } else {
+    ({ok, body} = await api("/api/events", {method: "POST", body: JSON.stringify(payload)}));
+  }
   if (ok) {
     document.getElementById("bookForm").style.display = "none";
     document.getElementById("bookForm").reset();
     document.getElementById("bookError").textContent = "";
+    editingId = null;
+    editingVersion = null;
     loadEvents();
-    loadBookingForm();  // the new band should now appear in the artist datalist
+    loadBookingForm();  // a new band should now appear in the artist datalist
+  } else if (body.error === "version_conflict") {
+    document.getElementById("bookError").textContent =
+      "Someone else changed this show while you had it open. Reload and try again.";
   } else {
-    document.getElementById("bookError").textContent = body.error || "Could not book that show.";
+    document.getElementById("bookError").textContent = body.error || "Could not save that show.";
   }
 });
 

@@ -25,7 +25,8 @@ import db
 import permissions
 from permissions import Viewer
 
-VALID_HOLD_STATUSES = ("hold1", "hold2", "hold3", "confirmed")
+VALID_HOLD_STATUSES = ("hold1", "hold2", "hold3", "confirmed")  # what a NEW show can be booked as
+ALL_STATUSES = ("hold1", "hold2", "hold3", "confirmed", "complete", "dead")  # what an EXISTING show can move to
 
 load_dotenv()  # local dev only — a no-op if .env doesn't exist (Railway sets real env vars directly)
 
@@ -246,6 +247,112 @@ def create_app():
                      {"venue_id": venue_id, "headliner": headliner,
                       "show_date": show_date_raw, "status": status})
         return jsonify(id=event_id), 201
+
+    @app.patch("/api/events/<int:event_id>")
+    @require_booker
+    def update_event(event_id):
+        """Partial update. Every caller must send the `version` it last
+        read; a mismatch means someone else edited this show first (Cody
+        and Christian both open Oct 3) and returns 409 rather than
+        silently overwriting their change — see CLAUDE.md / the events
+        table's `version` column."""
+        body = request.get_json(silent=True) or {}
+        if "version" not in body:
+            return jsonify(error="version_required"), 400
+        try:
+            expected_version = int(body["version"])
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_version"), 400
+
+        cur = g.db.cursor()
+        cur.execute(
+            """SELECT venue_id, artist_id, support, show_date, doors, show_time, status,
+                      deal_type, guarantee, backend_pct, deal_notes, announce_date, onsale_date, notes
+               FROM events WHERE id = %s""",
+            (event_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        before_cols = ["venue_id", "artist_id", "support", "show_date", "doors", "show_time", "status",
+                       "deal_type", "guarantee", "backend_pct", "deal_notes", "announce_date",
+                       "onsale_date", "notes"]
+        before = dict(zip(before_cols, row))
+
+        updates = {}
+        if "headliner" in body:
+            name = (body["headliner"] or "").strip()
+            if not name:
+                return jsonify(error="headliner_cannot_be_empty"), 400
+            updates["artist_id"] = artists_module.find_or_create(g.db, name)
+        if "venue_id" in body:
+            cur.execute("SELECT 1 FROM venues WHERE id = %s", (body["venue_id"],))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_venue"), 400
+            updates["venue_id"] = body["venue_id"]
+        if "status" in body:
+            if body["status"] not in ALL_STATUSES:
+                return jsonify(error="invalid_status"), 400
+            updates["status"] = body["status"]
+        for key in ("support", "deal_type", "deal_notes", "notes"):
+            if key in body:
+                updates[key] = body[key]
+        for key in ("show_date", "announce_date", "onsale_date"):
+            if key in body:
+                val = body[key]
+                if val in (None, ""):
+                    updates[key] = None
+                else:
+                    try:
+                        updates[key] = date.fromisoformat(val)
+                    except ValueError:
+                        return jsonify(error=f"invalid_{key}"), 400
+        for key in ("doors", "show_time"):
+            if key in body:
+                val = body[key]
+                if val in (None, ""):
+                    updates[key] = None
+                else:
+                    try:
+                        updates[key] = time.fromisoformat(val)
+                    except ValueError:
+                        return jsonify(error=f"invalid_{key}"), 400
+        for key in ("guarantee", "backend_pct"):
+            if key in body:
+                val = body[key]
+                if val in (None, ""):
+                    updates[key] = None
+                else:
+                    try:
+                        updates[key] = float(val)
+                    except (TypeError, ValueError):
+                        return jsonify(error=f"invalid_{key}"), 400
+
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur.execute(
+            f"UPDATE events SET {set_clause}, version = version + 1, updated_at = now() "
+            f"WHERE id = %s AND version = %s RETURNING version",
+            list(updates.values()) + [event_id, expected_version],
+        )
+        result = cur.fetchone()
+        if result is None:
+            cur.execute("SELECT version FROM events WHERE id = %s", (event_id,))
+            current = cur.fetchone()
+            if current is None:
+                return jsonify(error="not_found"), 404
+            return jsonify(error="version_conflict", current_version=current[0]), 409
+
+        audit.record(
+            g.db, g.viewer, "event", event_id, "update",
+            {
+                "before": {k: audit.jsonable(before.get(k)) for k in updates},
+                "after": {k: audit.jsonable(v) for k, v in updates.items()},
+            },
+        )
+        return jsonify(ok=True, version=result[0])
 
     return app
 

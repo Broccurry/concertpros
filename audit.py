@@ -9,6 +9,15 @@ app.py's teardown_request).
 import json
 
 
+def jsonable(value):
+    """None/str/int/float/bool pass through as real JSON types; anything
+    else (date, time, Decimal, ...) becomes its string form — good enough
+    for a human reading the audit trail, not meant for round-tripping."""
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
 def record(conn, viewer, entity_type: str, entity_id: int, action: str, detail: dict | None = None):
     cur = conn.cursor()
     cur.execute(
