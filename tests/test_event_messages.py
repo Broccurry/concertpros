@@ -142,6 +142,56 @@ class EventMessages(unittest.TestCase):
         self.assertEqual(client.get("/api/events/1/messages").status_code, 403)
         self.assertEqual(client.post("/api/events/1/messages", json={"body": "x"}).status_code, 403)
 
+    def test_mentioning_someone_notifies_them(self):
+        booker_client = self.app.test_client()
+        self._login(booker_client, self.booker_email)
+        self._book_show(booker_client)
+        r = booker_client.post(f"/api/events/{self.event_id}/messages",
+                                json={"body": "@Test Owner can you check the guarantee on this one?"})
+        self.assertEqual(r.status_code, 201, r.get_json())
+
+        owner_client = self.app.test_client()
+        self._login(owner_client, self.owner_email)
+        me = owner_client.get("/api/me").get_json()
+        self.assertEqual(me["mention_count"], 1)
+
+        mentions = owner_client.get("/api/my_mentions").get_json()["mentions"]
+        self.assertEqual(len(mentions), 1)
+        self.assertEqual(mentions[0]["event_id"], self.event_id)
+        self.assertIn("guarantee", mentions[0]["body"])
+
+    def test_opening_the_thread_marks_the_mention_read(self):
+        booker_client = self.app.test_client()
+        self._login(booker_client, self.booker_email)
+        self._book_show(booker_client)
+        booker_client.post(f"/api/events/{self.event_id}/messages", json={"body": "@Test Owner take a look"})
+
+        owner_client = self.app.test_client()
+        self._login(owner_client, self.owner_email)
+        self.assertEqual(owner_client.get("/api/me").get_json()["mention_count"], 1)
+
+        owner_client.get(f"/api/events/{self.event_id}/messages")  # opening the thread reads it
+
+        self.assertEqual(owner_client.get("/api/me").get_json()["mention_count"], 0)
+        self.assertEqual(owner_client.get("/api/my_mentions").get_json()["mentions"], [])
+
+    def test_mentioning_yourself_does_not_notify_you(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book_show(client)
+        client.post(f"/api/events/{self.event_id}/messages", json={"body": "@Test Booker note to self"})
+        self.assertEqual(client.get("/api/me").get_json()["mention_count"], 0)
+
+    def test_crew_are_never_mentionable(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book_show(client)
+        r = client.post(f"/api/events/{self.event_id}/messages", json={"body": "@Test Crew heads up"})
+        message_id = r.get_json()["id"]
+        cur = self.conn.cursor()
+        cur.execute("SELECT count(*) FROM event_message_mentions WHERE message_id = %s", (message_id,))
+        self.assertEqual(cur.fetchone()[0], 0, "crew is never a valid @mention target")
+
 
 if __name__ == "__main__":
     unittest.main()

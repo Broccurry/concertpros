@@ -110,6 +110,8 @@ button{cursor:pointer}
 .legend{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-left:auto}
 .legend-item{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3);white-space:nowrap}
 .swatch{width:11px;height:11px;border-radius:2px;flex:none}
+.showdead-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);white-space:nowrap;cursor:pointer}
+.showdead-toggle input{width:auto}
 
 main{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:16px 48px}
 
@@ -127,13 +129,17 @@ main{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:16px 48px}
 .cell:hover .addday,.addday:focus-visible{opacity:1}
 .addday:hover{background:var(--surface-2);color:var(--ink)}
 
-.show{text-align:left;border:1px solid transparent;border-radius:4px;padding:3px 5px;display:block;width:100%;
+.show{position:relative;text-align:left;border:1px solid transparent;border-radius:4px;padding:3px 5px;display:block;width:100%;
       font-size:12px;line-height:1.25;overflow:hidden}
 .show .name{font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .show .meta{display:block;font-size:10.5px;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
-.s-hold1{background:var(--hold-1-bg);color:var(--hold-1);border-color:var(--hold-1-bg)}
-.s-hold2{background:var(--hold-2-bg);color:var(--hold-1);border-color:var(--hold-2-bg)}
-.s-hold3{background:transparent;color:var(--ink-2);border:1px dashed var(--line-strong)}
+/* All three hold tiers are one shade — the priority order is shown as a
+   number badge (holdnum), not by fading the color, so 1st/2nd/3rd stay
+   equally legible instead of 3rd hold nearly disappearing. */
+.s-hold1,.s-hold2,.s-hold3{background:var(--hold-1-bg);color:var(--hold-1);border-color:var(--hold-1-bg)}
+.holdnum{position:absolute;top:2px;right:3px;width:14px;height:14px;border-radius:50%;
+         background:var(--surface);color:var(--hold-1);font-size:9.5px;font-weight:700;
+         display:grid;place-items:center;line-height:1}
 .s-confirmed{background:var(--confirm-bg);color:var(--confirm);border-color:var(--confirm-bg)}
 .s-complete{background:var(--done-bg);color:var(--done);border-color:var(--done-bg)}
 .s-dead{background:var(--dead-bg);color:var(--dead);border-color:var(--dead-bg)}
@@ -221,6 +227,20 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .msgbody{margin:0;font-size:13.5px;white-space:pre-wrap;line-height:1.4}
 .msgcompose{display:flex;gap:8px;align-items:flex-end}
 .msgcompose textarea{flex:1;resize:vertical;min-height:44px}
+.mention{font-weight:700;color:var(--accent)}
+
+.mentionswrap{position:relative;display:inline-flex}
+#mentionsBtn.has-mentions{border-color:var(--accent);color:var(--accent);font-weight:600}
+.mentionspop{position:absolute;top:calc(100% + 6px);right:0;width:280px;max-height:340px;overflow-y:auto;
+             background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+             box-shadow:var(--shadow);z-index:20;padding:6px}
+.mentionitem{display:block;width:100%;text-align:left;background:none;border:none;border-bottom:1px solid var(--line);
+             padding:8px 6px;cursor:pointer}
+.mentionitem:last-child{border-bottom:none}
+.mentionitem:hover{background:var(--surface-2)}
+.mentionitem-head{font-size:11px;color:var(--ink-3);margin-bottom:2px}
+.mentionitem-body{margin:0;font-size:13px;color:var(--ink);white-space:pre-wrap;
+                   overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .expandwrap textarea{width:100%;resize:vertical}
 .expandbtn{margin-top:6px}
 
@@ -347,6 +367,10 @@ tbody tr.ma-due td:first-child{box-shadow:inset 3px 0 0 var(--dead)}
         <button class="btn" id="todayBtn">Today</button>
       </div>
       <div class="spacer"></div>
+      <div class="mentionswrap" id="mentionsWrap" style="display:none">
+        <button class="btn" id="mentionsBtn">🔔 <span id="mentionsCount"></span></button>
+        <div class="mentionspop" id="mentionsPop" hidden></div>
+      </div>
       <span class="who" id="whoami"></span>
       <button class="btn btn-primary" id="bookBtn" style="display:none">+ Book a show</button>
       <button class="btn" id="logoutBtn">Log out</button>
@@ -359,6 +383,10 @@ tbody tr.ma-due td:first-child{box-shadow:inset 3px 0 0 var(--dead)}
       <div class="chips" id="venueChips"></div>
       <span class="eyebrow" id="countLabel"></span>
       <div class="legend" id="legend"></div>
+      <label class="showdead-toggle">
+        <input type="checkbox" id="showDeadToggle">
+        Show didn't work out
+      </label>
     </div>
   </div>
 
@@ -409,14 +437,15 @@ async function api(path, opts) {
 /* ============================== domain ============================= */
 var STATUS = {
   hold1:    {label:"1st hold",        cls:"s-hold1",     swatch:"var(--hold-1-bg)"},
-  hold2:    {label:"2nd hold",        cls:"s-hold2",     swatch:"var(--hold-2-bg)"},
-  hold3:    {label:"3rd hold",        cls:"s-hold3",     swatch:"var(--hold-3-bg)"},
+  hold2:    {label:"2nd hold",        cls:"s-hold2",     swatch:"var(--hold-1-bg)"},
+  hold3:    {label:"3rd hold",        cls:"s-hold3",     swatch:"var(--hold-1-bg)"},
   confirmed:{label:"Confirmed",       cls:"s-confirmed", swatch:"var(--confirm-bg)"},
   complete: {label:"Complete",        cls:"s-complete",  swatch:"var(--done-bg)"},
   dead:     {label:"Didn't work out", cls:"s-dead",      swatch:"var(--dead-bg)"},
   unsettled:{label:"Needs settling",  cls:"s-unsettled", swatch:"var(--done-bg)"}
 };
 var STATUS_ORDER = ["hold1","hold2","hold3","confirmed","complete","dead"];
+var HOLD_NUMBER = {hold1:1, hold2:2, hold3:3};
 var NO_DEAL = "Not recorded";
 var DEAL_TYPES = [NO_DEAL,"Guarantee","Guarantee vs %","Door split","Flat rental","Free / promo"];
 
@@ -445,6 +474,34 @@ function time12(t){
 function messageTime(iso){
   var d = new Date(iso);
   return d.toLocaleString(undefined, {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"});
+}
+/* Highlights @Name the same way the server matches them for the
+   notification (longest name first) — display only; the server's own
+   match when the message was posted is what actually decides who got
+   notified, this just needs to look right. */
+function messageBodyNodes(text){
+  var frag = document.createDocumentFragment();
+  var names = store.people.filter(function(p){ return p.access_level !== "crew"; })
+    .map(function(p){ return p.name; }).sort(function(a,b){ return b.length - a.length; });
+  var i = 0;
+  while(i < text.length){
+    var matchedName = null;
+    if(text[i] === "@"){
+      for(var n=0;n<names.length;n++){
+        if(text.substr(i+1, names[n].length).toLowerCase() === names[n].toLowerCase()){ matchedName = names[n]; break; }
+      }
+    }
+    if(matchedName){
+      frag.appendChild(el("span","mention","@"+matchedName));
+      i += 1 + matchedName.length;
+    } else {
+      var start = i;
+      i++;
+      while(i < text.length && text[i] !== "@") i++;
+      frag.appendChild(document.createTextNode(text.slice(start, i)));
+    }
+  }
+  return frag;
 }
 function isUnsettled(ev){ return !!ev && ev.status === "confirmed" && ev.show_date < todayISO(); }
 function st(ev){ if(isUnsettled(ev)) return STATUS.unsettled; return (ev && STATUS[ev.status]) || STATUS.hold1; }
@@ -499,14 +556,17 @@ function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace
 var store = {events:[], venues:[], roles:[], people:[], artists:[], visionNotes:[], maOffers:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__"};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
 function eventById(id){ return store.events.find(function(e){ return e.id === id; }); }
 function visibleEvents(){
-  return store.events.filter(function(ev){ return ui.venue === "__all__" || ev.venue === ui.venue; })
-    .slice().sort(function(a,b){ return a.show_date < b.show_date ? -1 : a.show_date > b.show_date ? 1 : 0; });
+  return store.events.filter(function(ev){
+    if(ev.venue !== ui.venue && ui.venue !== "__all__") return false;
+    if(ev.status === "dead" && !ui.showDead) return false;
+    return true;
+  }).slice().sort(function(a,b){ return a.show_date < b.show_date ? -1 : a.show_date > b.show_date ? 1 : 0; });
 }
 function artistTotals(name){
   var n = normName(name), paid = 0, played = 0, count = 0, last = "";
@@ -594,13 +654,16 @@ function renderVenueChips(){
 function renderLegend(){
   var box = document.getElementById("legend");
   box.innerHTML = "";
-  STATUS_ORDER.concat(["unsettled"]).forEach(function(k){
+  // hold1/2/3 are one shade now (the number badge on the card carries the
+  // distinction), so the legend shows one "Hold" swatch instead of three
+  // identical-looking ones.
+  ["hold1","confirmed","complete","dead","unsettled"].forEach(function(k){
     var item = el("span","legend-item");
     var sw = el("span","swatch");
     sw.style.background = STATUS[k].swatch;
-    if(k === "hold3"){ sw.style.background = "transparent"; sw.style.border = "1px dashed var(--line-strong)"; }
     if(k === "unsettled") sw.style.border = "1px solid var(--hold-1-bg)";
-    item.appendChild(sw); item.appendChild(document.createTextNode(STATUS[k].label));
+    item.appendChild(sw);
+    item.appendChild(document.createTextNode(k === "hold1" ? "Hold (1/2/3)" : STATUS[k].label));
     box.appendChild(item);
   });
 }
@@ -628,6 +691,8 @@ function setActiveTab(){
 /* ============================== calendar ============================= */
 function showChip(ev){
   var b = el("button","show " + st(ev).cls);
+  var holdNum = HOLD_NUMBER[ev.status];
+  if(holdNum) b.appendChild(el("span","holdnum", String(holdNum)));
   var name = el("span","name"); name.appendChild(actsNodes(ev));
   b.appendChild(name);
   var bits = [];
@@ -686,7 +751,7 @@ function phoneCell(ds, dayNum, list, out, isToday){
   var dots = el("div","dots");
   list.slice(0,4).forEach(function(ev){
     var d = el("span","dot"); var s = st(ev);
-    if(ev.status === "hold3"){ d.style.border = "1px solid var(--line-strong)"; } else { d.style.background = s.swatch; }
+    d.style.background = s.swatch;
     if(isUnsettled(ev)) d.style.border = "1px solid var(--hold-1-bg)";
     dots.appendChild(d);
   });
@@ -1222,12 +1287,14 @@ async function openEvent(id, dateHint){
   if(id){
     var r = await api("/api/events/" + id + "/messages");
     if(r.ok && draft && draft.id === id){ draft.messages = r.body.messages; renderSheet(); }
+    await refreshMentions(); // opening the thread just marked any of my mentions in it read
   }
 }
 async function refreshEventMessages(){
   var id = draft.id;
   var r = await api("/api/events/" + id + "/messages");
   if(r.ok && draft && draft.id === id){ draft.messages = r.body.messages; renderSheet(); }
+  await refreshMentions();
 }
 function openScrim(){ document.getElementById("scrim").hidden = false; document.body.style.overflow = "hidden"; }
 function closeSheet(){ document.getElementById("scrim").hidden = true; document.body.style.overflow = ""; draft = null; }
@@ -1548,7 +1615,8 @@ function renderSheet(){
         head.appendChild(del);
       }
       row.appendChild(head);
-      row.appendChild(el("p","msgbody", m.body));
+      var bodyP = el("p","msgbody"); bodyP.appendChild(messageBodyNodes(m.body));
+      row.appendChild(bodyP);
       thread.appendChild(row);
     });
     fs9.appendChild(thread);
@@ -1557,7 +1625,7 @@ function renderSheet(){
     var msgCompose = el("div","msgcompose");
     var msgInput = document.createElement("textarea");
     msgInput.rows = 2;
-    msgInput.placeholder = "Leave a note on this show...";
+    msgInput.placeholder = "Leave a note on this show... @Name notifies them";
     msgCompose.appendChild(msgInput);
     var sendBtn = el("button","btn","Send");
     sendBtn.type = "button";
@@ -1569,6 +1637,9 @@ function renderSheet(){
     };
     msgCompose.appendChild(sendBtn);
     fs9.appendChild(msgCompose);
+    var mentionable = store.people.filter(function(p){ return p.active && p.id !== me.id && p.access_level !== "crew"; })
+      .map(function(p){ return p.name; });
+    if(mentionable.length) fs9.appendChild(el("p","hint","Mention: " + mentionable.map(function(n){ return "@"+n; }).join("  ")));
     body.appendChild(fs9);
   }
 
@@ -2076,6 +2147,42 @@ function renderSettingsView(){
 }
 
 /* ============================== boot =================================== */
+function renderMentionsBadge(){
+  var wrap = document.getElementById("mentionsWrap");
+  if(!canBook()){ wrap.style.display = "none"; return; }
+  wrap.style.display = "inline-flex";
+  document.getElementById("mentionsCount").textContent = me.mention_count ? String(me.mention_count) : "";
+  document.getElementById("mentionsBtn").classList.toggle("has-mentions", !!me.mention_count);
+}
+async function refreshMentions(){
+  var r = await api("/api/me");
+  if(r.ok) me.mention_count = r.body.mention_count;
+  renderMentionsBadge();
+}
+async function toggleMentionsPop(){
+  var pop = document.getElementById("mentionsPop");
+  if(!pop.hidden){ pop.hidden = true; return; }
+  var r = await api("/api/my_mentions");
+  pop.innerHTML = "";
+  if(!r.ok || !r.body.mentions.length){
+    pop.appendChild(el("p","hint","No new mentions."));
+  } else {
+    r.body.mentions.forEach(function(m){
+      var item = el("button","mentionitem");
+      item.type = "button";
+      item.appendChild(el("div","mentionitem-head", (m.from_name||"Someone") + " on " + shortDate(m.show_date) + " · " + m.venue));
+      item.appendChild(el("p","mentionitem-body", m.body));
+      item.onclick = async function(){
+        pop.hidden = true;
+        await openEvent(m.event_id);
+        await refreshMentions();
+      };
+      pop.appendChild(item);
+    });
+  }
+  pop.hidden = false;
+}
+
 async function boot(){
   var r = await api("/api/me");
   if(!r.ok){ document.getElementById("loginCard").style.display = "block"; document.getElementById("app").style.display = "none"; return; }
@@ -2083,6 +2190,7 @@ async function boot(){
   document.getElementById("loginCard").style.display = "none";
   document.getElementById("app").style.display = "block";
   document.getElementById("whoami").textContent = me.name + " · " + me.access_level;
+  renderMentionsBadge();
   document.getElementById("navTabs").style.display = "flex";
   document.getElementById("bookBtn").style.display = canBook() ? "inline-block" : "none";
   document.getElementById("filterbar").style.display = "flex";
@@ -2117,14 +2225,37 @@ document.getElementById("navTabs").addEventListener("click", function(e){
   setActiveTab();
   renderAll();
 });
-document.getElementById("prevMonth").addEventListener("click", function(){ ui.cursor.m--; if(ui.cursor.m<0){ui.cursor.m=11;ui.cursor.y--;} renderAll(); });
-document.getElementById("nextMonth").addEventListener("click", function(){ ui.cursor.m++; if(ui.cursor.m>11){ui.cursor.m=0;ui.cursor.y++;} renderAll(); });
+function goToPrevMonth(){ ui.cursor.m--; if(ui.cursor.m<0){ui.cursor.m=11;ui.cursor.y--;} renderAll(); }
+function goToNextMonth(){ ui.cursor.m++; if(ui.cursor.m>11){ui.cursor.m=0;ui.cursor.y++;} renderAll(); }
+document.getElementById("prevMonth").addEventListener("click", goToPrevMonth);
+document.getElementById("nextMonth").addEventListener("click", goToNextMonth);
 document.getElementById("todayBtn").addEventListener("click", function(){ var t=new Date(); ui.cursor={y:t.getFullYear(),m:t.getMonth()}; renderAll(); });
+document.getElementById("showDeadToggle").addEventListener("change", function(e){ ui.showDead = e.target.checked; renderAll(); });
 document.getElementById("bookBtn").addEventListener("click", function(){ openEvent(null, todayISO()); });
 document.getElementById("addPersonBtn").addEventListener("click", function(){ openPersonForm(null); });
+document.getElementById("mentionsBtn").addEventListener("click", toggleMentionsPop);
+document.addEventListener("click", function(e){
+  var wrap = document.getElementById("mentionsWrap");
+  if(!wrap.contains(e.target)) document.getElementById("mentionsPop").hidden = true;
+});
 document.getElementById("sheetClose").addEventListener("click", closeSheet);
 document.getElementById("scrim").addEventListener("click", function(e){ if(e.target === document.getElementById("scrim")) closeSheet(); });
 document.addEventListener("keydown", function(e){ if(e.key === "Escape" && !document.getElementById("scrim").hidden) closeSheet(); });
+
+/* Scrolling past the top/bottom of the page while on the calendar moves a
+   month, so a mouse wheel becomes a quick way to flip months without
+   reaching for the arrow buttons. One flip per gesture — wheel fires many
+   events per scroll, so a short cooldown stops it jumping several months. */
+var lastMonthWheelAt = 0;
+window.addEventListener("wheel", function(e){
+  if(ui.view !== "calendar" || !document.getElementById("scrim").hidden) return;
+  var atBottom = (window.innerHeight + window.scrollY) >= (document.documentElement.scrollHeight - 2);
+  var atTop = window.scrollY <= 0;
+  var now = Date.now();
+  if(now - lastMonthWheelAt < 700) return;
+  if(e.deltaY > 0 && atBottom){ lastMonthWheelAt = now; goToNextMonth(); }
+  else if(e.deltaY < 0 && atTop){ lastMonthWheelAt = now; goToPrevMonth(); }
+}, {passive:true});
 if(phoneMQ){ if(phoneMQ.addEventListener) phoneMQ.addEventListener("change", renderAll); else if(phoneMQ.addListener) phoneMQ.addListener(renderAll); }
 
 boot();

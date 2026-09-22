@@ -265,6 +265,19 @@ CREATE TABLE event_messages (
 );
 CREATE INDEX idx_event_messages_event ON event_messages(event_id, created_at);
 
+-- @mentions inside a message body — "you need to look at this." Marked
+-- read as a side effect of opening that show's message thread, not a
+-- separate click. Real push/email notifications don't exist in this app;
+-- this only surfaces as a badge count next time the mentioned person is
+-- actually using ConcertPro.
+CREATE TABLE event_message_mentions (
+    id          SERIAL PRIMARY KEY,
+    message_id  INTEGER NOT NULL REFERENCES event_messages(id) ON DELETE CASCADE,
+    person_id   INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    read_at     TIMESTAMPTZ
+);
+CREATE INDEX idx_message_mentions_unread ON event_message_mentions(person_id) WHERE read_at IS NULL;
+
 -- Seed data matching what's already live in the artifact prototype.
 INSERT INTO venues (name) VALUES ('Frankies'), ('Ottawa Tavern'), ('Cla-Zel Theater');
 INSERT INTO roles (name) VALUES

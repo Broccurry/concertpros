@@ -250,7 +250,13 @@ def create_app():
         cur = g.db.cursor()
         cur.execute("SELECT name, email, access_level FROM people WHERE id = %s", (g.viewer.id,))
         name, email, access_level = cur.fetchone()
-        return jsonify(id=g.viewer.id, name=name, email=email, access_level=access_level)
+        cur.execute(
+            "SELECT count(*) FROM event_message_mentions WHERE person_id = %s AND read_at IS NULL",
+            (g.viewer.id,),
+        )
+        mention_count = cur.fetchone()[0]
+        return jsonify(id=g.viewer.id, name=name, email=email, access_level=access_level,
+                       mention_count=mention_count)
 
     @app.get("/api/events")
     @require_auth
@@ -972,7 +978,35 @@ def create_app():
             (event_id,),
         )
         cols = [c.name for c in cur.description]
-        return jsonify(messages=[dict(zip(cols, row)) for row in cur.fetchall()])
+        messages = [dict(zip(cols, row)) for row in cur.fetchall()]
+        # Opening this thread is what "reading" a mention means here — no
+        # separate mark-as-read click.
+        cur.execute(
+            "UPDATE event_message_mentions SET read_at = now() "
+            "WHERE person_id = %s AND read_at IS NULL "
+            "AND message_id IN (SELECT id FROM event_messages WHERE event_id = %s)",
+            (g.viewer.id, event_id),
+        )
+        return jsonify(messages=messages)
+
+    def _record_mentions(conn, message_id, text):
+        """@Name in a message body — matched against real booker/owner
+        names (longest name first, so '@Cody Sizemore' doesn't also
+        half-match a shorter 'Cody' if both existed). No autocomplete on
+        the way in; this is a plain-text convention, not a rich editor."""
+        cur = conn.cursor()
+        cur.execute("SELECT id, name FROM people WHERE access_level IN ('booker','owner') AND active")
+        people = sorted(cur.fetchall(), key=lambda p: len(p[1]), reverse=True)
+        lowered = text.lower()
+        matched_ids = set()
+        for person_id, name in people:
+            if f"@{name.lower()}" in lowered and person_id != g.viewer.id:
+                matched_ids.add(person_id)
+        for person_id in matched_ids:
+            cur.execute(
+                "INSERT INTO event_message_mentions (message_id, person_id) VALUES (%s, %s)",
+                (message_id, person_id),
+            )
 
     @app.post("/api/events/<int:event_id>/messages")
     @require_booker
@@ -990,8 +1024,30 @@ def create_app():
             (event_id, g.viewer.id, text),
         )
         message_id = cur.fetchone()[0]
+        _record_mentions(g.db, message_id, text)
         audit.record(g.db, g.viewer, "event", event_id, "message", {"message_id": message_id})
         return jsonify(id=message_id), 201
+
+    @app.get("/api/my_mentions")
+    @require_booker
+    def list_my_mentions():
+        """Unread @mentions across every show, newest first — what the
+        notification badge in the topbar is counting."""
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT mm.id, e.id AS event_id, e.show_date, v.name AS venue, "
+            "m.body, m.created_at, p.name AS from_name "
+            "FROM event_message_mentions mm "
+            "JOIN event_messages m ON m.id = mm.message_id "
+            "JOIN events e ON e.id = m.event_id "
+            "JOIN venues v ON v.id = e.venue_id "
+            "LEFT JOIN people p ON p.id = m.person_id "
+            "WHERE mm.person_id = %s AND mm.read_at IS NULL "
+            "ORDER BY m.created_at DESC",
+            (g.viewer.id,),
+        )
+        cols = [c.name for c in cur.description]
+        return jsonify(mentions=[dict(zip(cols, row)) for row in cur.fetchall()])
 
     @app.delete("/api/messages/<int:message_id>")
     @require_booker
