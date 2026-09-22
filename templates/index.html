@@ -210,6 +210,17 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
   .memberrow input:nth-child(1){grid-area:name} .memberrow input:nth-child(2){grid-area:phone}
   .memberrow input:nth-child(3){grid-area:email} .memberrow .rowdel{grid-area:x}}
 
+.msgthread{display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:10px}
+.msgrow{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px}
+.msghead{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-3);margin-bottom:4px}
+.msgauthor{font-weight:600;color:var(--ink-2)}
+.msghead .x{margin-left:auto;border:none;background:none;color:var(--ink-3);width:20px;height:20px;border-radius:50%;
+            display:grid;place-items:center;padding:0}
+.msghead .x:hover{color:var(--dead);background:var(--surface)}
+.msgbody{margin:0;font-size:13.5px;white-space:pre-wrap;line-height:1.4}
+.msgcompose{display:flex;gap:8px;align-items:flex-end}
+.msgcompose textarea{flex:1;resize:vertical;min-height:44px}
+
 /* A show's bill: each act starts lowercase/normal weight as a tentative
    hold; double-clicking one marks it confirmed (bold caps) — see
    event_artists.confirmed. Applied everywhere a bill is shown, calendar
@@ -427,6 +438,10 @@ function time12(t){
   var a = t.split(":"), h = +a[0], m = a[1] || "00";
   var ap = h >= 12 ? "pm" : "am"; h = h % 12; if(h === 0) h = 12;
   return h + (m === "00" ? "" : ":" + m) + ap;
+}
+function messageTime(iso){
+  var d = new Date(iso);
+  return d.toLocaleString(undefined, {month:"short", day:"numeric", hour:"numeric", minute:"2-digit"});
 }
 function isUnsettled(ev){ return !!ev && ev.status === "confirmed" && ev.show_date < todayISO(); }
 function st(ev){ if(isUnsettled(ev)) return STATUS.unsettled; return (ev && STATUS[ev.status]) || STATUS.hold1; }
@@ -1155,10 +1170,11 @@ function selectKV(options, value, onChange){
 }
 function select(options, value, onChange){ return selectKV(options.map(function(o){ return {value:o,label:o}; }), value, onChange); }
 
-function openEvent(id, dateHint){
+async function openEvent(id, dateHint){
   if(id){
     var ev = eventById(id);
     draft = JSON.parse(JSON.stringify(ev));
+    draft.messages = [];
     draftIsNew = false;
   } else {
     draft = {
@@ -1166,13 +1182,22 @@ function openEvent(id, dateHint){
       artists:[], status:"hold1", show_date: dateHint || todayISO(), doors:"19:00", show_time:"20:00",
       deal_type:NO_DEAL, guarantee:"", backend_pct:"", deal_notes:"",
       ticket_tiers:[{label:"Advance",price:""},{label:"Day of show",price:""}],
-      announce_date:"", onsale_date:"", notes:"",
+      announce_date:"", onsale_date:"", notes:"", messages:[],
       tasks:[], staff:[], settlement:{tickets_sold:"",gross:"",expenses:"",artist_payout:"",settled:false,notes:""}
     };
     draftIsNew = true;
   }
   renderSheet();
   openScrim();
+  if(id){
+    var r = await api("/api/events/" + id + "/messages");
+    if(r.ok && draft && draft.id === id){ draft.messages = r.body.messages; renderSheet(); }
+  }
+}
+async function refreshEventMessages(){
+  var id = draft.id;
+  var r = await api("/api/events/" + id + "/messages");
+  if(r.ok && draft && draft.id === id){ draft.messages = r.body.messages; renderSheet(); }
 }
 function openScrim(){ document.getElementById("scrim").hidden = false; document.body.style.overflow = "hidden"; }
 function closeSheet(){ document.getElementById("scrim").hidden = true; document.body.style.overflow = ""; draft = null; }
@@ -1475,6 +1500,50 @@ function renderSheet(){
   ta.oninput = function(){ draft.notes = ta.value; };
   fs8.appendChild(ta);
   body.appendChild(fs8);
+
+  if(!draftIsNew){
+    var fs9 = document.createElement("fieldset");
+    fs9.appendChild(el("legend",null,"Messages"));
+    var thread = el("div","msgthread");
+    (draft.messages||[]).forEach(function(m){
+      var row = el("div","msgrow");
+      var head = el("div","msghead");
+      head.appendChild(el("span","msgauthor", m.person_name || "(removed person)"));
+      head.appendChild(el("span",null, messageTime(m.created_at)));
+      if(m.person_id === me.id || me.access_level === "owner"){
+        var del = el("button","x","✕");
+        del.type = "button";
+        del.title = "Delete message";
+        del.onclick = async function(){
+          await api("/api/messages/" + m.id, {method:"DELETE"});
+          await refreshEventMessages();
+        };
+        head.appendChild(del);
+      }
+      row.appendChild(head);
+      row.appendChild(el("p","msgbody", m.body));
+      thread.appendChild(row);
+    });
+    fs9.appendChild(thread);
+    if(!(draft.messages||[]).length) fs9.appendChild(el("p","hint","No messages yet — leave one for whoever opens this show next."));
+
+    var msgCompose = el("div","msgcompose");
+    var msgInput = document.createElement("textarea");
+    msgInput.rows = 2;
+    msgInput.placeholder = "Leave a note on this show...";
+    msgCompose.appendChild(msgInput);
+    var sendBtn = el("button","btn","Send");
+    sendBtn.type = "button";
+    sendBtn.onclick = async function(){
+      var text = msgInput.value.trim();
+      if(!text) return;
+      await api("/api/events/" + draft.id + "/messages", {method:"POST", body: JSON.stringify({body:text})});
+      await refreshEventMessages();
+    };
+    msgCompose.appendChild(sendBtn);
+    fs9.appendChild(msgCompose);
+    body.appendChild(fs9);
+  }
 
   var errLine = el("span","hint"); errLine.id = "sheetError"; errLine.style.color = "var(--dead)";
   var save = el("button","btn btn-primary", draftIsNew ? "Book it" : "Save changes");

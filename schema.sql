@@ -251,6 +251,20 @@ CREATE TABLE artist_members (
     sort_order  INTEGER NOT NULL DEFAULT 0
 );
 
+-- A running comment thread on one show — booker/owner coordination
+-- ("did we confirm the guarantee yet?", "door needs to know load-in time"),
+-- not a general chat app. Fetched on demand when a show's editor opens,
+-- not bundled into the main events list — unlike tasks/staff this can
+-- grow unbounded over a show's life and shouldn't bloat every calendar load.
+CREATE TABLE event_messages (
+    id          SERIAL PRIMARY KEY,
+    event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    person_id   INTEGER REFERENCES people(id),
+    body        TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_event_messages_event ON event_messages(event_id, created_at);
+
 -- Seed data matching what's already live in the artifact prototype.
 INSERT INTO venues (name) VALUES ('Frankies'), ('Ottawa Tavern'), ('Cla-Zel Theater');
 INSERT INTO roles (name) VALUES

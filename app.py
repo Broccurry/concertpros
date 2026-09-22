@@ -953,6 +953,62 @@ def create_app():
         audit.record(g.db, g.viewer, "event", event_id, "delete_task", {"task_id": task_id})
         return jsonify(ok=True)
 
+    @app.get("/api/events/<int:event_id>/messages")
+    @require_booker
+    def list_event_messages(event_id):
+        """Fetched on demand when a show's editor opens — not bundled into
+        /api/events like tasks/staff, since a thread can grow unbounded
+        over a show's life and shouldn't bloat every calendar load."""
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        cur.execute(
+            "SELECT m.id, m.body, m.created_at, m.person_id, p.name AS person_name "
+            "FROM event_messages m LEFT JOIN people p ON p.id = m.person_id "
+            "WHERE m.event_id = %s ORDER BY m.created_at",
+            (event_id,),
+        )
+        cols = [c.name for c in cur.description]
+        return jsonify(messages=[dict(zip(cols, row)) for row in cur.fetchall()])
+
+    @app.post("/api/events/<int:event_id>/messages")
+    @require_booker
+    def create_event_message(event_id):
+        body = request.get_json(silent=True) or {}
+        text = (body.get("body") or "").strip()
+        if not text:
+            return jsonify(error="body_required"), 400
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        cur.execute(
+            "INSERT INTO event_messages (event_id, person_id, body) VALUES (%s, %s, %s) RETURNING id",
+            (event_id, g.viewer.id, text),
+        )
+        message_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "event", event_id, "message", {"message_id": message_id})
+        return jsonify(id=message_id), 201
+
+    @app.delete("/api/messages/<int:message_id>")
+    @require_booker
+    def delete_event_message(message_id):
+        """A booker can remove their own message; only the owner can
+        remove someone else's — same shape as the people-admin rank rule,
+        just for moderation instead of access level."""
+        cur = g.db.cursor()
+        cur.execute("SELECT event_id, person_id FROM event_messages WHERE id = %s", (message_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        event_id, author_id = row
+        if author_id != g.viewer.id and g.viewer.access_level != "owner":
+            return jsonify(error="forbidden"), 403
+        cur.execute("DELETE FROM event_messages WHERE id = %s", (message_id,))
+        audit.record(g.db, g.viewer, "event", event_id, "delete_message", {"message_id": message_id})
+        return jsonify(ok=True)
+
     @app.get("/api/vision_notes")
     @require_booker
     def list_vision_notes():
