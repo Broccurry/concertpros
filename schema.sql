@@ -73,12 +73,30 @@ CREATE TABLE artists (
 -- same normalization the artifact prototype used) rather than a DB
 -- constraint, because two different real acts can share a stage name.
 
+-- A multi-day hold: several candidate dates for the same prospective
+-- show, each free to sit at its own point on the hold ladder (1st hold
+-- on one date, 3rd on another). Deliberately a bare anchor with no
+-- columns of its own — the group's "primary" date is whichever member
+-- has the lowest id (created first), computed on the fly rather than
+-- stored, so there's no second field that could disagree with reality.
+-- That primary date owns the acts/deal/tasks/messages/tiers/staff/
+-- settlement; the other dates in the group are lightweight placeholders
+-- that borrow its data for display (see app.py's _group_anchor_id).
+-- The moment any date is confirmed, it inherits everything and every
+-- other date in the group is deleted outright — no "didn't work out"
+-- trail for the ones that didn't happen (see _migrate_shared_event_data).
+CREATE TABLE hold_groups (
+    id          SERIAL PRIMARY KEY,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE events (
     id              SERIAL PRIMARY KEY,
     venue_id        INTEGER NOT NULL REFERENCES venues(id),
     show_date       DATE NOT NULL,
     doors           TIME,
     show_time       TIME,
+    hold_group_id   INTEGER REFERENCES hold_groups(id) ON DELETE SET NULL,
 
     -- The hold ladder is a priority order, not an unordered category set —
     -- see legend/status rendering in the prototype. Crew never sees anything
@@ -93,6 +111,7 @@ CREATE TABLE events (
     deal_notes      TEXT,
     announce_date   DATE,
     onsale_date     DATE,
+    ticket_link     TEXT,
     notes           TEXT,
 
     created_by      INTEGER REFERENCES people(id),
@@ -127,7 +146,28 @@ CREATE TABLE event_artists (
     guarantee   NUMERIC,
     paid        NUMERIC,
     walkups     INTEGER,
+    notes       TEXT,              -- anything this band needs for THIS show specifically
+    -- A band that can't do it isn't the same as one that hasn't answered
+    -- yet — declined stays visually struck through and sorts to the
+    -- bottom of the bill, but the row (and its contact history) stays
+    -- put rather than being deleted, so nobody re-contacts them not
+    -- realizing someone already got a no.
+    declined    BOOLEAN NOT NULL DEFAULT FALSE,
+    -- This band's role on THIS bill — separate from the artist's own
+    -- overall tier (Local/Regional/National), which describes the band
+    -- everywhere, not just tonight's lineup.
+    bill_role   TEXT CHECK (bill_role IN ('Touring', 'Direct Support', 'Support', 'Local') OR bill_role IS NULL),
     UNIQUE (event_id, artist_id)
+);
+
+-- Who reached out to this band about this show, how, and when — so two
+-- bookers don't both contact the same band without realizing it.
+CREATE TABLE event_artist_contacts (
+    id              SERIAL PRIMARY KEY,
+    event_artist_id INTEGER NOT NULL REFERENCES event_artists(id) ON DELETE CASCADE,
+    method          TEXT NOT NULL CHECK (method IN ('text', 'email', 'phone')),
+    person_id       INTEGER REFERENCES people(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE ticket_tiers (
@@ -154,10 +194,13 @@ CREATE TABLE event_tasks (
 -- are the one thing they're allowed to see about a show beyond the public
 -- fields — see permissions.py.
 CREATE TABLE assignments (
-    id          SERIAL PRIMARY KEY,
-    event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    role_id     INTEGER NOT NULL REFERENCES roles(id),
-    person_id   INTEGER REFERENCES people(id),   -- NULL = role open, unfilled
+    id              SERIAL PRIMARY KEY,
+    event_id        INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    role_id         INTEGER NOT NULL REFERENCES roles(id),
+    person_id       INTEGER REFERENCES people(id),   -- NULL = role open, unfilled
+    scheduled_time  TIME,                            -- when this shift is supposed to start
+    clocked_in_at   TIMESTAMPTZ,
+    clocked_out_at  TIMESTAMPTZ,
     UNIQUE (event_id, role_id, person_id)
 );
 

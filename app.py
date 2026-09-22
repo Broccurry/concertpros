@@ -43,6 +43,9 @@ def _parse_number(v):
         return None, False
 
 
+_BILL_ROLES = ("Touring", "Direct Support", "Support", "Local")
+
+
 def _parse_acts(raw):
     """Parses an `acts`/`artists` field into a list of act dicts — the one
     place that decides what a valid bill looks like, used by both event
@@ -56,6 +59,11 @@ def _parse_acts(raw):
         if isinstance(item, dict):
             name = (item.get("name") or "").strip()
             confirmed = bool(item.get("confirmed"))
+            declined = bool(item.get("declined"))
+            notes = (item.get("notes") or "").strip() or None
+            bill_role = item.get("bill_role") or None
+            if bill_role is not None and bill_role not in _BILL_ROLES:
+                return None, "invalid_bill_role"
             guarantee, ok1 = _parse_number(item.get("guarantee"))
             paid, ok2 = _parse_number(item.get("paid"))
             walkups = item.get("walkups")
@@ -69,13 +77,18 @@ def _parse_acts(raw):
             if not (ok1 and ok2 and ok3):
                 return None, "invalid_act_figure"
         elif isinstance(item, str):
-            name, confirmed, guarantee, paid, walkups = item.strip(), False, None, None, None
+            name = item.strip()
+            confirmed = declined = False
+            notes = bill_role = guarantee = paid = walkups = None
         else:
-            name, confirmed, guarantee, paid, walkups = "", False, None, None, None
+            name = ""
+            confirmed = declined = False
+            notes = bill_role = guarantee = paid = walkups = None
         if not name:
             return None, "every_act_needs_a_name"
-        acts.append({"name": name, "confirmed": confirmed, "guarantee": guarantee,
-                     "paid": paid, "walkups": walkups})
+        acts.append({"name": name, "confirmed": confirmed, "declined": declined,
+                     "notes": notes, "bill_role": bill_role,
+                     "guarantee": guarantee, "paid": paid, "walkups": walkups})
     return acts, None
 
 
@@ -83,9 +96,18 @@ def _replace_event_artists(conn, event_id, acts):
     """Replaces a show's whole bill — same replace-the-set pattern as
     ticket_tiers. Each act is resolved independently via find_or_create,
     in order, so typing 'Foo Fighters' then 'Nirvana' always creates two
-    acts, never one artist named 'Foo Fighters Nirvana'."""
+    acts, never one artist named 'Foo Fighters Nirvana'. Re-creating the
+    rows on every save (rather than diffing) does mean a band's contact
+    log would be orphaned if we ever deleted rows out from under it —
+    the DELETE+INSERT below only touches this event's rows, and
+    event_artist_contacts cascades off event_artists.id, so a band that's
+    removed from the bill entirely does lose its contact history with
+    it, same as removing a task loses its own history. That's accepted;
+    reordering/editing an existing act does NOT delete+recreate it below
+    it's matched by artist_id so its id (and contact log) survives."""
     cur = conn.cursor()
-    cur.execute("DELETE FROM event_artists WHERE event_id = %s", (event_id,))
+    cur.execute("SELECT id, artist_id FROM event_artists WHERE event_id = %s", (event_id,))
+    existing_by_artist = {artist_id: row_id for row_id, artist_id in cur.fetchall()}
     seen_artist_ids = set()
     sort_order = 0
     for act in acts:
@@ -93,12 +115,106 @@ def _replace_event_artists(conn, event_id, acts):
         if artist_id in seen_artist_ids:
             continue
         seen_artist_ids.add(artist_id)
-        cur.execute(
-            "INSERT INTO event_artists (event_id, artist_id, confirmed, sort_order, guarantee, paid, walkups) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (event_id, artist_id, act["confirmed"], sort_order, act["guarantee"], act["paid"], act["walkups"]),
-        )
+        if artist_id in existing_by_artist:
+            cur.execute(
+                "UPDATE event_artists SET confirmed=%s, declined=%s, sort_order=%s, guarantee=%s, "
+                "paid=%s, walkups=%s, notes=%s, bill_role=%s WHERE id = %s",
+                (act["confirmed"], act["declined"], sort_order, act["guarantee"], act["paid"],
+                 act["walkups"], act["notes"], act["bill_role"], existing_by_artist[artist_id]),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO event_artists (event_id, artist_id, confirmed, declined, sort_order, "
+                "guarantee, paid, walkups, notes, bill_role) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (event_id, artist_id, act["confirmed"], act["declined"], sort_order,
+                 act["guarantee"], act["paid"], act["walkups"], act["notes"], act["bill_role"]),
+            )
         sort_order += 1
+    cur.execute(
+        "DELETE FROM event_artists WHERE event_id = %s AND artist_id != ALL(%s)",
+        (event_id, list(seen_artist_ids) or [0]),
+    )
+
+
+def _parse_optional_event_fields(body):
+    """Every optional field an event can carry beyond venue/date/status/
+    acts, with the coercion rules a date/time/number field needs — used
+    identically whether the show is being booked for the first time or
+    edited later, so that rule only exists once (CLAUDE.md rule 2).
+    Returns (updates, error); updates only has the keys present in body."""
+    updates = {}
+    for key in ("deal_type", "deal_notes", "notes", "ticket_link"):
+        if key in body:
+            updates[key] = body[key]
+    for key in ("announce_date", "onsale_date"):
+        if key in body:
+            val = body[key]
+            if val in (None, ""):
+                updates[key] = None
+            else:
+                try:
+                    updates[key] = date.fromisoformat(val)
+                except ValueError:
+                    return None, f"invalid_{key}"
+    for key in ("doors", "show_time"):
+        if key in body:
+            val = body[key]
+            if val in (None, ""):
+                updates[key] = None
+            else:
+                try:
+                    updates[key] = time.fromisoformat(val)
+                except ValueError:
+                    return None, f"invalid_{key}"
+    for key in ("guarantee", "backend_pct"):
+        if key in body:
+            parsed, ok = _parse_number(body[key])
+            if not ok:
+                return None, f"invalid_{key}"
+            updates[key] = parsed
+    return updates, None
+
+
+# A multi-day hold's fields split two ways on update: these describe THIS
+# candidate date and always apply to the id in the URL. Everything else
+# describes the eventual show and redirects to the group's anchor date —
+# see _group_anchor_id.
+PER_DATE_EVENT_FIELDS = {"venue_id", "status", "show_date", "doors", "show_time"}
+
+_SHARED_CHILD_TABLES = ("event_artists", "ticket_tiers", "event_tasks", "assignments",
+                        "settlements", "event_messages")
+_SHARED_SCALAR_COLUMNS = ("deal_type", "guarantee", "backend_pct", "deal_notes",
+                          "announce_date", "onsale_date", "notes", "ticket_link")
+
+
+def _group_anchor_id(conn, event_id):
+    """The date that actually owns the bill/deal/tasks/messages for a
+    multi-day hold is whichever member has the lowest id — the one
+    created first. An event with no group is its own anchor."""
+    cur = conn.cursor()
+    cur.execute("SELECT hold_group_id FROM events WHERE id = %s", (event_id,))
+    row = cur.fetchone()
+    if row is None or row[0] is None:
+        return event_id
+    cur.execute("SELECT MIN(id) FROM events WHERE hold_group_id = %s", (row[0],))
+    return cur.fetchone()[0]
+
+
+def _migrate_shared_event_data(conn, from_id, to_id):
+    """Moves the acts/tiers/tasks/staff/settlement/messages and the
+    shared deal/notes fields from one event row to another — used when
+    the date that currently owns them is about to stop existing (either
+    it's being confirmed and isn't the anchor, or it IS the anchor and
+    is being removed from the group)."""
+    cur = conn.cursor()
+    for table in _SHARED_CHILD_TABLES:
+        cur.execute(f"UPDATE {table} SET event_id = %s WHERE event_id = %s", (to_id, from_id))
+    cols = ", ".join(_SHARED_SCALAR_COLUMNS)
+    cur.execute(f"SELECT {cols} FROM events WHERE id = %s", (from_id,))
+    row = cur.fetchone()
+    if row is not None:
+        set_clause = ", ".join(f"{c} = %s" for c in _SHARED_SCALAR_COLUMNS)
+        cur.execute(f"UPDATE events SET {set_clause} WHERE id = %s", list(row) + [to_id])
 
 SESSION_COOKIE = "cp_session"
 SESSION_LIFETIME = timedelta(days=90)
@@ -395,6 +511,32 @@ def create_app():
                      {"members": [{"name": n} for n, _, _ in cleaned]})
         return jsonify(ok=True)
 
+    @app.post("/api/event_artists/<int:event_artist_id>/contacts")
+    @require_booker
+    def log_event_artist_contact(event_artist_id):
+        """One entry in a band's contact log for this show — the method,
+        who did it, and when. The whole point is that a second booker
+        opening this act sees it and doesn't call the same band again."""
+        body = request.get_json(silent=True) or {}
+        method = body.get("method")
+        if method not in ("text", "email", "phone"):
+            return jsonify(error="invalid_method"), 400
+        cur = g.db.cursor()
+        cur.execute("SELECT event_id FROM event_artists WHERE id = %s", (event_artist_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        event_id = row[0]
+        cur.execute(
+            "INSERT INTO event_artist_contacts (event_artist_id, method, person_id) "
+            "VALUES (%s, %s, %s) RETURNING id",
+            (event_artist_id, method, g.viewer.id),
+        )
+        contact_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "event", event_id, "log_contact",
+                     {"event_artist_id": event_artist_id, "method": method})
+        return jsonify(id=contact_id), 201
+
     @app.post("/api/events")
     @require_booker
     def create_event():
@@ -415,15 +557,38 @@ def create_app():
         except ValueError:
             return jsonify(error="invalid_date"), 400
 
+        extra_dates_raw = body.get("extra_dates") or []
+        if not isinstance(extra_dates_raw, list):
+            return jsonify(error="extra_dates_must_be_a_list"), 400
+        extra_dates = []
+        for d in extra_dates_raw:
+            try:
+                extra_dates.append(date.fromisoformat(d))
+            except (TypeError, ValueError):
+                return jsonify(error="invalid_extra_date"), 400
+
+        optional, err = _parse_optional_event_fields(body)
+        if err:
+            return jsonify(error=err), 400
+
         cur = g.db.cursor()
         cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
         if cur.fetchone() is None:
             return jsonify(error="unknown_venue"), 400
 
+        # A multi-day hold gets a group; the date created here always ends
+        # up with the lowest id in it, so it's automatically the anchor
+        # that owns the acts/deal/tasks — no separate bookkeeping needed.
+        group_id = None
+        if extra_dates:
+            cur.execute("INSERT INTO hold_groups DEFAULT VALUES RETURNING id")
+            group_id = cur.fetchone()[0]
+
+        cols = ["venue_id", "show_date", "status", "hold_group_id", "created_by"] + list(optional.keys())
+        vals = [venue_id, show_date, status, group_id, g.viewer.id] + list(optional.values())
         cur.execute(
-            """INSERT INTO events (venue_id, show_date, status, created_by)
-               VALUES (%s, %s, %s, %s) RETURNING id""",
-            (venue_id, show_date, status, g.viewer.id),
+            f"INSERT INTO events ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(vals))}) RETURNING id",
+            vals,
         )
         event_id = cur.fetchone()[0]
         _replace_event_artists(g.db, event_id, acts)
@@ -432,9 +597,15 @@ def create_app():
                 "INSERT INTO event_tasks (event_id, label, sort_order) VALUES (%s, %s, %s)",
                 (event_id, label, i),
             )
+        for extra_date in extra_dates:
+            cur.execute(
+                "INSERT INTO events (venue_id, show_date, status, hold_group_id, created_by) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (venue_id, extra_date, status, group_id, g.viewer.id),
+            )
         audit.record(g.db, g.viewer, "event", event_id, "create",
                      {"venue_id": venue_id, "acts": [a["name"] for a in acts],
-                      "show_date": show_date_raw, "status": status})
+                      "show_date": show_date_raw, "status": status, "extra_dates": extra_dates_raw})
         return jsonify(id=event_id), 201
 
     @app.patch("/api/events/<int:event_id>")
@@ -454,21 +625,28 @@ def create_app():
             return jsonify(error="invalid_version"), 400
 
         cur = g.db.cursor()
+        cur.execute("SELECT hold_group_id FROM events WHERE id = %s", (event_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        group_id = row[0]
+
         cur.execute(
             """SELECT venue_id, show_date, doors, show_time, status,
-                      deal_type, guarantee, backend_pct, deal_notes, announce_date, onsale_date, notes
+                      deal_type, guarantee, backend_pct, deal_notes, announce_date, onsale_date,
+                      ticket_link, notes
                FROM events WHERE id = %s""",
             (event_id,),
         )
         row = cur.fetchone()
-        if row is None:
-            return jsonify(error="not_found"), 404
         before_cols = ["venue_id", "show_date", "doors", "show_time", "status",
                        "deal_type", "guarantee", "backend_pct", "deal_notes", "announce_date",
-                       "onsale_date", "notes"]
+                       "onsale_date", "ticket_link", "notes"]
         before = dict(zip(before_cols, row))
 
-        updates = {}
+        updates, err = _parse_optional_event_fields(body)
+        if err:
+            return jsonify(error=err), 400
         if "venue_id" in body:
             cur.execute("SELECT 1 FROM venues WHERE id = %s", (body["venue_id"],))
             if cur.fetchone() is None:
@@ -478,56 +656,78 @@ def create_app():
             if body["status"] not in ALL_STATUSES:
                 return jsonify(error="invalid_status"), 400
             updates["status"] = body["status"]
-        for key in ("deal_type", "deal_notes", "notes"):
-            if key in body:
-                updates[key] = body[key]
-        for key in ("show_date", "announce_date", "onsale_date"):
-            if key in body:
-                val = body[key]
-                if val in (None, ""):
-                    updates[key] = None
-                else:
-                    try:
-                        updates[key] = date.fromisoformat(val)
-                    except ValueError:
-                        return jsonify(error=f"invalid_{key}"), 400
-        for key in ("doors", "show_time"):
-            if key in body:
-                val = body[key]
-                if val in (None, ""):
-                    updates[key] = None
-                else:
-                    try:
-                        updates[key] = time.fromisoformat(val)
-                    except ValueError:
-                        return jsonify(error=f"invalid_{key}"), 400
-        for key in ("guarantee", "backend_pct"):
-            if key in body:
-                val = body[key]
-                if val in (None, ""):
-                    updates[key] = None
-                else:
-                    try:
-                        updates[key] = float(val)
-                    except (TypeError, ValueError):
-                        return jsonify(error=f"invalid_{key}"), 400
+        if "show_date" in body:
+            val = body["show_date"]
+            if val in (None, ""):
+                updates["show_date"] = None
+            else:
+                try:
+                    updates["show_date"] = date.fromisoformat(val)
+                except ValueError:
+                    return jsonify(error="invalid_show_date"), 400
 
         if not updates:
             return jsonify(error="no_fields_to_update"), 400
 
-        set_clause = ", ".join(f"{k} = %s" for k in updates)
-        cur.execute(
-            f"UPDATE events SET {set_clause}, version = version + 1, updated_at = now() "
-            f"WHERE id = %s AND version = %s RETURNING version",
-            list(updates.values()) + [event_id, expected_version],
-        )
-        result = cur.fetchone()
-        if result is None:
-            cur.execute("SELECT version FROM events WHERE id = %s", (event_id,))
-            current = cur.fetchone()
-            if current is None:
-                return jsonify(error="not_found"), 404
-            return jsonify(error="version_conflict", current_version=current[0]), 409
+        if group_id is None:
+            # The common case — one row, one version check, exactly as
+            # before grouping existed.
+            set_clause = ", ".join(f"{k} = %s" for k in updates)
+            cur.execute(
+                f"UPDATE events SET {set_clause}, version = version + 1, updated_at = now() "
+                f"WHERE id = %s AND version = %s RETURNING version",
+                list(updates.values()) + [event_id, expected_version],
+            )
+            result = cur.fetchone()
+            if result is None:
+                cur.execute("SELECT version FROM events WHERE id = %s", (event_id,))
+                current = cur.fetchone()
+                if current is None:
+                    return jsonify(error="not_found"), 404
+                return jsonify(error="version_conflict", current_version=current[0]), 409
+            new_version = result[0]
+        else:
+            # Part of a multi-day hold — per-date fields land on this id,
+            # everything else redirects to the group's anchor. The version
+            # check only covers the per-date write; two different rows
+            # can't share one meaningful version number.
+            per_date = {k: v for k, v in updates.items() if k in PER_DATE_EVENT_FIELDS}
+            shared = {k: v for k, v in updates.items() if k not in PER_DATE_EVENT_FIELDS}
+            anchor_id = _group_anchor_id(g.db, event_id)
+
+            if per_date:
+                set_clause = ", ".join(f"{k} = %s" for k in per_date)
+                cur.execute(
+                    f"UPDATE events SET {set_clause}, version = version + 1, updated_at = now() "
+                    f"WHERE id = %s AND version = %s RETURNING version",
+                    list(per_date.values()) + [event_id, expected_version],
+                )
+                result = cur.fetchone()
+                if result is None:
+                    cur.execute("SELECT version FROM events WHERE id = %s", (event_id,))
+                    current = cur.fetchone()
+                    if current is None:
+                        return jsonify(error="not_found"), 404
+                    return jsonify(error="version_conflict", current_version=current[0]), 409
+                new_version = result[0]
+            else:
+                cur.execute("SELECT version FROM events WHERE id = %s", (event_id,))
+                new_version = cur.fetchone()[0]
+
+            if shared:
+                set_clause = ", ".join(f"{k} = %s" for k in shared)
+                cur.execute(f"UPDATE events SET {set_clause}, updated_at = now() WHERE id = %s",
+                            list(shared.values()) + [anchor_id])
+
+            # Confirming a held date collapses the group: this date
+            # inherits the anchor's shared data if it wasn't already the
+            # anchor, then every other candidate date is deleted outright
+            # — Broc's call, no "didn't work out" trail for them.
+            if per_date.get("status") == "confirmed":
+                if anchor_id != event_id:
+                    _migrate_shared_event_data(g.db, anchor_id, event_id)
+                cur.execute("DELETE FROM events WHERE hold_group_id = %s AND id != %s", (group_id, event_id))
+                cur.execute("UPDATE events SET hold_group_id = NULL WHERE id = %s", (event_id,))
 
         audit.record(
             g.db, g.viewer, "event", event_id, "update",
@@ -536,7 +736,75 @@ def create_app():
                 "after": {k: audit.jsonable(v) for k, v in updates.items()},
             },
         )
-        return jsonify(ok=True, version=result[0])
+        return jsonify(ok=True, version=new_version)
+
+    @app.post("/api/events/<int:event_id>/hold_dates")
+    @require_booker
+    def add_hold_dates(event_id):
+        """Adds one or more candidate dates to this show's hold, creating
+        the hold_group on first use if it wasn't already part of one.
+        Each new date starts on the same status as the event you're
+        adding from — edit it individually afterward."""
+        body = request.get_json(silent=True) or {}
+        dates_raw = body.get("dates")
+        if not isinstance(dates_raw, list) or not dates_raw:
+            return jsonify(error="dates_required"), 400
+        dates = []
+        for d in dates_raw:
+            try:
+                dates.append(date.fromisoformat(d))
+            except (TypeError, ValueError):
+                return jsonify(error="invalid_date"), 400
+
+        cur = g.db.cursor()
+        cur.execute("SELECT hold_group_id, venue_id, status FROM events WHERE id = %s", (event_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        group_id, venue_id, status = row
+        if group_id is None:
+            cur.execute("INSERT INTO hold_groups DEFAULT VALUES RETURNING id")
+            group_id = cur.fetchone()[0]
+            cur.execute("UPDATE events SET hold_group_id = %s WHERE id = %s", (group_id, event_id))
+
+        created_ids = []
+        for d in dates:
+            cur.execute(
+                "INSERT INTO events (venue_id, show_date, status, hold_group_id, created_by) "
+                "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (venue_id, d, status, group_id, g.viewer.id),
+            )
+            created_ids.append(cur.fetchone()[0])
+        audit.record(g.db, g.viewer, "event", event_id, "add_hold_dates", {"dates": dates_raw})
+        return jsonify(ids=created_ids, hold_group_id=group_id), 201
+
+    @app.delete("/api/events/<int:event_id>/hold_date")
+    @require_booker
+    def remove_hold_date(event_id):
+        """Removes ONE date from a multi-day hold. Refuses to remove the
+        last date on its own — that's deleting the show, not shrinking
+        the hold, and show deletion isn't built."""
+        cur = g.db.cursor()
+        cur.execute("SELECT hold_group_id FROM events WHERE id = %s", (event_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        group_id = row[0]
+        if group_id is None:
+            return jsonify(error="not_part_of_a_hold_group"), 400
+        cur.execute("SELECT count(*) FROM events WHERE hold_group_id = %s", (group_id,))
+        if cur.fetchone()[0] <= 1:
+            return jsonify(error="cannot_remove_the_only_date"), 400
+
+        anchor_id = _group_anchor_id(g.db, event_id)
+        if anchor_id == event_id:
+            cur.execute("SELECT MIN(id) FROM events WHERE hold_group_id = %s AND id != %s",
+                        (group_id, event_id))
+            new_anchor_id = cur.fetchone()[0]
+            _migrate_shared_event_data(g.db, event_id, new_anchor_id)
+        cur.execute("DELETE FROM events WHERE id = %s", (event_id,))
+        audit.record(g.db, g.viewer, "event", event_id, "remove_hold_date", None)
+        return jsonify(ok=True)
 
     @app.get("/api/people")
     @require_booker
@@ -699,11 +967,22 @@ def create_app():
     @app.post("/api/events/<int:event_id>/assignments")
     @require_booker
     def create_assignment(event_id):
+        """person_id is optional — leaving it out books an open TBA slot
+        for that role (see the assignments table comment). Booking a
+        second TBA (or a second named person) on the same role is how
+        "we need 2 security" gets represented: one row per body needed,
+        each independently fillable later."""
         body = request.get_json(silent=True) or {}
         role_id = body.get("role_id")
-        person_id = body.get("person_id")
-        if not role_id or not person_id:
-            return jsonify(error="role_id and person_id are required"), 400
+        person_id = body.get("person_id") or None
+        if not role_id:
+            return jsonify(error="role_id_required"), 400
+        scheduled_time = None
+        if body.get("scheduled_time"):
+            try:
+                scheduled_time = time.fromisoformat(body["scheduled_time"])
+            except ValueError:
+                return jsonify(error="invalid_scheduled_time"), 400
 
         cur = g.db.cursor()
         cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
@@ -712,19 +991,66 @@ def create_app():
         cur.execute("SELECT 1 FROM roles WHERE id = %s", (role_id,))
         if cur.fetchone() is None:
             return jsonify(error="unknown_role"), 400
-        cur.execute("SELECT name FROM people WHERE id = %s AND active", (person_id,))
-        person_row = cur.fetchone()
-        if person_row is None:
-            return jsonify(error="unknown_person"), 400
+        person_name = None
+        if person_id is not None:
+            cur.execute("SELECT name FROM people WHERE id = %s AND active", (person_id,))
+            person_row = cur.fetchone()
+            if person_row is None:
+                return jsonify(error="unknown_person"), 400
+            person_name = person_row[0]
 
         cur.execute(
-            "INSERT INTO assignments (event_id, role_id, person_id) VALUES (%s, %s, %s) RETURNING id",
-            (event_id, role_id, person_id),
+            "INSERT INTO assignments (event_id, role_id, person_id, scheduled_time) VALUES (%s, %s, %s, %s) RETURNING id",
+            (event_id, role_id, person_id, scheduled_time),
         )
         assignment_id = cur.fetchone()[0]
         audit.record(g.db, g.viewer, "event", event_id, "assign",
-                     {"role_id": role_id, "person_id": person_id, "person_name": person_row[0]})
+                     {"role_id": role_id, "person_id": person_id, "person_name": person_name})
         return jsonify(id=assignment_id), 201
+
+    @app.post("/api/assignments/<int:assignment_id>/clock")
+    @require_auth
+    def clock_assignment(assignment_id):
+        """Clocking in/out is the one write a crew viewer can make directly
+        — scoped to their OWN assignment row and only these two timestamp
+        fields, never anything else about the show. A booker/owner may
+        clock in on behalf of anyone (someone forgot their phone at the
+        door)."""
+        body = request.get_json(silent=True) or {}
+        action = body.get("action")
+        if action not in ("in", "out"):
+            return jsonify(error="invalid_action"), 400
+
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT event_id, person_id, clocked_in_at, clocked_out_at FROM assignments WHERE id = %s",
+            (assignment_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        event_id, person_id, clocked_in_at, clocked_out_at = row
+
+        if g.viewer.access_level not in ("booker", "owner") and g.viewer.id != person_id:
+            return jsonify(error="forbidden"), 403
+        if person_id is None:
+            return jsonify(error="unfilled_slot"), 400
+
+        if action == "in":
+            if clocked_in_at is not None:
+                return jsonify(error="already_clocked_in"), 400
+            cur.execute("UPDATE assignments SET clocked_in_at = now() WHERE id = %s RETURNING clocked_in_at", (assignment_id,))
+            clocked_in_at = cur.fetchone()[0]
+        else:
+            if clocked_in_at is None:
+                return jsonify(error="not_clocked_in_yet"), 400
+            if clocked_out_at is not None:
+                return jsonify(error="already_clocked_out"), 400
+            cur.execute("UPDATE assignments SET clocked_out_at = now() WHERE id = %s RETURNING clocked_out_at", (assignment_id,))
+            clocked_out_at = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "event", event_id, f"clock_{action}",
+                     {"assignment_id": assignment_id, "person_id": person_id})
+        return jsonify(ok=True, clocked_in_at=clocked_in_at, clocked_out_at=clocked_out_at)
 
     @app.delete("/api/assignments/<int:assignment_id>")
     @require_booker

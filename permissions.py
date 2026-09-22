@@ -90,10 +90,14 @@ def _events_for_crew(conn, viewer: Viewer, date_from, date_to, venue_id) -> list
     artists_by_event = _artists_by_event(conn, ids)
 
     # The viewer's own assignment(s) only — never who else is working.
+    # Includes the assignment's own id and clock times so the crew clock-
+    # in/out button (POST /api/assignments/<id>/clock) has something to
+    # act on, scoped to exactly the one row that belongs to them.
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT asg.event_id, r.name AS role
+            SELECT asg.event_id, asg.id, r.name AS role, asg.scheduled_time,
+                   asg.clocked_in_at, asg.clocked_out_at
             FROM assignments asg
             JOIN roles r ON r.id = asg.role_id
             WHERE asg.person_id = %(person_id)s AND asg.event_id = ANY(%(ids)s)
@@ -101,12 +105,18 @@ def _events_for_crew(conn, viewer: Viewer, date_from, date_to, venue_id) -> list
             {"person_id": viewer.id, "ids": ids},
         )
         my_roles_by_event: dict[int, list[str]] = {}
-        for event_id, role in cur.fetchall():
+        my_assignments_by_event: dict[int, list[dict]] = {}
+        for event_id, assignment_id, role, scheduled_time, clocked_in_at, clocked_out_at in cur.fetchall():
             my_roles_by_event.setdefault(event_id, []).append(role)
+            my_assignments_by_event.setdefault(event_id, []).append({
+                "id": assignment_id, "role": role, "scheduled_time": scheduled_time,
+                "clocked_in_at": clocked_in_at, "clocked_out_at": clocked_out_at,
+            })
 
     for e in events:
         e["artists"] = artists_by_event.get(e["id"], [])
         e["my_roles"] = my_roles_by_event.get(e["id"], [])
+        e["my_assignments"] = my_assignments_by_event.get(e["id"], [])
     return events
 
 
@@ -116,21 +126,44 @@ def _artists_by_event(conn, ids: list[int], include_money: bool = False) -> dict
     there's exactly one query deciding what an act on a bill looks like.
     guarantee/paid/walkups are money, same boundary as guarantee/settlement
     on the event itself — crew's call never selects those columns at all,
-    rather than fetching and hiding them."""
+    rather than fetching and hiding them. The contact log is booker/owner
+    only for the same reason it exists at all (which booker already
+    reached out) — crew has no path to it either way."""
     money_cols = ", ea.guarantee, ea.paid, ea.walkups" if include_money else ""
     with conn.cursor() as cur:
         cur.execute(
-            f"SELECT ea.event_id, ea.id, ea.artist_id, a.name, ea.confirmed{money_cols} FROM event_artists ea "
+            f"SELECT ea.event_id, ea.id, ea.artist_id, a.name, ea.confirmed, ea.declined, "
+            f"ea.notes, ea.bill_role{money_cols} FROM event_artists ea "
             "JOIN artists a ON a.id = ea.artist_id "
             "WHERE ea.event_id = ANY(%(ids)s) ORDER BY ea.sort_order",
             {"ids": ids},
         )
         by_event: dict[int, list[dict]] = {}
         cols = [c.name for c in cur.description]
+        act_ids = []
         for row in cur.fetchall():
             d = dict(zip(cols, row))
+            act_ids.append(d["id"])
             by_event.setdefault(d.pop("event_id"), []).append(d)
-        return by_event
+
+    if include_money and act_ids:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT c.event_artist_id, c.id, c.method, c.created_at, p.name AS person_name "
+                "FROM event_artist_contacts c LEFT JOIN people p ON p.id = c.person_id "
+                "WHERE c.event_artist_id = ANY(%(ids)s) ORDER BY c.created_at",
+                {"ids": act_ids},
+            )
+            ccols = [c.name for c in cur.description]
+            contacts_by_act: dict[int, list[dict]] = {}
+            for row in cur.fetchall():
+                d = dict(zip(ccols, row))
+                contacts_by_act.setdefault(d.pop("event_artist_id"), []).append(d)
+        for acts in by_event.values():
+            for a in acts:
+                a["contacts"] = contacts_by_act.get(a["id"], [])
+
+    return by_event
 
 
 def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
@@ -150,7 +183,7 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         SELECT e.id, e.venue_id, v.name AS venue,
                e.show_date, e.doors, e.show_time, e.status,
                e.deal_type, e.guarantee, e.backend_pct, e.deal_notes,
-               e.announce_date, e.onsale_date, e.notes, e.version
+               e.announce_date, e.onsale_date, e.notes, e.ticket_link, e.version, e.hold_group_id
         FROM events e
         JOIN venues v ON v.id = e.venue_id
         WHERE {' AND '.join(where)}
@@ -163,7 +196,31 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
 
     if not events:
         return events
-    ids = [e["id"] for e in events]
+
+    # A date inside an active multi-day hold doesn't own its own bill/
+    # deal/tasks/etc — it borrows them from whichever date in its group
+    # was created first (see _group_anchor_id in app.py, same rule).
+    # effective_id is what every shared-data lookup below keys off of.
+    group_ids = {e["hold_group_id"] for e in events if e["hold_group_id"]}
+    anchor_by_group: dict[int, int] = {}
+    members_by_group: dict[int, list[dict]] = {}
+    if group_ids:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT hold_group_id, id, show_date, status, version FROM events "
+                "WHERE hold_group_id = ANY(%(gids)s) ORDER BY show_date",
+                {"gids": list(group_ids)},
+            )
+            for gid, eid, show_date, status, version in cur.fetchall():
+                members_by_group.setdefault(gid, []).append(
+                    {"id": eid, "show_date": show_date, "status": status, "version": version})
+        for gid, members in members_by_group.items():
+            anchor_by_group[gid] = min(m["id"] for m in members)
+
+    def effective_id(e):
+        return anchor_by_group.get(e["hold_group_id"], e["id"]) if e["hold_group_id"] else e["id"]
+
+    ids = list({effective_id(e) for e in events})
     artists_by_event = _artists_by_event(conn, ids, include_money=True)
 
     with conn.cursor() as cur:
@@ -202,7 +259,8 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT asg.id, asg.event_id, r.name AS role, p.id AS person_id, p.name AS person_name
+            SELECT asg.id, asg.event_id, r.name AS role, p.id AS person_id, p.name AS person_name,
+                   asg.scheduled_time, asg.clocked_in_at, asg.clocked_out_at
             FROM assignments asg
             JOIN roles r ON r.id = asg.role_id
             LEFT JOIN people p ON p.id = asg.person_id
@@ -217,9 +275,11 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
             staff_by_event.setdefault(d["event_id"], []).append(d)
 
     for e in events:
-        e["artists"] = artists_by_event.get(e["id"], [])
-        e["settlement"] = settlements.get(e["id"])
-        e["ticket_tiers"] = tiers_by_event.get(e["id"], [])
-        e["staff"] = staff_by_event.get(e["id"], [])
-        e["tasks"] = tasks_by_event.get(e["id"], [])
+        eid = effective_id(e)
+        e["artists"] = artists_by_event.get(eid, [])
+        e["settlement"] = settlements.get(eid)
+        e["ticket_tiers"] = tiers_by_event.get(eid, [])
+        e["staff"] = staff_by_event.get(eid, [])
+        e["tasks"] = tasks_by_event.get(eid, [])
+        e["group_members"] = members_by_group.get(e["hold_group_id"], []) if e["hold_group_id"] else []
     return events

@@ -59,6 +59,18 @@
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
+/* Every plain text-entry control is a "white box": hard-coded white/black
+   regardless of theme, same fix and same reason as #loginCard's inputs —
+   `color:inherit` above was pulling in --ink, which in dark mode is a
+   pale color meant for a DARK surface, rendered on these controls'
+   actual white background. color-scheme:light also pins a phone's
+   native date/time picker digits to light, since those follow the OS's
+   own dark-mode setting rather than this CSS. A component with its own
+   deliberate on-brand styling (e.g. .taskitem's borderless inline
+   inputs) overrides this by using a more specific selector, same as it
+   always did. */
+input:not([type=checkbox]):not([type=radio]):not([type=range]),
+select, textarea{background:#fff;color:#111;color-scheme:light}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
 @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
 
@@ -74,7 +86,7 @@ button{cursor:pointer}
    (autofill's own background can't reliably be overridden, so fighting
    it with the dark theme's colors left light text on autofill's white). */
 #loginCard input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px;
-                  background:#fff;color:#111}
+                  background:#fff;color:#111;color-scheme:light}
 #loginCard input:-webkit-autofill,
 #loginCard input:-webkit-autofill:hover,
 #loginCard input:-webkit-autofill:focus{
@@ -149,7 +161,7 @@ main{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:16px 48px}
    equally legible instead of 3rd hold nearly disappearing. */
 .s-hold1,.s-hold2,.s-hold3{background:var(--hold-1-bg);color:var(--hold-1);border-color:var(--hold-1-bg)}
 .holdnum{position:absolute;top:2px;right:3px;width:14px;height:14px;border-radius:50%;
-         background:var(--surface);color:var(--hold-1);font-size:9.5px;font-weight:700;
+         background:var(--surface);color:var(--ink);font-size:9.5px;font-weight:700;
          display:grid;place-items:center;line-height:1}
 .s-confirmed{background:var(--confirm-bg);color:var(--confirm);border-color:var(--confirm-bg)}
 .s-complete{background:var(--done-bg);color:var(--done);border-color:var(--done-bg)}
@@ -196,7 +208,7 @@ h3.section:first-child{margin-top:0}
 
 .scrim{position:fixed;inset:0;background:rgba(12,14,20,.55);z-index:50;display:flex;align-items:flex-start;
        justify-content:center;padding:16px;overflow-y:auto}
-.sheet{background:var(--surface);border-radius:10px;box-shadow:var(--shadow);width:100%;max-width:880px;
+.sheet{background:var(--surface);border-radius:10px;box-shadow:var(--shadow);width:100%;max-width:1680px;
        margin:auto;border:1px solid var(--line)}
 .sheet-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);
             position:sticky;top:0;background:var(--surface);border-radius:10px 10px 0 0;z-index:2}
@@ -209,9 +221,19 @@ fieldset{border:0;padding:0;margin:0 0 20px}
 legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);padding:0;margin-bottom:8px}
 .row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .row-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.row-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width: 620px){
+  .row-4{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .field label{font-size:11.5px;color:var(--ink-3);font-weight:500}
-.field input,.field select,.field textarea{border:1px solid var(--line);background:var(--ground);color:var(--ink);
+/* Hard-coded white/black regardless of theme, same call as #loginCard's
+   inputs — var(--ground)/var(--ink) paired correctly on paper, but a
+   phone's native date/time picker digits follow the OS's own light/dark
+   setting, not this CSS, so a dark-mode phone rendered pale text over
+   the widget's own white chrome no matter what these variables said.
+   color-scheme:light pins that native chrome to light too. */
+.field input,.field select,.field textarea{border:1px solid var(--line);background:#fff;color:#111;color-scheme:light;
                                             border-radius:var(--radius);padding:7px 9px;font-size:13.5px;width:100%;min-width:0}
 .field textarea{resize:vertical;min-height:58px}
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px var(--accent-soft)}
@@ -219,6 +241,10 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 
 .tierrow,.stafrow{display:grid;grid-template-columns:1fr 120px 32px;gap:8px;margin-bottom:6px;align-items:center}
 .stafrow{grid-template-columns:140px 1fr 32px}
+.clockrow{display:grid;grid-template-columns:1fr auto 110px;gap:10px;align-items:center;margin-bottom:8px}
+@media (max-width: 480px){
+  .clockrow{grid-template-columns:1fr;justify-items:start}
+}
 .rowdel{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);width:32px;height:32px;
         color:var(--ink-3);display:grid;place-items:center;padding:0}
 .rowdel:hover{color:var(--dead);border-color:var(--dead)}
@@ -227,6 +253,9 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 @media (max-width:600px){.memberrow{grid-template-columns:1fr 32px;grid-template-areas:"name x" "phone phone" "email email"}
   .memberrow input:nth-child(1){grid-area:name} .memberrow input:nth-child(2){grid-area:phone}
   .memberrow input:nth-child(3){grid-area:email} .memberrow .rowdel{grid-area:x}}
+.checkfield{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
+.checkfield input{width:auto}
+.holddaterow{display:grid;grid-template-columns:110px 1fr 32px;gap:8px;align-items:center;margin-bottom:6px}
 
 .msgthread{display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:10px}
 .msgrow{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px}
@@ -238,6 +267,13 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .msgbody{margin:0;font-size:13.5px;white-space:pre-wrap;line-height:1.4}
 .msgcompose{display:flex;gap:8px;align-items:flex-end}
 .msgcompose textarea{flex:1;resize:vertical;min-height:44px}
+.msgcompose .expandwrap{flex:1}
+.mentionsuggest{position:absolute;left:0;bottom:100%;margin-bottom:4px;width:220px;max-height:180px;overflow-y:auto;
+                 background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);z-index:5}
+.mentionsuggest-item{display:block;width:100%;text-align:left;background:none;border:none;border-bottom:1px solid var(--line);
+                      padding:7px 10px;font-size:13px;color:var(--ink)}
+.mentionsuggest-item:last-child{border-bottom:none}
+.mentionsuggest-item:hover{background:var(--surface-2)}
 .mention{font-weight:700;color:var(--accent)}
 
 .mentionswrap{position:relative;display:inline-flex}
@@ -279,6 +315,17 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
   .actlistrow-figs{grid-template-columns:1fr}
 }
 
+/* A band that can't do the show: struck through and pushed to the end of
+   the bill (both in storage order and here) so a booker scanning the list
+   sees who's out at a glance. Tap-to-move reordering (act-picked-up) reuses
+   the accent color already used for focus/active state elsewhere. */
+.act-declined-row{opacity:.6}
+.act-declined-row .actname{text-decoration:line-through}
+.act-picked-up{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.btn-sm{padding:4px 10px;font-size:12px;border-radius:var(--radius)}
+.actcontact{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
+.actcontact-entry{margin:0 0 4px;font-size:12px;color:var(--ink-3)}
+
 .tasklist{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
 .taskitem{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--radius);background:var(--ground);border:1px solid transparent}
 .taskitem:hover{border-color:var(--line)}
@@ -301,6 +348,11 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .statusopt{border:1px solid var(--line);border-radius:var(--radius);padding:8px 6px;text-align:center;
            font-size:12.5px;font-weight:600;background:var(--surface);color:var(--ink-3)}
 .statusopt[aria-pressed="true"]{border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
+.statusopt-sm{padding:5px 2px;font-size:10.5px}
+.statusgrid-6{grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}
+@media (max-width: 620px){
+  .statusopt-sm{font-size:8.5px;padding:5px 1px;letter-spacing:-.01em}
+}
 
 .banner{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--accent);
         color:var(--accent);border-radius:var(--radius);padding:8px 12px;margin-bottom:14px;font-size:12.5px}
@@ -339,6 +391,7 @@ tbody tr.ma-due td:first-child{box-shadow:inset 3px 0 0 var(--dead)}
   .grid{gap:3px}
   .row,.row-3,.statusgrid{grid-template-columns:1fr}
   .statusgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .statusgrid-6{grid-template-columns:repeat(6,minmax(0,1fr))}
   .brand{font-size:19px}
   .sheet-body{padding:14px}
 }
@@ -457,6 +510,7 @@ var STATUS = {
 };
 var STATUS_ORDER = ["hold1","hold2","hold3","confirmed","complete","dead"];
 var HOLD_NUMBER = {hold1:1, hold2:2, hold3:3};
+var BILL_ROLES = ["Touring","Direct Support","Support","Local"];
 var NO_DEAL = "Not recorded";
 var DEAL_TYPES = [NO_DEAL,"Guarantee","Guarantee vs %","Door split","Flat rental","Free / promo"];
 
@@ -560,14 +614,14 @@ function taskProgress(ev){
   var t = ev.tasks || [];
   return {done: t.filter(function(x){ return x.done; }).length, total: t.length};
 }
-function staffLabel(s){ return s.person_name || (s.person_id ? "(removed person)" : ""); }
+function staffLabel(s){ return s.person_name || (s.person_id ? "(removed person)" : "TBA"); }
 function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
 
 /* ============================== state =============================== */
 var store = {events:[], venues:[], roles:[], people:[], artists:[], visionNotes:[], maOffers:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
@@ -1165,18 +1219,36 @@ function renderStaffView(){
   var host = document.getElementById("view-staff");
   host.innerHTML = "";
   var today = todayISO();
-  var rows = visibleEvents().filter(function(ev){ return ev.show_date >= today && ev.status !== "dead"; });
+  var allRows = visibleEvents().filter(function(ev){ return ev.show_date >= today && ev.status !== "dead"; });
+
+  var mineWrap = el("label","checkfield");
+  var mineCb = document.createElement("input");
+  mineCb.type = "checkbox"; mineCb.checked = ui.staffOnlyMine;
+  mineCb.onchange = function(){ ui.staffOnlyMine = mineCb.checked; renderStaffView(); };
+  mineWrap.appendChild(mineCb);
+  mineWrap.appendChild(document.createTextNode(" Show only my shifts"));
+  host.appendChild(mineWrap);
+
+  var rows = ui.staffOnlyMine
+    ? allRows.filter(function(ev){ return (ev.staff||[]).some(function(s){ return s.person_id === me.id; }); })
+    : allRows;
 
   host.appendChild(el("h3","section","Who's working — upcoming"));
   if(!rows.length){
     var e = el("div","empty");
-    e.appendChild(el("h3",null,"Nothing upcoming"));
+    e.appendChild(el("h3",null, ui.staffOnlyMine ? "No upcoming shifts for you" : "Nothing upcoming"));
     e.appendChild(el("p",null,"Staff get assigned on each show, under “Who's working”."));
     host.appendChild(e);
   } else {
+    // Only the roles actually scheduled on one of these shows get a
+    // column — a role nobody's ever assigned here doesn't need to eat
+    // table width on every single row.
+    var usedRoles = store.roles.filter(function(role){
+      return rows.some(function(ev){ return (ev.staff||[]).some(function(s){ return s.role === role.name; }); });
+    });
     var wrap = el("div","tablewrap"), t = document.createElement("table");
     var thead = document.createElement("thead"), hr = document.createElement("tr");
-    ["Date","Venue","Show","Doors"].concat(store.roles.map(function(r){ return r.name; })).forEach(function(h){ hr.appendChild(el("th",null,h)); });
+    ["Date","Venue","Show","Doors"].concat(usedRoles.map(function(r){ return r.name; })).forEach(function(h){ hr.appendChild(el("th",null,h)); });
     thead.appendChild(hr); t.appendChild(thead);
     var tb = document.createElement("tbody");
     var unfilled = 0;
@@ -1187,7 +1259,7 @@ function renderStaffView(){
       tr.appendChild(el("td",null, ev.venue));
       tr.appendChild(el("td","title-cell", showName(ev)));
       tr.appendChild(el("td","date-col", time12(ev.doors)));
-      store.roles.forEach(function(role){
+      usedRoles.forEach(function(role){
         var who = (ev.staff||[]).filter(function(s){ return s.role === role.name; }).map(staffLabel).filter(function(n){ return n; });
         if(!who.length) unfilled++;
         tr.appendChild(el("td", who.length ? null : "sub", who.join(", ") || "—"));
@@ -1227,6 +1299,7 @@ function renderStaffView(){
 
 /* ============================== the editor ============================= */
 var draft = null, draftIsNew = false;
+var actMoveFromIdx = null; // "picked up" act row index, for the tap-to-move reorder — reset whenever the editor (re)opens
 
 function field(label, node){
   var f = el("div","field");
@@ -1239,7 +1312,7 @@ function field(label, node){
 function input(type, value, onInput){
   var i = document.createElement("input");
   i.type = type; i.value = (value == null ? "" : value);
-  i.oninput = function(){ onInput(i.value); };
+  i.oninput = function(){ onInput(i.value); scheduleAutosave(); };
   return i;
 }
 /* A textarea with an Expand toggle for growing it into a much bigger box
@@ -1250,7 +1323,7 @@ function expandableTextarea(value, onInput, rows){
   var ta = document.createElement("textarea");
   ta.value = value || "";
   ta.rows = rows || 4;
-  ta.oninput = function(){ onInput(ta.value); };
+  ta.oninput = function(){ onInput(ta.value); scheduleAutosave(); };
   wrap.appendChild(ta);
   var expandBtn = el("button","btn expandbtn","Expand");
   expandBtn.type = "button";
@@ -1271,12 +1344,21 @@ function selectKV(options, value, onChange){
     if(String(o.value) === String(value)) op.selected = true;
     s.appendChild(op);
   });
-  s.onchange = function(){ onChange(s.value); };
+  s.onchange = function(){ onChange(s.value); scheduleAutosave(); };
   return s;
 }
 function select(options, value, onChange){ return selectKV(options.map(function(o){ return {value:o,label:o}; }), value, onChange); }
 
 async function openEvent(id, dateHint){
+  actMoveFromIdx = null;
+  if(!canBook()){
+    // Crew never gets the booker sheet — it's built around fields
+    // (status, deal, settlement) their own /api/events response never
+    // even includes. Route to the read-only card instead, which only
+    // ever touches what _events_for_crew actually sent.
+    if(id) renderCrewSheet(eventById(id));
+    return;
+  }
   if(id){
     var ev = eventById(id);
     draft = JSON.parse(JSON.stringify(ev));
@@ -1287,8 +1369,8 @@ async function openEvent(id, dateHint){
       id:null, venue_id: store.venues[0] ? store.venues[0].id : null, venue: store.venues[0] ? store.venues[0].name : "",
       artists:[], status:"hold1", show_date: dateHint || todayISO(), doors:"19:00", show_time:"20:00",
       deal_type:NO_DEAL, guarantee:"", backend_pct:"", deal_notes:"",
-      ticket_tiers:[{label:"Advance",price:""},{label:"Day of show",price:""}],
-      announce_date:"", onsale_date:"", notes:"", messages:[],
+      ticket_tiers:[{label:"Advance",price:""},{label:"Day of show",price:""}], ticket_link:"",
+      announce_date:"", onsale_date:"", notes:"", messages:[], extraDates:[], group_members:[],
       tasks:[], staff:[], settlement:{tickets_sold:"",gross:"",expenses:"",artist_payout:"",settled:false,notes:""}
     };
     draftIsNew = true;
@@ -1301,6 +1383,56 @@ async function openEvent(id, dateHint){
     await refreshMentions(); // opening the thread just marked any of my mentions in it read
   }
 }
+
+/* The crew-safe show card: date/venue/lineup/doors plus their own
+   assignment(s) and a Clock In/Out button. Never touches draft/renderSheet
+   at all, so there is no field in the booker editor a crew viewer could
+   ever be one bug away from seeing — the data was never fetched for them
+   in the first place (see permissions.py _events_for_crew). */
+function renderCrewSheet(ev){
+  var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
+  body.innerHTML = ""; foot.innerHTML = "";
+  document.getElementById("sheetTitle").textContent = fullBillName(ev);
+
+  var info = el("p","hint", shortDate(ev.show_date) + " · " + ev.venue +
+    (ev.doors ? " · doors " + time12(ev.doors) : "") + (ev.show_time ? " · show " + time12(ev.show_time) : ""));
+  body.appendChild(info);
+  body.appendChild(el("p",null, (ev.artists||[]).map(function(a){ return a.name; }).join(", ") || "Lineup TBA"));
+
+  var fs = document.createElement("fieldset");
+  fs.appendChild(el("legend",null,"Your shift"));
+  if(!(ev.my_assignments||[]).length){
+    fs.appendChild(el("p","hint","You're not scheduled on this show."));
+  } else {
+    ev.my_assignments.forEach(function(a){
+      var row = el("div","clockrow");
+      var label = a.role + (a.scheduled_time ? " — " + time12(a.scheduled_time) : "");
+      row.appendChild(el("span",null,label));
+      var status = el("span","hint", a.clocked_out_at ? "Clocked out " + messageTime(a.clocked_out_at)
+        : a.clocked_in_at ? "Clocked in " + messageTime(a.clocked_in_at) : "Not clocked in");
+      row.appendChild(status);
+      var btn = el("button","btn btn-primary", a.clocked_out_at ? "Done" : a.clocked_in_at ? "Clock out" : "Clock in");
+      btn.type = "button";
+      btn.disabled = !!a.clocked_out_at;
+      btn.onclick = async function(){
+        var action = a.clocked_in_at ? "out" : "in";
+        var r = await api("/api/assignments/" + a.id + "/clock", {method:"POST", body: JSON.stringify({action:action})});
+        if(r.ok){
+          a.clocked_in_at = r.body.clocked_in_at; a.clocked_out_at = r.body.clocked_out_at;
+          renderCrewSheet(ev);
+        }
+      };
+      row.appendChild(btn);
+      fs.appendChild(row);
+    });
+  }
+  body.appendChild(fs);
+
+  var close = el("button","btn","Close");
+  close.onclick = closeSheet;
+  foot.appendChild(close);
+  openScrim();
+}
 async function refreshEventMessages(){
   var id = draft.id;
   var r = await api("/api/events/" + id + "/messages");
@@ -1308,7 +1440,64 @@ async function refreshEventMessages(){
   await refreshMentions();
 }
 function openScrim(){ document.getElementById("scrim").hidden = false; document.body.style.overflow = "hidden"; }
-function closeSheet(){ document.getElementById("scrim").hidden = true; document.body.style.overflow = ""; draft = null; }
+function closeSheet(){
+  document.getElementById("scrim").hidden = true; document.body.style.overflow = ""; draft = null;
+  if(ui.view !== "calendar"){ ui.view = "calendar"; setActiveTab(); renderAll(); }
+}
+
+/* Autosave for an existing show being edited: every keystroke/selection
+   inside the sheet reschedules one debounced PATCH so a booker who
+   forgets to hit Save never loses what they typed. A brand-new,
+   not-yet-booked show is excluded — there's no id to PATCH yet, so it
+   still needs its one explicit "Book it" click. Hooked centrally into
+   the shared input()/expandableTextarea()/selectKV() helpers (rule: one
+   function decides "something changed", not a callback wired at every
+   field) plus a few direct call sites for act list actions that don't
+   go through those helpers (add/remove/decline/reorder). */
+var autosaveTimer = null;
+function scheduleAutosave(){
+  if(!draft || draftIsNew) return;
+  clearTimeout(autosaveTimer);
+  var errLine = document.getElementById("sheetError");
+  if(errLine){ errLine.textContent = "Saving…"; errLine.style.color = "var(--ink-3)"; }
+  autosaveTimer = setTimeout(doAutosave, 900);
+}
+async function doAutosave(){
+  if(!draft || draftIsNew) return;
+  var errLine = document.getElementById("sheetError");
+  var acts = (draft.artists||[]).filter(function(a){ return (a.name||"").trim(); });
+  if(!acts.length){
+    if(errLine){ errLine.textContent = "Add at least one act to save."; errLine.style.color = "var(--dead)"; }
+    return;
+  }
+  var eventId = draft.id;
+  var payload = {
+    venue_id: draft.venue_id, show_date: draft.show_date,
+    status: draft.status, doors: draft.doors, show_time: draft.show_time,
+    deal_type: draft.deal_type, guarantee: draft.guarantee, backend_pct: draft.backend_pct,
+    deal_notes: draft.deal_notes, announce_date: draft.announce_date, onsale_date: draft.onsale_date,
+    notes: draft.notes, ticket_link: draft.ticket_link, version: draft.version,
+  };
+  var r = await api("/api/events/" + eventId, {method:"PATCH", body: JSON.stringify(payload)});
+  if(!draft || draft.id !== eventId) return; // sheet moved on while this was in flight
+  if(!r.ok){
+    if(errLine){
+      errLine.style.color = "var(--dead)";
+      errLine.textContent = r.body.error === "version_conflict"
+        ? "Someone else changed this show while you had it open. Reload and try again."
+        : (r.body.error || "Could not save.");
+    }
+    return;
+  }
+  draft.version = r.body.version;
+  await api("/api/events/" + eventId + "/artists", {method:"PUT", body: JSON.stringify({artists: acts})});
+  var tiersToSave = (draft.ticket_tiers||[]).filter(function(t){ return (t.label||"").trim(); });
+  await api("/api/events/" + eventId + "/ticket_tiers", {method:"PUT", body: JSON.stringify({tiers: tiersToSave})});
+  if(!draft || draft.id !== eventId) return;
+  if(errLine) errLine.textContent = "Saved " + new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+  await loadEvents();
+  await loadBookerLookups();
+}
 
 function renderSheet(){
   var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
@@ -1316,48 +1505,126 @@ function renderSheet(){
   document.getElementById("sheetTitle").textContent = draftIsNew ? "Book a show" : fullBillName(draft);
 
   var fs1 = document.createElement("fieldset");
-  fs1.appendChild(el("legend",null,"The date"));
-  var r1 = el("div","row-3");
+  var r1 = el("div","row-4");
   r1.appendChild(field("Date", input("date", draft.show_date, function(v){ draft.show_date = v; })));
   r1.appendChild(field("Doors", input("time", draft.doors, function(v){ draft.doors = v; })));
   r1.appendChild(field("Show time", input("time", draft.show_time, function(v){ draft.show_time = v; })));
-  fs1.appendChild(r1);
-  var r1b = el("div","row");
-  r1b.appendChild(field("Venue", selectKV(store.venues.map(function(v){ return {value:v.id, label:v.name}; }), draft.venue_id,
+  r1.appendChild(field("Venue", selectKV(store.venues.map(function(v){ return {value:v.id, label:v.name}; }), draft.venue_id,
     function(v){ draft.venue_id = Number(v); })));
-  fs1.appendChild(r1b);
+  fs1.appendChild(r1);
+
+  var isMultiDay = (draft.group_members||[]).length > 1 || draft.multiDayHoldChecked;
+  var multiWrap = el("label","checkfield"); multiWrap.style.marginTop = "10px";
+  var multiCb = document.createElement("input");
+  multiCb.type = "checkbox"; multiCb.checked = isMultiDay;
+  multiCb.disabled = (draft.group_members||[]).length > 1; // real dates already exist; remove them to go back to one
+  multiCb.onchange = function(){ draft.multiDayHoldChecked = multiCb.checked; renderSheet(); };
+  multiWrap.appendChild(multiCb);
+  multiWrap.appendChild(document.createTextNode(" Multi-day hold"));
+  fs1.appendChild(multiWrap);
+
+  if(isMultiDay){
+    var datesField = el("div","field"); datesField.style.marginTop = "10px";
+    datesField.appendChild(el("label", null, "Held dates — each keeps its own status"));
+    var members = (draft.group_members||[]).slice()
+      .sort(function(a,b){ return a.show_date < b.show_date ? -1 : a.show_date > b.show_date ? 1 : 0; });
+    if(members.length){
+      var datesList = el("div","memberlist");
+      members.forEach(function(m){
+        var row = el("div","holddaterow");
+        row.appendChild(el("span",null, shortDate(m.show_date) + (m.id === draft.id ? " (this one)" : "")));
+        row.appendChild(selectKV(STATUS_ORDER.map(function(k){ return {value:k, label:STATUS[k].label}; }), m.status,
+          function(v){ updateHoldDateStatus(m.id, v, m.version); }));
+        var del = el("button","rowdel","✕");
+        del.type = "button";
+        del.title = m.id === draft.id ? "Can't remove the date you're currently viewing" : "Remove this date from the hold";
+        del.disabled = m.id === draft.id || members.length <= 1;
+        del.onclick = async function(){
+          await api("/api/events/" + m.id + "/hold_date", {method:"DELETE"});
+          await refreshDraft();
+        };
+        row.appendChild(del);
+        datesList.appendChild(row);
+      });
+      datesField.appendChild(datesList);
+    }
+    if(draftIsNew){
+      datesField.appendChild(el("p","hint",
+        (draft.extraDates||[]).length
+          ? "Also holding (same status as above until saved): " + draft.extraDates.slice().sort().join(", ")
+          : "Add the other candidate dates below — they'll start at the same status as this one; adjust each after saving."));
+    }
+
+    var addOneRow = el("div","actrow");
+    var newDateInput = input("date", "", function(){});
+    addOneRow.appendChild(newDateInput);
+    var addOneBtn = el("button","btn","+ Add date");
+    addOneBtn.type = "button";
+    addOneBtn.onclick = async function(){ await addHoldDates([newDateInput.value]); };
+    addOneRow.appendChild(addOneBtn);
+    datesField.appendChild(addOneRow);
+
+    var rangeRow = el("div","row"); rangeRow.style.marginTop = "8px";
+    var rangeStart = input("date","",function(){});
+    var rangeEnd = input("date","",function(){});
+    rangeRow.appendChild(field("Add a range: from", rangeStart));
+    rangeRow.appendChild(field("to", rangeEnd));
+    datesField.appendChild(rangeRow);
+    var addRangeBtn = el("button","btn","+ Add every date in range");
+    addRangeBtn.type = "button";
+    addRangeBtn.style.marginTop = "6px";
+    addRangeBtn.onclick = async function(){ await addHoldDates(datesInRange(rangeStart.value, rangeEnd.value)); };
+    datesField.appendChild(addRangeBtn);
+
+    fs1.appendChild(datesField);
+  }
+  body.appendChild(fs1);
+
+  var fs2 = document.createElement("fieldset");
+  fs2.appendChild(el("legend",null,"Status"));
+  var sg = el("div","statusgrid statusgrid-6");
+  STATUS_ORDER.forEach(function(k){
+    var b = el("button","statusopt statusopt-sm " + STATUS[k].cls, STATUS[k].label);
+    b.type = "button";
+    b.setAttribute("aria-pressed", draft.status === k ? "true" : "false");
+    b.onclick = function(){ draft.status = k; renderSheet(); scheduleAutosave(); };
+    sg.appendChild(b);
+  });
+  fs2.appendChild(sg);
+  fs2.appendChild(el("p","hint","Holds are a priority ladder — 1st hold gets first refusal on the date."));
+  body.appendChild(fs2);
+
+  var fsActs = document.createElement("fieldset");
 
   var dl = document.createElement("datalist");
   dl.id = "artistNames";
   store.artists.forEach(function(a){
     var op = document.createElement("option");
     op.value = a.name;
-    if(a.location || a.tier) op.label = [a.tier, a.location].filter(function(x){ return x; }).join(" · ");
     dl.appendChild(op);
   });
   body.appendChild(dl);
 
   var actsField = el("div","field"); actsField.style.marginTop = "10px";
-  actsField.appendChild(el("label", null, "Acts — top of the list is the headliner"));
+  actsField.appendChild(el("label", null, "Acts — top of the list is the headliner. Tap a name, then tap another act's row to move it there."));
   var actList = el("div","actlist");
+  var showHasHappened = draft.show_date && draft.show_date <= todayISO();
   (draft.artists||[]).forEach(function(a, idx){
-    var row = el("div","actlistrow");
+    var row = el("div","actlistrow" + (a.declined ? " act-declined-row" : "") + (actMoveFromIdx === idx ? " act-picked-up" : ""));
     var top = el("div","actlistrow-top");
 
-    var moveUp = el("button","rowbtn","▲");
-    moveUp.type = "button"; moveUp.title = "Move up"; moveUp.disabled = idx === 0;
-    moveUp.onclick = function(){
-      draft.artists[idx] = draft.artists[idx-1]; draft.artists[idx-1] = a; renderSheet();
-    };
-    var moveDown = el("button","rowbtn","▼");
-    moveDown.type = "button"; moveDown.title = "Move down"; moveDown.disabled = idx === (draft.artists.length-1);
-    moveDown.onclick = function(){
-      draft.artists[idx] = draft.artists[idx+1]; draft.artists[idx+1] = a; renderSheet();
-    };
-    top.appendChild(moveUp); top.appendChild(moveDown);
-
     var name = el("span","actname " + (a.confirmed ? "act-confirmed" : "act-pending"), a.name);
-    name.title = "Double-click to " + (a.confirmed ? "un-confirm" : "confirm") + " this act";
+    name.title = actMoveFromIdx === null ? "Tap to pick up and move; double-tap to " + (a.confirmed ? "un-confirm" : "confirm")
+      : (actMoveFromIdx === idx ? "Tap again to put it back" : "Tap to move the picked-up act here");
+    name.onclick = function(){
+      if(actMoveFromIdx === null){ actMoveFromIdx = idx; renderSheet(); return; }
+      if(actMoveFromIdx === idx){ actMoveFromIdx = null; renderSheet(); return; }
+      var moved = draft.artists.splice(actMoveFromIdx, 1)[0];
+      draft.artists.splice(idx, 0, moved);
+      actMoveFromIdx = null;
+      renderSheet();
+      scheduleAutosave();
+    };
     name.ondblclick = async function(){
       if(a.id){
         // Flip the local copy first — draft.artists is in UNSAVED_FIELDS so
@@ -1370,23 +1637,75 @@ function renderSheet(){
       } else {
         a.confirmed = !a.confirmed;
         renderSheet();
+        scheduleAutosave();
       }
     };
     top.appendChild(name);
     if(idx === 0) top.appendChild(el("span","pill pill-muted","Headliner"));
 
+    var declineBtn = el("button","btn btn-sm", a.declined ? "Can do it after all" : "Can't do it");
+    declineBtn.type = "button";
+    declineBtn.onclick = function(){
+      a.declined = !a.declined;
+      if(a.declined){
+        // strikes through and drops to the bottom of the lineup, so
+        // whoever opens this next sees it's a dead end without having
+        // to read every row
+        draft.artists.splice(idx, 1);
+        draft.artists.push(a);
+      }
+      renderSheet();
+      scheduleAutosave();
+    };
+    top.appendChild(declineBtn);
+
     var x = el("button","x","✕");
     x.type = "button";
     x.title = "Remove " + a.name;
-    x.onclick = function(){ draft.artists.splice(idx,1); renderSheet(); };
+    x.onclick = function(){ draft.artists.splice(idx,1); renderSheet(); scheduleAutosave(); };
     top.appendChild(x);
     row.appendChild(top);
 
+    var roleRow = el("div","row");
+    roleRow.appendChild(field("Role on this bill", selectKV(
+      [{value:"",label:"—"}].concat(BILL_ROLES.map(function(r){ return {value:r,label:r}; })),
+      a.bill_role || "", function(v){ a.bill_role = v || null; })));
+    row.appendChild(roleRow);
+
     var figs = el("div","actlistrow-figs");
     figs.appendChild(field("Guarantee", input("number", a.guarantee, function(v){ a.guarantee = v; })));
-    figs.appendChild(field("Paid", input("number", a.paid, function(v){ a.paid = v; })));
-    figs.appendChild(field("Walk-ups", input("number", a.walkups, function(v){ a.walkups = v; })));
+    if(showHasHappened){
+      figs.appendChild(field("Paid", input("number", a.paid, function(v){ a.paid = v; })));
+      figs.appendChild(field("Walk-ups", input("number", a.walkups, function(v){ a.walkups = v; })));
+    }
     row.appendChild(figs);
+
+    var notesField = el("div","field"); notesField.style.marginTop = "8px";
+    notesField.appendChild(el("label",null,"Notes for this band, this show"));
+    notesField.appendChild(expandableTextarea(a.notes, function(v){ a.notes = v; }, 2));
+    row.appendChild(notesField);
+
+    if(a.id){
+      var contactWrap = el("div","actcontact");
+      var contactHead = el("div","hint","Contact log");
+      contactWrap.appendChild(contactHead);
+      (a.contacts||[]).forEach(function(c){
+        contactWrap.appendChild(el("p","actcontact-entry",
+          c.method + " — " + (c.person_name||"someone") + " — " + messageTime(c.created_at)));
+      });
+      var logRow = el("div","actrow");
+      var methodSel = selectKV([{value:"phone",label:"Phone"},{value:"text",label:"Text"},{value:"email",label:"Email"}], "phone", function(){});
+      logRow.appendChild(methodSel);
+      var logBtn = el("button","btn","Log contact");
+      logBtn.type = "button";
+      logBtn.onclick = async function(){
+        await api("/api/event_artists/" + a.id + "/contacts", {method:"POST", body: JSON.stringify({method: methodSel.value})});
+        await refreshDraft();
+      };
+      logRow.appendChild(logBtn);
+      contactWrap.appendChild(logRow);
+      row.appendChild(contactWrap);
+    }
 
     actList.appendChild(row);
   });
@@ -1417,9 +1736,11 @@ function renderSheet(){
     var name = actInput.value.trim();
     if(!name) return;
     draft.artists = draft.artists || [];
-    draft.artists.push({name: name, confirmed: false, guarantee:"", paid:"", walkups:""});
+    draft.artists.push({name: name, confirmed: false, declined: false, notes: "", bill_role: null,
+      guarantee:"", paid:"", walkups:""});
     actInput.value = "";
     renderSheet();
+    scheduleAutosave();
   }
   actInput.onkeydown = function(e){
     if(e.key === "Enter" || e.key === ","){ e.preventDefault(); addAct(); }
@@ -1431,22 +1752,8 @@ function renderSheet(){
   actRow.appendChild(addBtn);
   actsField.appendChild(actRow);
   actsField.appendChild(linkNote);
-  fs1.appendChild(actsField);
-  body.appendChild(fs1);
-
-  var fs2 = document.createElement("fieldset");
-  fs2.appendChild(el("legend",null,"Status"));
-  var sg = el("div","statusgrid");
-  STATUS_ORDER.forEach(function(k){
-    var b = el("button","statusopt " + STATUS[k].cls, STATUS[k].label);
-    b.type = "button";
-    b.setAttribute("aria-pressed", draft.status === k ? "true" : "false");
-    b.onclick = function(){ draft.status = k; renderSheet(); };
-    sg.appendChild(b);
-  });
-  fs2.appendChild(sg);
-  fs2.appendChild(el("p","hint","Holds are a priority ladder — 1st hold gets first refusal on the date."));
-  body.appendChild(fs2);
+  fsActs.appendChild(actsField);
+  body.appendChild(fsActs);
 
   var fs3 = document.createElement("fieldset");
   fs3.appendChild(el("legend",null,"Deal"));
@@ -1483,6 +1790,9 @@ function renderSheet(){
   addTier.type = "button";
   addTier.onclick = function(){ draft.ticket_tiers = draft.ticket_tiers || []; draft.ticket_tiers.push({label:"",price:""}); renderSheet(); };
   fs4.appendChild(addTier);
+  var linkField = field("Ticket link", input("url", draft.ticket_link, function(v){ draft.ticket_link = v; }));
+  linkField.style.marginTop = "12px";
+  fs4.appendChild(linkField);
   var r4 = el("div","row"); r4.style.marginTop = "12px";
   r4.appendChild(field("Announce", input("date", draft.announce_date, function(v){ draft.announce_date = v; })));
   r4.appendChild(field("On sale", input("date", draft.onsale_date, function(v){ draft.onsale_date = v; })));
@@ -1536,7 +1846,11 @@ function renderSheet(){
     (draft.staff||[]).forEach(function(s){
       var row = el("div","stafrow");
       row.appendChild(el("span",null, s.role));
-      row.appendChild(el("span",null, staffLabel(s) || "—"));
+      var who = staffLabel(s);
+      if(s.scheduled_time) who += " — " + time12(s.scheduled_time);
+      if(s.clocked_out_at) who += " — out " + messageTime(s.clocked_out_at);
+      else if(s.clocked_in_at) who += " — in " + messageTime(s.clocked_in_at);
+      row.appendChild(el("span",null, who));
       var del = el("button","rowdel","✕");
       del.type = "button";
       del.onclick = async function(){
@@ -1546,18 +1860,24 @@ function renderSheet(){
       row.appendChild(del);
       fs6.appendChild(row);
     });
-    var addRow = el("div","row");
-    var roleSel = selectKV(store.roles.map(function(r){ return {value:r.id, label:r.name}; }), null, function(){});
-    var personSel = selectKV(store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; }), null, function(){});
+    var addRow = el("div","row-3");
+    var roleSel = selectKV([{value:"",label:"—"}].concat(store.roles.map(function(r){ return {value:r.id, label:r.name}; })),
+      "", function(){});
+    var personSel = selectKV([{value:"",label:"TBA (unfilled)"}].concat(
+      store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; })), "", function(){});
+    var timeInput = input("time", "", function(){});
     addRow.appendChild(field("Role", roleSel));
     addRow.appendChild(field("Person", personSel));
+    addRow.appendChild(field("Time", timeInput));
     fs6.appendChild(addRow);
     var addStaffBtn = el("button","btn","+ Assign");
     addStaffBtn.type = "button";
     addStaffBtn.onclick = async function(){
-      var role_id = Number(roleSel.value), person_id = Number(personSel.value);
-      if(!role_id || !person_id) return;
-      await api("/api/events/" + draft.id + "/assignments", {method:"POST", body: JSON.stringify({role_id:role_id, person_id:person_id})});
+      var role_id = Number(roleSel.value);
+      if(!role_id) return;
+      var person_id = personSel.value ? Number(personSel.value) : null;
+      await api("/api/events/" + draft.id + "/assignments", {method:"POST",
+        body: JSON.stringify({role_id:role_id, person_id:person_id, scheduled_time: timeInput.value || null})});
       await refreshDraft();
     };
     fs6.appendChild(addStaffBtn);
@@ -1633,11 +1953,14 @@ function renderSheet(){
     fs9.appendChild(thread);
     if(!(draft.messages||[]).length) fs9.appendChild(el("p","hint","No messages yet — leave one for whoever opens this show next."));
 
-    var msgCompose = el("div","msgcompose");
-    var msgInput = document.createElement("textarea");
-    msgInput.rows = 2;
+    var msgCompose = el("div","msgcompose"); msgCompose.style.position = "relative";
+    var msgWrap = expandableTextarea("", function(){}, 2);
+    var msgInput = msgWrap.querySelector("textarea");
     msgInput.placeholder = "Leave a note on this show... @Name notifies them";
-    msgCompose.appendChild(msgInput);
+    // A message isn't a show field — replace expandableTextarea's default
+    // oninput (which also pings scheduleAutosave) so typing a chat message
+    // doesn't spuriously PATCH the show and bump its version/audit trail.
+    msgCompose.appendChild(msgWrap);
     var sendBtn = el("button","btn","Send");
     sendBtn.type = "button";
     sendBtn.onclick = async function(){
@@ -1647,55 +1970,94 @@ function renderSheet(){
       await refreshEventMessages();
     };
     msgCompose.appendChild(sendBtn);
+
+    // @mention autocomplete: filters on any WORD of a person's name so
+    // "@c" shows both Christian and Cody, "@ch" narrows to Christian —
+    // inserts the full name so the plain-text "@Name" match in
+    // _record_mentions (app.py) still finds it, no backend change needed.
+    var mentionable = store.people.filter(function(p){ return p.active && p.id !== me.id && p.access_level !== "crew"; });
+    var suggestBox = el("div","mentionsuggest"); suggestBox.hidden = true;
+    msgCompose.appendChild(suggestBox);
+    function currentMentionFragment(){
+      var text = msgInput.value.slice(0, msgInput.selectionStart);
+      var m = text.match(/(?:^|\s)@([A-Za-z]*)$/);
+      return m ? m[1] : null;
+    }
+    function renderMentionSuggestions(){
+      var frag = currentMentionFragment();
+      if(frag === null){ suggestBox.hidden = true; return; }
+      var fragLower = frag.toLowerCase();
+      var matches = mentionable.filter(function(p){
+        return p.name.split(/\s+/).some(function(word){ return word.toLowerCase().indexOf(fragLower) === 0; });
+      });
+      if(!matches.length){ suggestBox.hidden = true; return; }
+      suggestBox.innerHTML = "";
+      matches.forEach(function(p){
+        var item = el("button","mentionsuggest-item", p.name);
+        item.type = "button";
+        item.onmousedown = function(e){
+          e.preventDefault();
+          var pos = msgInput.selectionStart;
+          var before = msgInput.value.slice(0, pos).replace(/@([A-Za-z]*)$/, "@" + p.name + " ");
+          var after = msgInput.value.slice(pos);
+          msgInput.value = before + after;
+          msgInput.focus();
+          msgInput.setSelectionRange(before.length, before.length);
+          suggestBox.hidden = true;
+        };
+        suggestBox.appendChild(item);
+      });
+      suggestBox.hidden = false;
+    }
+    msgInput.oninput = renderMentionSuggestions;
+    msgInput.addEventListener("blur", function(){ setTimeout(function(){ suggestBox.hidden = true; }, 150); });
+
     fs9.appendChild(msgCompose);
-    var mentionable = store.people.filter(function(p){ return p.active && p.id !== me.id && p.access_level !== "crew"; })
-      .map(function(p){ return p.name; });
-    if(mentionable.length) fs9.appendChild(el("p","hint","Mention: " + mentionable.map(function(n){ return "@"+n; }).join("  ")));
+    if(mentionable.length) fs9.appendChild(el("p","hint","Type @ to mention someone"));
     body.appendChild(fs9);
   }
 
   var errLine = el("span","hint"); errLine.id = "sheetError"; errLine.style.color = "var(--dead)";
-  var save = el("button","btn btn-primary", draftIsNew ? "Book it" : "Save changes");
-  save.onclick = async function(){
-    errLine.textContent = "";
-    var acts = (draft.artists||[]).filter(function(a){ return (a.name||"").trim(); });
-    if(!acts.length){ errLine.textContent = "Add at least one act."; return; }
-    var payload = {
-      venue_id: draft.venue_id, show_date: draft.show_date,
-      status: draft.status, doors: draft.doors, show_time: draft.show_time,
-      deal_type: draft.deal_type, guarantee: draft.guarantee, backend_pct: draft.backend_pct,
-      deal_notes: draft.deal_notes, announce_date: draft.announce_date, onsale_date: draft.onsale_date,
-      notes: draft.notes,
+  if(draftIsNew){
+    var save = el("button","btn btn-primary","Book it");
+    save.onclick = async function(){
+      errLine.textContent = "";
+      var acts = (draft.artists||[]).filter(function(a){ return (a.name||"").trim(); });
+      if(!acts.length){ errLine.textContent = "Add at least one act."; return; }
+      var payload = {
+        venue_id: draft.venue_id, show_date: draft.show_date,
+        status: draft.status, doors: draft.doors, show_time: draft.show_time,
+        deal_type: draft.deal_type, guarantee: draft.guarantee, backend_pct: draft.backend_pct,
+        deal_notes: draft.deal_notes, announce_date: draft.announce_date, onsale_date: draft.onsale_date,
+        notes: draft.notes, ticket_link: draft.ticket_link,
+        acts: acts,
+      };
+      if((draft.extraDates||[]).length) payload.extra_dates = draft.extraDates;
+      var r = await api("/api/events", {method:"POST", body: JSON.stringify(payload)});
+      if(!r.ok){
+        errLine.textContent = r.body.error || "Could not save.";
+        return;
+      }
+      var tiersToSave = (draft.ticket_tiers||[]).filter(function(t){ return (t.label||"").trim(); });
+      await api("/api/events/" + r.body.id + "/ticket_tiers", {method:"PUT", body: JSON.stringify({tiers: tiersToSave})});
+      closeSheet();
+      await loadEvents();
+      await loadBookerLookups();
+      renderAll();
     };
-    var r;
-    if(draftIsNew){
-      payload.acts = acts;
-      r = await api("/api/events", {method:"POST", body: JSON.stringify(payload)});
-    } else {
-      payload.version = draft.version;
-      r = await api("/api/events/" + draft.id, {method:"PATCH", body: JSON.stringify(payload)});
-    }
-    if(!r.ok){
-      errLine.textContent = r.body.error === "version_conflict"
-        ? "Someone else changed this show while you had it open. Reload and try again."
-        : (r.body.error || "Could not save.");
-      return;
-    }
-    var eventId = draftIsNew ? r.body.id : draft.id;
-    if(!draftIsNew){
-      await api("/api/events/" + eventId + "/artists", {method:"PUT", body: JSON.stringify({artists: acts})});
-    }
-    var tiersToSave = (draft.ticket_tiers||[]).filter(function(t){ return (t.label||"").trim(); });
-    await api("/api/events/" + eventId + "/ticket_tiers", {method:"PUT", body: JSON.stringify({tiers: tiersToSave})});
-    closeSheet();
-    await loadEvents();
-    await loadBookerLookups();
-    renderAll();
-  };
-  foot.appendChild(save);
-  var cancel = el("button","btn","Cancel");
-  cancel.onclick = closeSheet;
-  foot.appendChild(cancel);
+    foot.appendChild(save);
+    var cancel = el("button","btn","Cancel");
+    cancel.onclick = closeSheet;
+    foot.appendChild(cancel);
+  } else {
+    // Existing shows autosave (see scheduleAutosave/doAutosave) — no
+    // explicit Save button to forget to click. errLine doubles as the
+    // "Saving…"/"Saved h:mm" indicator instead of an error-only line.
+    errLine.style.color = "var(--ink-3)";
+    var done = el("button","btn btn-primary","Done");
+    done.onclick = closeSheet;
+    foot.appendChild(done);
+  }
   foot.appendChild(errLine);
   foot.appendChild(el("div","spacer"));
   if(!draftIsNew){
@@ -1715,12 +2077,12 @@ function renderSheetNet(){
 }
 /* after a task/staff/settlement action, reload real data and re-open the
    same show so the sheet reflects the server, not a locally-guessed state */
-/* Fields the user edits in-place and only persists on the main "Save"
-   click — a task/staff/settlement action must not silently wipe these
-   out from under them while they're mid-edit. */
+/* Fields the user edits in-place and that autosave may not have flushed
+   yet (it's debounced ~900ms behind typing) — a task/staff/settlement
+   action must not silently wipe these out from under them mid-edit. */
 var UNSAVED_FIELDS = ["venue_id","artists","show_date","doors","show_time",
   "status","deal_type","guarantee","backend_pct","deal_notes","ticket_tiers",
-  "announce_date","onsale_date","notes"];
+  "announce_date","onsale_date","notes","ticket_link"];
 
 async function refreshDraft(){
   var id = draft.id;
@@ -1731,6 +2093,50 @@ async function refreshDraft(){
   var fresh = JSON.parse(JSON.stringify(eventById(id)));
   draft = Object.assign(fresh, pending);  // tasks/staff/settlement/version come from the server; everything still-unsaved survives
   renderSheet();
+}
+
+/* Every date from start to end inclusive — the "select multiple dates"
+   shortcut for a multi-day hold, so a five-night run doesn't mean five
+   individual add-a-date clicks. */
+function datesInRange(start, end){
+  if(!start || !end) return [];
+  var out = [], p1 = parts(start), p2 = parts(end);
+  var d = new Date(p1.y, p1.m, p1.d), last = new Date(p2.y, p2.m, p2.d);
+  if(d > last) return [];
+  while(d <= last){
+    out.push(iso(d.getFullYear(), d.getMonth(), d.getDate()));
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+async function addHoldDates(dates){
+  dates = dates.filter(function(d){ return d; });
+  if(!dates.length) return;
+  if(draftIsNew){
+    draft.extraDates = (draft.extraDates||[]).concat(dates);
+    renderSheet();
+  } else {
+    await api("/api/events/" + draft.id + "/hold_dates", {method:"POST", body: JSON.stringify({dates:dates})});
+    await refreshDraft();
+  }
+}
+async function updateHoldDateStatus(eventId, newStatus, version){
+  var r = await api("/api/events/" + eventId, {method:"PATCH", body: JSON.stringify({status:newStatus, version:version})});
+  if(!r.ok){
+    window.alert(r.body.error === "version_conflict" ? "Someone else changed that date. Reloading." : (r.body.error || "Could not save."));
+    await refreshDraft();
+    return;
+  }
+  if(newStatus === "confirmed"){
+    // Confirming collapses the whole group — the id we just confirmed is
+    // the only one guaranteed to still exist, so reopen fresh on it
+    // rather than trying to guess whether draft.id survived.
+    await loadEvents();
+    await loadBookerLookups();
+    await openEvent(eventId);
+  } else {
+    await refreshDraft();
+  }
 }
 
 /* ============================== vision board ============================ */
