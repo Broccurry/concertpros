@@ -1,0 +1,41 @@
+"""Artist lookup and auto-create.
+
+Booking a band nobody has booked before creates the artist record — the
+roster builds itself as a byproduct of booking, same as the artifact
+prototype. Matching is name-based (case/whitespace/leading-"The"
+insensitive) because two different real acts can share a stage name and a
+DB uniqueness constraint would be wrong; a human occasionally merging two
+near-duplicate artist rows is an acceptable cost for that.
+"""
+import re
+
+
+def _normalize(name: str) -> str:
+    n = name.strip().lower()
+    n = re.sub(r"^the\s+", "", n)
+    n = re.sub(r"[^a-z0-9]", "", n)
+    return n
+
+
+def find_or_create(conn, name: str) -> int:
+    """Returns an artist id, creating the artist if no name match exists."""
+    name = name.strip()
+    if not name:
+        raise ValueError("artist name is required")
+    target = _normalize(name)
+
+    cur = conn.cursor()
+    cur.execute("SELECT id, name FROM artists")
+    for artist_id, existing_name in cur.fetchall():
+        if _normalize(existing_name) == target:
+            return artist_id
+
+    cur.execute("INSERT INTO artists (name) VALUES (%s) RETURNING id", (name,))
+    return cur.fetchone()[0]
+
+
+def list_artists(conn) -> list[dict]:
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, tier, location FROM artists ORDER BY name")
+    cols = [c.name for c in cur.description]
+    return [dict(zip(cols, row)) for row in cur.fetchall()]

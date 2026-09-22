@@ -18,10 +18,14 @@ from flask.json.provider import DefaultJSONProvider
 
 from dotenv import load_dotenv
 
+import artists as artists_module
+import audit
 import auth
 import db
 import permissions
 from permissions import Viewer
+
+VALID_HOLD_STATUSES = ("hold1", "hold2", "hold3", "confirmed")
 
 load_dotenv()  # local dev only — a no-op if .env doesn't exist (Railway sets real env vars directly)
 
@@ -90,6 +94,18 @@ def create_app():
             if viewer is None:
                 return jsonify(error="not_authenticated"), 401
             g.viewer = viewer
+            return fn(*args, **kwargs)
+        return wrapper
+
+    def require_booker(fn):
+        """Booking a show (creating/editing a hold, deal terms, etc.) is
+        booker/owner only — crew must be structurally unable to do this,
+        not merely have the button hidden client-side."""
+        @wraps(fn)
+        @require_auth
+        def wrapper(*args, **kwargs):
+            if g.viewer.access_level not in ("booker", "owner"):
+                return jsonify(error="forbidden"), 403
             return fn(*args, **kwargs)
         return wrapper
 
@@ -176,6 +192,60 @@ def create_app():
         venue_id = request.args.get("venue_id", type=int)
         events = permissions.events_for(g.db, g.viewer, date_from=date_from, date_to=date_to, venue_id=venue_id)
         return jsonify(events=events)
+
+    @app.get("/api/venues")
+    @require_auth
+    def list_venues():
+        cur = g.db.cursor()
+        cur.execute("SELECT id, name FROM venues ORDER BY name")
+        cols = [c.name for c in cur.description]
+        return jsonify(venues=[dict(zip(cols, row)) for row in cur.fetchall()])
+
+    @app.get("/api/artists")
+    @require_auth
+    def list_artists():
+        # Crew has no reason to see the artist roster (agent/management
+        # contacts, booking history) — booker/owner only, same boundary as
+        # creating a show.
+        if g.viewer.access_level not in ("booker", "owner"):
+            return jsonify(error="forbidden"), 403
+        return jsonify(artists=artists_module.list_artists(g.db))
+
+    @app.post("/api/events")
+    @require_booker
+    def create_event():
+        body = request.get_json(silent=True) or {}
+        venue_id = body.get("venue_id")
+        headliner = (body.get("headliner") or "").strip()
+        show_date_raw = body.get("show_date")
+        status = body.get("status", "hold1")
+
+        if not venue_id or not headliner or not show_date_raw:
+            return jsonify(error="venue_id, headliner, and show_date are required"), 400
+        if status not in VALID_HOLD_STATUSES:
+            return jsonify(error="invalid_status"), 400
+        try:
+            show_date = date.fromisoformat(show_date_raw)
+        except ValueError:
+            return jsonify(error="invalid_date"), 400
+
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="unknown_venue"), 400
+
+        artist_id = artists_module.find_or_create(g.db, headliner)
+
+        cur.execute(
+            """INSERT INTO events (venue_id, artist_id, show_date, status, created_by)
+               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+            (venue_id, artist_id, show_date, status, g.viewer.id),
+        )
+        event_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "event", event_id, "create",
+                     {"venue_id": venue_id, "headliner": headliner,
+                      "show_date": show_date_raw, "status": status})
+        return jsonify(id=event_id), 201
 
     return app
 

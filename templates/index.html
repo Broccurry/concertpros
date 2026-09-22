@@ -32,8 +32,23 @@
   #app{display:none;width:100%;max-width:900px;padding:20px}
   #topbar{display:flex;align-items:center;gap:12px;margin-bottom:16px}
   #topbar .who{color:var(--ink-3);font-size:13px}
-  #logoutBtn{margin-left:auto;border:1px solid var(--line);background:var(--surface);
+  #logoutBtn{border:1px solid var(--line);background:var(--surface);
              border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer}
+  #bookBtn{margin-left:auto;border:0;background:var(--accent);color:#fff;font-weight:600;
+           border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer}
+
+  #bookForm{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+            padding:16px;margin-bottom:16px;display:none}
+  #bookForm .row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  #bookForm .field{flex:1;min-width:140px}
+  #bookForm label{display:block;font-size:11px;color:var(--ink-3);margin-bottom:3px}
+  #bookForm input,#bookForm select{width:100%;padding:8px 9px;border:1px solid var(--line);
+                                    border-radius:6px;font-size:13.5px}
+  #bookForm .actions{display:flex;gap:8px;align-items:center}
+  #bookForm button{border:0;border-radius:6px;padding:9px 16px;font-size:13.5px;cursor:pointer}
+  #bookSubmit{background:var(--accent);color:#fff;font-weight:600}
+  #bookCancel{background:var(--ground);color:var(--ink-2)}
+  #bookError{color:#9a3b3b;font-size:12.5px}
 
   table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);
         border-radius:8px;overflow:hidden}
@@ -65,8 +80,42 @@
   <div id="topbar">
     <h1 class="brand" style="margin:0;font-size:19px">Concert<span>Pros</span></h1>
     <span class="who" id="whoami"></span>
+    <button id="bookBtn" style="display:none">+ Book a show</button>
     <button id="logoutBtn">Log out</button>
   </div>
+
+  <form id="bookForm">
+    <div class="row">
+      <div class="field">
+        <label for="bookVenue">Venue</label>
+        <select id="bookVenue" required></select>
+      </div>
+      <div class="field">
+        <label for="bookBand">Band</label>
+        <input id="bookBand" list="artistNames" required placeholder="Start typing…">
+        <datalist id="artistNames"></datalist>
+      </div>
+      <div class="field">
+        <label for="bookDate">Date</label>
+        <input id="bookDate" type="date" required>
+      </div>
+      <div class="field">
+        <label for="bookStatus">Status</label>
+        <select id="bookStatus">
+          <option value="hold1">1st hold</option>
+          <option value="hold2">2nd hold</option>
+          <option value="hold3">3rd hold</option>
+          <option value="confirmed">Confirmed</option>
+        </select>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="submit" id="bookSubmit">Book it</button>
+      <button type="button" id="bookCancel">Cancel</button>
+      <span id="bookError"></span>
+    </div>
+  </form>
+
   <div id="eventsHost"></div>
 </div>
 
@@ -109,10 +158,25 @@ async function loadEvents() {
   host.innerHTML = `<table><thead><tr><th>Date</th><th>Venue</th><th>Show</th><th>Doors</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
 }
 
+async function loadBookingForm() {
+  const [venues, artists] = await Promise.all([api("/api/venues"), api("/api/artists")]);
+  if (venues.ok) {
+    document.getElementById("bookVenue").innerHTML =
+      venues.body.venues.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
+  }
+  if (artists.ok) {
+    document.getElementById("artistNames").innerHTML =
+      artists.body.artists.map(a => `<option value="${a.name}">`).join("");
+  }
+}
+
 async function boot() {
   const me = await api("/api/me");
   if (me.ok) {
     document.getElementById("whoami").textContent = `${me.body.name} · ${me.body.access_level}`;
+    const canBook = me.body.access_level === "booker" || me.body.access_level === "owner";
+    document.getElementById("bookBtn").style.display = canBook ? "inline-block" : "none";
+    if (canBook) loadBookingForm();
     showApp();
     loadEvents();
   } else {
@@ -132,6 +196,34 @@ document.getElementById("loginForm").addEventListener("submit", async (e) => {
 document.getElementById("logoutBtn").addEventListener("click", async () => {
   await api("/api/logout", {method: "POST"});
   showLogin();
+});
+
+document.getElementById("bookBtn").addEventListener("click", () => {
+  document.getElementById("bookForm").style.display = "block";
+  document.getElementById("bookDate").valueAsDate = new Date();
+});
+document.getElementById("bookCancel").addEventListener("click", () => {
+  document.getElementById("bookForm").style.display = "none";
+  document.getElementById("bookError").textContent = "";
+});
+document.getElementById("bookForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const payload = {
+    venue_id: Number(document.getElementById("bookVenue").value),
+    headliner: document.getElementById("bookBand").value,
+    show_date: document.getElementById("bookDate").value,
+    status: document.getElementById("bookStatus").value,
+  };
+  const {ok, body} = await api("/api/events", {method: "POST", body: JSON.stringify(payload)});
+  if (ok) {
+    document.getElementById("bookForm").style.display = "none";
+    document.getElementById("bookForm").reset();
+    document.getElementById("bookError").textContent = "";
+    loadEvents();
+    loadBookingForm();  // the new band should now appear in the artist datalist
+  } else {
+    document.getElementById("bookError").textContent = body.error || "Could not book that show.";
+  }
 });
 
 boot();
