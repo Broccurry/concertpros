@@ -13,13 +13,17 @@ from datetime import date, datetime, time, timezone, timedelta
 from decimal import Decimal
 from functools import wraps
 
-from flask import Flask, g, jsonify, request
+from flask import Flask, g, jsonify, render_template, request
 from flask.json.provider import DefaultJSONProvider
+
+from dotenv import load_dotenv
 
 import auth
 import db
 import permissions
 from permissions import Viewer
+
+load_dotenv()  # local dev only — a no-op if .env doesn't exist (Railway sets real env vars directly)
 
 SESSION_COOKIE = "cp_session"
 SESSION_LIFETIME = timedelta(days=90)
@@ -92,6 +96,10 @@ def create_app():
     @app.get("/healthz")
     def healthz():
         return jsonify(ok=True)
+
+    @app.get("/")
+    def index():
+        return render_template("index.html")
 
     @app.post("/api/login")
     def login():

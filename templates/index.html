@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConcertPros</title>
+<style>
+  :root{
+    --ink:#16181d; --ink-2:#3d434f; --ink-3:#6b7382;
+    --ground:#f2f3f6; --surface:#fff; --line:#d5d9e2;
+    --accent:#2a3d8f; --accent-soft:#e6e9f6;
+    --confirm:#1c6b45; --confirm-bg:#c9ecd8;
+    --display:"Oswald","Arial Narrow",sans-serif;
+    --body:"Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);
+       min-height:100vh;display:flex;align-items:center;justify-content:center}
+  .brand{font-family:var(--display);font-weight:600;font-size:24px;text-transform:uppercase;
+         letter-spacing:.02em;margin:0 0 20px;text-align:center}
+  .brand span{color:var(--accent)}
+
+  #loginCard{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+             padding:28px;width:320px;box-shadow:0 4px 16px rgba(0,0,0,.06)}
+  #loginCard label{display:block;font-size:12px;color:var(--ink-3);margin:12px 0 4px}
+  #loginCard input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;
+                    font-size:14px}
+  #loginCard button{width:100%;margin-top:18px;padding:10px;border:0;border-radius:6px;
+                     background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer}
+  #loginError{color:#9a3b3b;font-size:12.5px;margin-top:10px;min-height:1em}
+
+  #app{display:none;width:100%;max-width:900px;padding:20px}
+  #topbar{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+  #topbar .who{color:var(--ink-3);font-size:13px}
+  #logoutBtn{margin-left:auto;border:1px solid var(--line);background:var(--surface);
+             border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer}
+
+  table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);
+        border-radius:8px;overflow:hidden}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);font-size:13.5px}
+  th{background:var(--ground);font-size:11px;text-transform:uppercase;letter-spacing:.06em;
+     color:var(--ink-3)}
+  tr:last-child td{border-bottom:0}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;
+        background:var(--confirm-bg);color:var(--confirm)}
+  #empty{text-align:center;color:var(--ink-3);padding:30px;background:var(--surface);
+         border:1px dashed var(--line);border-radius:8px}
+</style>
+</head>
+<body>
+
+<div id="loginCard">
+  <h1 class="brand">Concert<span>Pros</span></h1>
+  <form id="loginForm">
+    <label for="email">Email</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="password">Password</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Log in</button>
+    <div id="loginError"></div>
+  </form>
+</div>
+
+<div id="app">
+  <div id="topbar">
+    <h1 class="brand" style="margin:0;font-size:19px">Concert<span>Pros</span></h1>
+    <span class="who" id="whoami"></span>
+    <button id="logoutBtn">Log out</button>
+  </div>
+  <div id="eventsHost"></div>
+</div>
+
+<script>
+async function api(path, opts) {
+  const res = await fetch(path, Object.assign(
+    {credentials: "same-origin", headers: {"Content-Type": "application/json"}}, opts));
+  const body = await res.json().catch(() => ({}));
+  return {ok: res.ok, status: res.status, body};
+}
+
+function showApp() { document.getElementById("loginCard").style.display = "none"; document.getElementById("app").style.display = "block"; }
+function showLogin() { document.getElementById("loginCard").style.display = "block"; document.getElementById("app").style.display = "none"; }
+
+function fmtDate(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric"});
+}
+function fmtTime(t) {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const ap = h >= 12 ? "pm" : "am";
+  const h12 = h % 12 || 12;
+  return m ? `${h12}:${String(m).padStart(2,"0")}${ap}` : `${h12}${ap}`;
+}
+
+async function loadEvents() {
+  const {ok, body} = await api("/api/events");
+  const host = document.getElementById("eventsHost");
+  if (!ok) { host.innerHTML = "<div id='empty'>Could not load events.</div>"; return; }
+  if (!body.events.length) { host.innerHTML = "<div id='empty'>Nothing booked yet.</div>"; return; }
+  const rows = body.events.map(e => `
+    <tr>
+      <td>${fmtDate(e.show_date)}</td>
+      <td>${e.venue}</td>
+      <td><strong>${e.headliner}</strong>${e.support ? `<div style="color:var(--ink-3);font-size:12px">${e.support}</div>` : ""}</td>
+      <td>${fmtTime(e.doors)}</td>
+      <td>${e.status ? `<span class="pill">${e.status}</span>` : ""}</td>
+    </tr>`).join("");
+  host.innerHTML = `<table><thead><tr><th>Date</th><th>Venue</th><th>Show</th><th>Doors</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function boot() {
+  const me = await api("/api/me");
+  if (me.ok) {
+    document.getElementById("whoami").textContent = `${me.body.name} · ${me.body.access_level}`;
+    showApp();
+    loadEvents();
+  } else {
+    showLogin();
+  }
+}
+
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const email = document.getElementById("email").value;
+  const password = document.getElementById("password").value;
+  const {ok, body} = await api("/api/login", {method: "POST", body: JSON.stringify({email, password})});
+  if (ok) { boot(); }
+  else { document.getElementById("loginError").textContent = "Wrong email or password."; }
+});
+
+document.getElementById("logoutBtn").addEventListener("click", async () => {
+  await api("/api/logout", {method: "POST"});
+  showLogin();
+});
+
+boot();
+</script>
+</body>
+</html>
