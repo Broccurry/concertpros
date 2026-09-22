@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.env
+_git_checkpoint.log
+node_modules/
