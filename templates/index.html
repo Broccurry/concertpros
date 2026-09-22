@@ -226,8 +226,12 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
    one to a quarter of a very wide modal, leaving a wall of empty white
    box to the right of "07:00 PM". */
 .row-4{display:grid;grid-template-columns:repeat(4,minmax(120px,190px));gap:10px;justify-content:start}
+/* Same fixed-width idea as .row-4, for any other short-value row (dates,
+   prices) so it doesn't stretch across a wide modal either. */
+.row-narrow{display:grid;grid-template-columns:repeat(2,minmax(120px,190px));gap:10px;justify-content:start}
 @media (max-width: 620px){
   .row-4{grid-template-columns:repeat(2,minmax(0,1fr));justify-content:stretch}
+  .row-narrow{grid-template-columns:repeat(2,minmax(0,1fr));justify-content:stretch}
 }
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .field label{font-size:11.5px;color:var(--ink-3);font-weight:500}
@@ -243,7 +247,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px var(--accent-soft)}
 .hint{font-size:11.5px;color:var(--ink-3)}
 
-.tierrow,.stafrow{display:grid;grid-template-columns:1fr 120px 32px;gap:8px;margin-bottom:6px;align-items:center}
+.tierrow,.stafrow{display:grid;grid-template-columns:minmax(120px,200px) 110px 32px;gap:8px;margin-bottom:6px;align-items:center}
 .stafrow{grid-template-columns:140px 1fr 32px}
 .stafrow-edit{grid-template-columns:110px 1fr 110px auto 32px}
 @media (max-width: 620px){
@@ -1502,6 +1506,7 @@ function renderStaffView(){
 
 /* ============================== the editor ============================= */
 var draft = null, draftIsNew = false;
+var addingAct = false; // the "+ Add act" input is hidden until this is true, so an existing show's acts list doesn't sit next to a permanent empty box
 
 function field(label, node){
   var f = el("div","field");
@@ -1552,6 +1557,7 @@ function selectKV(options, value, onChange){
 function select(options, value, onChange){ return selectKV(options.map(function(o){ return {value:o,label:o}; }), value, onChange); }
 
 async function openEvent(id, dateHint){
+  addingAct = false;
   if(!canBook()){
     // Crew never gets the booker sheet — it's built around fields
     // (status, deal, settlement) their own /api/events response never
@@ -1934,13 +1940,12 @@ function renderSheet(){
       midRow.appendChild(methodSel);
       var contactNoteInput = document.createElement("input");
       contactNoteInput.type = "text";
-      contactNoteInput.placeholder = "e.g. checking with band";
+      contactNoteInput.placeholder = "Contact notes";
       contactNoteInput.className = "actcontact-note-input";
       // Typing a note and hitting Enter (the natural move after filling
       // in a single text field) did nothing — there's no <form> here to
       // implicitly submit, so it just looked like the note never saved.
       contactNoteInput.onkeydown = function(e){ if(e.key === "Enter"){ e.preventDefault(); logContact(); } };
-      midRow.appendChild(contactNoteInput);
       var logBtn = el("button","btn btn-sm","Log contact");
       logBtn.type = "button";
       async function logContact(){
@@ -1959,6 +1964,7 @@ function renderSheet(){
       }
       logBtn.onclick = logContact;
       midRow.appendChild(logBtn);
+      midRow.appendChild(contactNoteInput);
     }
     var notesTa = document.createElement("textarea");
     notesTa.rows = 1;
@@ -2006,47 +2012,57 @@ function renderSheet(){
   });
   actsField.appendChild(actList);
 
-  var actRow = el("div","actrow");
-  var actInput = input("text", "", function(){});
-  actInput.id = "bookBand";
-  actInput.setAttribute("list","artistNames"); actInput.setAttribute("autocomplete","off");
-  actInput.placeholder = (draft.artists||[]).length ? "Add another act" : "Start typing — known artists will offer themselves";
-  var linkNote = el("p","hint");
-  function paintArtistLink(){
-    var n = actInput.value.trim();
-    if(!n){ linkNote.textContent = ""; return; }
-    var match = store.artists.find(function(a){ return normName(a.name) === normName(n); });
-    if(match){
-      var tot = artistTotals(match.name);
-      linkNote.textContent = "✓ " + match.name + (match.tier?" · "+match.tier:"") + (match.location?" · "+match.location:"") +
-        (tot.count ? " · booked " + tot.count + "×" + (tot.paid ? ", " + money(tot.paid) + " paid" : "") : "");
-      linkNote.style.color = "var(--confirm)";
-    } else {
-      linkNote.textContent = "New artist — a record will be created when you save.";
-      linkNote.style.color = "var(--ink-3)";
+  // Existing show with acts already on it: just a compact "+ Add act"
+  // button, not a permanent empty text box sitting under the lineup —
+  // clicking it reveals the input, and adding one collapses it again.
+  if((draft.artists||[]).length && !addingAct){
+    var revealBtn = el("button","btn","+ Add act");
+    revealBtn.type = "button";
+    revealBtn.onclick = function(){ addingAct = true; renderSheet(); document.getElementById("bookBand").focus(); };
+    actsField.appendChild(revealBtn);
+  } else {
+    var actRow = el("div","actrow");
+    var actInput = input("text", "", function(){});
+    actInput.id = "bookBand";
+    actInput.setAttribute("list","artistNames"); actInput.setAttribute("autocomplete","off");
+    actInput.placeholder = (draft.artists||[]).length ? "Add another act" : "Start typing — known artists will offer themselves";
+    var linkNote = el("p","hint");
+    function paintArtistLink(){
+      var n = actInput.value.trim();
+      if(!n){ linkNote.textContent = ""; return; }
+      var match = store.artists.find(function(a){ return normName(a.name) === normName(n); });
+      if(match){
+        var tot = artistTotals(match.name);
+        linkNote.textContent = "✓ " + match.name + (match.tier?" · "+match.tier:"") + (match.location?" · "+match.location:"") +
+          (tot.count ? " · booked " + tot.count + "×" + (tot.paid ? ", " + money(tot.paid) + " paid" : "") : "");
+        linkNote.style.color = "var(--confirm)";
+      } else {
+        linkNote.textContent = "New artist — a record will be created when you save.";
+        linkNote.style.color = "var(--ink-3)";
+      }
     }
+    actInput.oninput = paintArtistLink;
+    function addAct(){
+      var name = actInput.value.trim();
+      if(!name) return;
+      draft.artists = draft.artists || [];
+      draft.artists.push({name: name, confirmed: false, declined: false, notes: "", bill_role: null,
+        guarantee:"", paid:"", walkups:""});
+      addingAct = false;
+      renderSheet();
+      scheduleAutosave();
+    }
+    actInput.onkeydown = function(e){
+      if(e.key === "Enter" || e.key === ","){ e.preventDefault(); addAct(); }
+    };
+    actRow.appendChild(actInput);
+    var addBtn = el("button","btn","+ Add");
+    addBtn.type = "button";
+    addBtn.onclick = addAct;
+    actRow.appendChild(addBtn);
+    actsField.appendChild(actRow);
+    actsField.appendChild(linkNote);
   }
-  actInput.oninput = paintArtistLink;
-  function addAct(){
-    var name = actInput.value.trim();
-    if(!name) return;
-    draft.artists = draft.artists || [];
-    draft.artists.push({name: name, confirmed: false, declined: false, notes: "", bill_role: null,
-      guarantee:"", paid:"", walkups:""});
-    actInput.value = "";
-    renderSheet();
-    scheduleAutosave();
-  }
-  actInput.onkeydown = function(e){
-    if(e.key === "Enter" || e.key === ","){ e.preventDefault(); addAct(); }
-  };
-  actRow.appendChild(actInput);
-  var addBtn = el("button","btn","+ Add");
-  addBtn.type = "button";
-  addBtn.onclick = addAct;
-  actRow.appendChild(addBtn);
-  actsField.appendChild(actRow);
-  actsField.appendChild(linkNote);
   fsActs.appendChild(actsField);
   body.appendChild(fsActs);
 
@@ -2088,7 +2104,7 @@ function renderSheet(){
   var linkField = field("Ticket link", input("url", draft.ticket_link, function(v){ draft.ticket_link = v; }));
   linkField.style.marginTop = "12px";
   fs4.appendChild(linkField);
-  var r4 = el("div","row"); r4.style.marginTop = "12px";
+  var r4 = el("div","row-narrow"); r4.style.marginTop = "12px";
   r4.appendChild(field("Announce", input("date", draft.announce_date, function(v){ draft.announce_date = v; })));
   r4.appendChild(field("On sale", input("date", draft.onsale_date, function(v){ draft.onsale_date = v; })));
   fs4.appendChild(r4);
