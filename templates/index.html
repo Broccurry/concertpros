@@ -70,6 +70,32 @@
         background:var(--confirm-bg);color:var(--confirm)}
   #empty{text-align:center;color:var(--ink-3);padding:30px;background:var(--surface);
          border:1px dashed var(--line);border-radius:8px}
+
+  #navTabs{display:flex;gap:2px;background:var(--ground);padding:2px;border-radius:6px}
+  .navBtn{border:0;background:transparent;color:var(--ink-3);padding:6px 12px;border-radius:5px;
+          font-size:13px;cursor:pointer}
+  .navBtn[aria-selected="true"]{background:var(--surface);color:var(--ink);font-weight:600}
+
+  #addPersonBtn{border:0;background:var(--accent);color:#fff;font-weight:600;border-radius:6px;
+                padding:8px 14px;font-size:13px;cursor:pointer;margin-bottom:12px}
+  #personForm{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+              padding:16px;margin-bottom:16px}
+  #personForm .row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  #personForm .field{flex:1;min-width:140px}
+  #personForm label{display:block;font-size:11px;color:var(--ink-3);margin-bottom:3px}
+  #personForm input,#personForm select{width:100%;padding:8px 9px;border:1px solid var(--line);
+                                        border-radius:6px;font-size:13.5px}
+  #personForm .actions{display:flex;gap:8px;align-items:center;margin-top:4px}
+  #personForm button{border:0;border-radius:6px;padding:9px 16px;font-size:13.5px;cursor:pointer}
+  #pSaveBtn{background:var(--accent);color:#fff;font-weight:600}
+  #pCancelBtn{background:var(--ground);color:var(--ink-2)}
+  #pResetBtn{background:var(--ground);color:var(--ink-2);border:1px solid var(--line)}
+  #pError{color:#9a3b3b;font-size:12.5px}
+  #pTempPassword{margin-top:10px;padding:10px 12px;background:var(--accent-soft);color:var(--accent);
+                 border-radius:6px;font-size:13px}
+  .roleChip{display:flex;align-items:center;gap:5px;font-size:13px}
+  .roleChip input{width:auto}
+  .pill-muted{background:var(--ground);color:var(--ink-3)}
 </style>
 </head>
 <body>
@@ -89,11 +115,16 @@
 <div id="app">
   <div id="topbar">
     <h1 class="brand" style="margin:0;font-size:19px">Concert<span>Pros</span></h1>
+    <div id="navTabs" style="display:none">
+      <button type="button" class="navBtn" data-view="calendar">Calendar</button>
+      <button type="button" class="navBtn" data-view="people">People</button>
+    </div>
     <span class="who" id="whoami"></span>
     <button id="bookBtn" style="display:none">+ Book a show</button>
     <button id="logoutBtn">Log out</button>
   </div>
 
+<div id="calendarView">
   <form id="bookForm">
     <div class="row">
       <div class="field">
@@ -144,6 +175,55 @@
   <div id="eventsHost"></div>
 </div>
 
+<div id="peopleView" style="display:none">
+  <button type="button" id="addPersonBtn">+ Add a person</button>
+  <div id="peopleHost"></div>
+
+  <div id="personForm" style="display:none">
+    <div class="row">
+      <div class="field">
+        <label for="pName">Name</label>
+        <input id="pName">
+      </div>
+      <div class="field">
+        <label for="pEmail">Email</label>
+        <input id="pEmail" type="email">
+      </div>
+      <div class="field">
+        <label for="pPhone">Phone</label>
+        <input id="pPhone" type="tel">
+      </div>
+      <div class="field">
+        <label for="pAccess">Access</label>
+        <select id="pAccess">
+          <option value="crew">Crew</option>
+          <option value="booker">Booker</option>
+          <option value="owner">Owner</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label>Active</label>
+        <label style="font-weight:normal;display:flex;align-items:center;gap:6px;margin-top:6px">
+          <input id="pActive" type="checkbox" style="width:auto" checked> Active
+        </label>
+      </div>
+      <div class="field" style="flex:2">
+        <label>Roles they cover</label>
+        <div id="pRoles" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px"></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button type="button" id="pSaveBtn">Save</button>
+      <button type="button" id="pCancelBtn">Cancel</button>
+      <button type="button" id="pResetBtn" style="display:none">Reset password</button>
+      <span id="pError"></span>
+    </div>
+    <div id="pTempPassword" style="display:none"></div>
+  </div>
+</div>
+
 <script>
 async function api(path, opts) {
   const res = await fetch(path, Object.assign(
@@ -168,9 +248,14 @@ function fmtTime(t) {
 }
 
 let lastEvents = [];
+let lastPeople = [];
+let allRoles = [];
 let canBook = false;
+let myAccessLevel = "crew";
 let editingId = null;
 let editingVersion = null;
+let editingPersonId = null;
+let currentView = "calendar";
 
 async function loadEvents() {
   const {ok, body} = await api("/api/events");
@@ -206,13 +291,79 @@ async function loadBookingForm() {
       artists.body.artists.map(a => `<option value="${a.name}">`).join("");
   }
   if (roles.ok) {
+    allRoles = roles.body.roles;
     document.getElementById("staffRole").innerHTML =
-      roles.body.roles.map(r => `<option value="${r.id}">${r.name}</option>`).join("");
+      allRoles.map(r => `<option value="${r.id}">${r.name}</option>`).join("");
   }
   if (people.ok) {
+    lastPeople = people.body.people;
+    const active = lastPeople.filter(p => p.active);
     document.getElementById("staffPerson").innerHTML =
-      people.body.people.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+      active.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
   }
+}
+
+function renderPeopleTable() {
+  const host = document.getElementById("peopleHost");
+  if (!lastPeople.length) {
+    host.innerHTML = `<div id="empty">No one on the roster yet.</div>`;
+    return;
+  }
+  const rows = lastPeople.map(p => `
+    <tr data-id="${p.id}" style="cursor:pointer${p.active ? "" : ";opacity:.55"}">
+      <td><strong>${p.name}</strong>${p.active ? "" : " · inactive"}</td>
+      <td>${p.email}</td>
+      <td>${p.phone || ""}</td>
+      <td><span class="pill ${p.access_level === "crew" ? "pill-muted" : ""}">${p.access_level}</span></td>
+      <td>${p.roles.map(r => r.name).join(", ")}</td>
+    </tr>`).join("");
+  host.innerHTML =
+    `<table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Access</th><th>Covers</th></tr></thead>
+     <tbody>${rows}</tbody></table>`;
+  host.querySelectorAll("tr[data-id]").forEach(tr => {
+    tr.addEventListener("click", () => openPersonForm(Number(tr.dataset.id)));
+  });
+}
+
+function renderRoleCheckboxes(checkedIds) {
+  const host = document.getElementById("pRoles");
+  host.innerHTML = allRoles.map(r => `
+    <label class="roleChip">
+      <input type="checkbox" value="${r.id}" ${checkedIds.includes(r.id) ? "checked" : ""}>
+      ${r.name}
+    </label>`).join("");
+}
+
+function openPersonForm(personId) {
+  const p = personId ? lastPeople.find(x => x.id === personId) : null;
+  editingPersonId = personId || null;
+  const outranked = p && myAccessLevel !== "owner" && p.access_level !== "crew";
+
+  document.getElementById("pName").value = p ? p.name : "";
+  document.getElementById("pEmail").value = p ? p.email : "";
+  document.getElementById("pEmail").disabled = !!p;  // email isn't editable once created
+  document.getElementById("pPhone").value = (p && p.phone) || "";
+  document.getElementById("pActive").checked = p ? p.active : true;
+
+  const accessSelect = document.getElementById("pAccess");
+  accessSelect.value = p ? p.access_level : "crew";
+  // A booker may only grant/see 'crew' as an option, never elevate anyone.
+  [...accessSelect.options].forEach(o => {
+    o.disabled = myAccessLevel !== "owner" && o.value !== "crew";
+  });
+  accessSelect.disabled = outranked;
+
+  renderRoleCheckboxes(p ? p.roles.map(r => r.id) : []);
+  document.getElementById("pResetBtn").style.display = p ? "inline-block" : "none";
+  document.getElementById("pTempPassword").style.display = "none";
+  document.getElementById("pError").textContent = outranked
+    ? "You don't have permission to edit this person." : "";
+  document.getElementById("pName").disabled = !!outranked;
+  document.getElementById("pPhone").disabled = !!outranked;
+  document.getElementById("pActive").disabled = !!outranked;
+  document.getElementById("pSaveBtn").style.display = outranked ? "none" : "inline-block";
+
+  document.getElementById("personForm").style.display = "block";
 }
 
 function renderStaffList() {
@@ -259,14 +410,28 @@ function openEditForm(eventId) {
   renderStaffList();
 }
 
+function switchView(view) {
+  currentView = view;
+  document.getElementById("calendarView").style.display = view === "calendar" ? "block" : "none";
+  document.getElementById("peopleView").style.display = view === "people" ? "block" : "none";
+  document.querySelectorAll(".navBtn").forEach(b => {
+    b.setAttribute("aria-selected", b.dataset.view === view ? "true" : "false");
+  });
+  if (view === "people") renderPeopleTable();
+}
+
 async function boot() {
   const me = await api("/api/me");
   if (me.ok) {
     document.getElementById("whoami").textContent = `${me.body.name} · ${me.body.access_level}`;
-    canBook = me.body.access_level === "booker" || me.body.access_level === "owner";
+    myAccessLevel = me.body.access_level;
+    canBook = myAccessLevel === "booker" || myAccessLevel === "owner";
     document.getElementById("bookBtn").style.display = canBook ? "inline-block" : "none";
+    document.getElementById("navTabs").style.display = canBook ? "flex" : "none";
+    document.getElementById("addPersonBtn").style.display = canBook ? "inline-block" : "none";
     if (canBook) loadBookingForm();
     showApp();
+    switchView("calendar");
     loadEvents();
   } else {
     showLogin();
@@ -352,6 +517,67 @@ document.getElementById("bookForm").addEventListener("submit", async (e) => {
       "Someone else changed this show while you had it open. Reload and try again.";
   } else {
     document.getElementById("bookError").textContent = body.error || "Could not save that show.";
+  }
+});
+
+document.querySelectorAll(".navBtn").forEach(b => {
+  b.addEventListener("click", () => switchView(b.dataset.view));
+});
+
+document.getElementById("addPersonBtn").addEventListener("click", () => openPersonForm(null));
+
+document.getElementById("pCancelBtn").addEventListener("click", () => {
+  document.getElementById("personForm").style.display = "none";
+  editingPersonId = null;
+});
+
+document.getElementById("pSaveBtn").addEventListener("click", async () => {
+  const roleIds = [...document.querySelectorAll("#pRoles input:checked")].map(i => Number(i.value));
+  document.getElementById("pError").textContent = "";
+
+  if (editingPersonId) {
+    const payload = {
+      name: document.getElementById("pName").value,
+      phone: document.getElementById("pPhone").value,
+      active: document.getElementById("pActive").checked,
+      access_level: document.getElementById("pAccess").value,
+    };
+    const {ok, body} = await api(`/api/people/${editingPersonId}`, {method: "PATCH", body: JSON.stringify(payload)});
+    if (!ok) { document.getElementById("pError").textContent = body.error || "Could not save."; return; }
+    await api(`/api/people/${editingPersonId}/roles`, {method: "PUT", body: JSON.stringify({role_ids: roleIds})});
+  } else {
+    const payload = {
+      name: document.getElementById("pName").value,
+      email: document.getElementById("pEmail").value,
+      phone: document.getElementById("pPhone").value,
+      access_level: document.getElementById("pAccess").value,
+    };
+    const {ok, body} = await api("/api/people", {method: "POST", body: JSON.stringify(payload)});
+    if (!ok) { document.getElementById("pError").textContent = body.error || "Could not create."; return; }
+    editingPersonId = body.id;
+    if (roleIds.length) {
+      await api(`/api/people/${editingPersonId}/roles`, {method: "PUT", body: JSON.stringify({role_ids: roleIds})});
+    }
+    const box = document.getElementById("pTempPassword");
+    box.style.display = "block";
+    box.textContent = `Temp password: ${body.temp_password} — give this to them, they should change it after logging in.`;
+  }
+  await loadBookingForm();  // refreshes lastPeople and the staff-assign picker
+  renderPeopleTable();
+  if (!editingPersonId || document.getElementById("pTempPassword").style.display === "none") {
+    document.getElementById("personForm").style.display = "none";
+  }
+});
+
+document.getElementById("pResetBtn").addEventListener("click", async () => {
+  if (!editingPersonId) return;
+  const {ok, body} = await api(`/api/people/${editingPersonId}/reset-password`, {method: "POST"});
+  const box = document.getElementById("pTempPassword");
+  if (ok) {
+    box.style.display = "block";
+    box.textContent = `New temp password: ${body.temp_password} — give this to them, they should change it after logging in.`;
+  } else {
+    document.getElementById("pError").textContent = body.error || "Could not reset password.";
   }
 });
 

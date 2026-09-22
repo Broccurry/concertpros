@@ -360,10 +360,24 @@ def create_app():
         # Who's working a show is a booking-office concern; crew has no
         # reason to see the roster (and its own read of a show already
         # limits them to only their own assignment — see permissions.py).
+        # Returns everyone, active or not — the people-admin screen needs
+        # to see and reactivate inactive accounts; the staff-assignment
+        # picker filters to active ones client-side.
         cur = g.db.cursor()
-        cur.execute("SELECT id, name, email, phone, active FROM people WHERE active ORDER BY name")
+        cur.execute("SELECT id, name, email, phone, active, access_level FROM people ORDER BY name")
         cols = [c.name for c in cur.description]
-        return jsonify(people=[dict(zip(cols, row)) for row in cur.fetchall()])
+        people = [dict(zip(cols, row)) for row in cur.fetchall()]
+
+        cur.execute(
+            """SELECT pr.person_id, r.id, r.name FROM person_roles pr
+               JOIN roles r ON r.id = pr.role_id"""
+        )
+        roles_by_person: dict[int, list[dict]] = {}
+        for person_id, role_id, role_name in cur.fetchall():
+            roles_by_person.setdefault(person_id, []).append({"id": role_id, "name": role_name})
+        for p in people:
+            p["roles"] = roles_by_person.get(p["id"], [])
+        return jsonify(people=people)
 
     @app.get("/api/roles")
     @require_booker
@@ -372,6 +386,131 @@ def create_app():
         cur.execute("SELECT id, name FROM roles ORDER BY name")
         cols = [c.name for c in cur.description]
         return jsonify(roles=[dict(zip(cols, row)) for row in cur.fetchall()])
+
+    @app.post("/api/people")
+    @require_booker
+    def create_person():
+        """No self-signup, ever (CLAUDE.md) — this is the one place an
+        account gets created through the app, and it's gated by rank:
+        a booker may only create crew; only the owner can create a
+        booker or another owner."""
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "").strip()
+        email = (body.get("email") or "").strip().lower()
+        access_level = body.get("access_level", "crew")
+        phone = (body.get("phone") or "").strip() or None
+
+        if not name or not email:
+            return jsonify(error="name_and_email_required"), 400
+        if access_level not in ("crew", "booker", "owner"):
+            return jsonify(error="invalid_access_level"), 400
+        if not g.viewer.can_manage_access_level(access_level):
+            return jsonify(error="forbidden"), 403
+
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM people WHERE lower(email) = %s", (email,))
+        if cur.fetchone() is not None:
+            return jsonify(error="email_already_in_use"), 400
+
+        temp_password = auth.generate_temp_password()
+        cur.execute(
+            """INSERT INTO people (name, email, password_hash, access_level, phone)
+               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
+            (name, email, auth.hash_password(temp_password), access_level, phone),
+        )
+        person_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "person", person_id, "create",
+                     {"name": name, "email": email, "access_level": access_level})
+        return jsonify(id=person_id, temp_password=temp_password), 201
+
+    @app.patch("/api/people/<int:person_id>")
+    @require_booker
+    def update_person(person_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT name, phone, active, access_level FROM people WHERE id = %s", (person_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        before = dict(zip(["name", "phone", "active", "access_level"], row))
+
+        # A booker can't touch a person who outranks them, even to change
+        # something as harmless-looking as a phone number.
+        if not g.viewer.can_manage_access_level(before["access_level"]):
+            return jsonify(error="forbidden"), 403
+
+        body = request.get_json(silent=True) or {}
+        updates = {}
+        if "name" in body:
+            name = (body["name"] or "").strip()
+            if not name:
+                return jsonify(error="name_cannot_be_empty"), 400
+            updates["name"] = name
+        if "phone" in body:
+            updates["phone"] = (body["phone"] or "").strip() or None
+        if "active" in body:
+            updates["active"] = bool(body["active"])
+        if "access_level" in body:
+            new_level = body["access_level"]
+            if new_level not in ("crew", "booker", "owner"):
+                return jsonify(error="invalid_access_level"), 400
+            if not g.viewer.can_manage_access_level(new_level):
+                return jsonify(error="forbidden"), 403  # can't promote past your own rank
+            updates["access_level"] = new_level
+
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur.execute(f"UPDATE people SET {set_clause}, updated_at = now() WHERE id = %s",
+                    list(updates.values()) + [person_id])
+        audit.record(g.db, g.viewer, "person", person_id, "update",
+                     {"before": {k: audit.jsonable(before.get(k)) for k in updates},
+                      "after": {k: audit.jsonable(v) for k, v in updates.items()}})
+        return jsonify(ok=True)
+
+    @app.post("/api/people/<int:person_id>/reset-password")
+    @require_booker
+    def reset_password(person_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT access_level FROM people WHERE id = %s", (person_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        if not g.viewer.can_manage_access_level(row[0]):
+            return jsonify(error="forbidden"), 403
+        temp_password = auth.generate_temp_password()
+        cur.execute("UPDATE people SET password_hash = %s, updated_at = now() WHERE id = %s",
+                    (auth.hash_password(temp_password), person_id))
+        audit.record(g.db, g.viewer, "person", person_id, "reset_password", None)
+        return jsonify(temp_password=temp_password)
+
+    @app.put("/api/people/<int:person_id>/roles")
+    @require_booker
+    def set_person_roles(person_id):
+        """Replaces the whole set — simpler than incremental add/remove
+        for a checkbox-style UI, and there's no history worth keeping
+        beyond what audit_log already records here."""
+        body = request.get_json(silent=True) or {}
+        role_ids = body.get("role_ids")
+        if not isinstance(role_ids, list):
+            return jsonify(error="role_ids_must_be_a_list"), 400
+
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM people WHERE id = %s", (person_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        if role_ids:
+            cur.execute("SELECT id FROM roles WHERE id = ANY(%s)", (role_ids,))
+            found = {r[0] for r in cur.fetchall()}
+            unknown = set(role_ids) - found
+            if unknown:
+                return jsonify(error="unknown_role_ids", unknown=list(unknown)), 400
+
+        cur.execute("DELETE FROM person_roles WHERE person_id = %s", (person_id,))
+        for rid in role_ids:
+            cur.execute("INSERT INTO person_roles (person_id, role_id) VALUES (%s, %s)", (person_id, rid))
+        audit.record(g.db, g.viewer, "person", person_id, "set_roles", {"role_ids": role_ids})
+        return jsonify(ok=True)
 
     @app.post("/api/events/<int:event_id>/assignments")
     @require_booker

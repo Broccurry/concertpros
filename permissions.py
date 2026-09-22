@@ -21,6 +21,16 @@ class Viewer:
     id: int
     access_level: str  # 'crew' | 'booker' | 'owner'
 
+    def can_manage_access_level(self, target_level: str) -> bool:
+        """A booker may create/edit/reset-password only for 'crew' people —
+        never for another booker or the owner, and never grant 'booker' or
+        'owner' to anyone. Only the owner can touch people at booker/owner
+        rank. One rule, called from every people-admin endpoint, so a
+        booker can never elevate themselves or anyone else."""
+        if self.access_level == "owner":
+            return True
+        return target_level == "crew"
+
     @property
     def is_crew(self) -> bool:
         return self.access_level == "crew"
