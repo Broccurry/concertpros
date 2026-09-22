@@ -165,7 +165,7 @@ CREATE TABLE event_artists (
 CREATE TABLE event_artist_contacts (
     id              SERIAL PRIMARY KEY,
     event_artist_id INTEGER NOT NULL REFERENCES event_artists(id) ON DELETE CASCADE,
-    method          TEXT NOT NULL CHECK (method IN ('text', 'email', 'phone')),
+    method          TEXT NOT NULL CHECK (method IN ('text', 'email', 'phone', 'messenger')),
     person_id       INTEGER REFERENCES people(id),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -300,13 +300,15 @@ CREATE TABLE artist_members (
 -- not bundled into the main events list — unlike tasks/staff this can
 -- grow unbounded over a show's life and shouldn't bloat every calendar load.
 CREATE TABLE event_messages (
-    id          SERIAL PRIMARY KEY,
-    event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-    person_id   INTEGER REFERENCES people(id),
-    body        TEXT NOT NULL,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                  SERIAL PRIMARY KEY,
+    event_id            INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    person_id           INTEGER REFERENCES people(id),
+    body                TEXT NOT NULL,
+    parent_message_id   INTEGER REFERENCES event_messages(id) ON DELETE CASCADE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_event_messages_event ON event_messages(event_id, created_at);
+CREATE INDEX idx_event_messages_parent ON event_messages(parent_message_id) WHERE parent_message_id IS NOT NULL;
 
 -- @mentions inside a message body — "you need to look at this." Marked
 -- read as a side effect of opening that show's message thread, not a

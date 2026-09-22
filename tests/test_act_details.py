@@ -133,6 +133,15 @@ class ActDetailsAndContactLog(unittest.TestCase):
         self.assertEqual(act["contacts"][0]["method"], "phone")
         self.assertEqual(act["contacts"][0]["person_name"], "Test Booker")
 
+    def test_messenger_is_a_valid_contact_method(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book(client)
+        events = client.get("/api/events").get_json()["events"]
+        act_id = next(e for e in events if e["id"] == self.event_id)["artists"][0]["id"]
+        r = client.post(f"/api/event_artists/{act_id}/contacts", json={"method": "messenger"})
+        self.assertEqual(r.status_code, 201, r.get_json())
+
     def test_invalid_contact_method_is_rejected(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)

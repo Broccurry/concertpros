@@ -232,6 +232,75 @@ class EventMessages(unittest.TestCase):
         self._login(crew_client, self.crew_email)
         self.assertEqual(crew_client.post(f"/api/messages/{message_id}/ack").status_code, 403)
 
+    def test_only_the_person_mentioned_can_acknowledge_it(self):
+        """Broc's complaint: anyone could acknowledge over the person
+        actually being asked, so "Cody, can you confirm the deposit"
+        could show as acknowledged by someone who isn't Cody."""
+        booker_client = self.app.test_client()
+        self._login(booker_client, self.booker_email)
+        self._book_show(booker_client)
+        r = booker_client.post(f"/api/events/{self.event_id}/messages",
+                                json={"body": "@Test Owner can you confirm the deposit?"})
+        message_id = r.get_json()["id"]
+
+        # the booker who asked the question is not who was asked
+        blocked = booker_client.post(f"/api/messages/{message_id}/ack")
+        self.assertEqual(blocked.status_code, 403)
+
+        owner_client = self.app.test_client()
+        self._login(owner_client, self.owner_email)
+        allowed = owner_client.post(f"/api/messages/{message_id}/ack")
+        self.assertEqual(allowed.status_code, 200, allowed.get_json())
+
+        messages = booker_client.get(f"/api/events/{self.event_id}/messages").get_json()["messages"]
+        mine = next(m for m in messages if m["id"] == message_id)
+        self.assertEqual(mine["mentioned_person_ids"], [self.owner_id])
+
+    def test_replying_attaches_to_the_original_message(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book_show(client)
+        r = client.post(f"/api/events/{self.event_id}/messages", json={"body": "doors moved to 6:30"})
+        original_id = r.get_json()["id"]
+
+        reply = client.post(f"/api/events/{self.event_id}/messages",
+                             json={"body": "got it, thanks", "parent_message_id": original_id})
+        self.assertEqual(reply.status_code, 201, reply.get_json())
+
+        messages = client.get(f"/api/events/{self.event_id}/messages").get_json()["messages"]
+        mine = next(m for m in messages if m["id"] == reply.get_json()["id"])
+        self.assertEqual(mine["parent_message_id"], original_id)
+
+    def test_replying_with_an_unknown_parent_is_rejected(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book_show(client)
+        r = client.post(f"/api/events/{self.event_id}/messages",
+                         json={"body": "reply to nothing", "parent_message_id": 999999})
+        self.assertEqual(r.status_code, 400)
+
+    def test_cannot_reply_to_a_message_on_a_different_show(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book_show(client)
+        r = client.post(f"/api/events/{self.event_id}/messages", json={"body": "on show one"})
+        message_id = r.get_json()["id"]
+
+        r2 = client.post("/api/events", json={
+            "venue_id": self.venue_id, "acts": [f"Message Test Band Two {id(self)}"], "show_date": "2027-11-02",
+        })
+        other_event_id = r2.get_json()["id"]
+        try:
+            bad_reply = client.post(f"/api/events/{other_event_id}/messages",
+                                     json={"body": "cross-show reply", "parent_message_id": message_id})
+            self.assertEqual(bad_reply.status_code, 400)
+        finally:
+            cur = self.conn.cursor()
+            cur.execute("DELETE FROM audit_log WHERE entity_type = 'event' AND entity_id = %s", (other_event_id,))
+            cur.execute("DELETE FROM events WHERE id = %s", (other_event_id,))
+            cur.execute("DELETE FROM artists WHERE name = %s", (f"Message Test Band Two {id(self)}",))
+            self.conn.commit()
+
 
 if __name__ == "__main__":
     unittest.main()

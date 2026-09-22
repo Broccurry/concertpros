@@ -208,7 +208,7 @@ h3.section:first-child{margin-top:0}
 
 .scrim{position:fixed;inset:0;background:rgba(12,14,20,.55);z-index:50;display:flex;align-items:flex-start;
        justify-content:center;padding:16px;overflow-y:auto}
-.sheet{background:var(--surface);border-radius:10px;box-shadow:var(--shadow);width:100%;max-width:1680px;
+.sheet{background:var(--surface);border-radius:10px;box-shadow:var(--shadow);width:100%;max-width:1500px;
        margin:auto;border:1px solid var(--line)}
 .sheet-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);
             position:sticky;top:0;background:var(--surface);border-radius:10px 10px 0 0;z-index:2}
@@ -221,9 +221,13 @@ fieldset{border:0;padding:0;margin:0 0 20px}
 legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);padding:0;margin-bottom:8px}
 .row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .row-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-.row-4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+/* Fixed, content-sized columns with justify-content:start rather than
+   1fr — a date/time/venue value is short, and 1fr was stretching each
+   one to a quarter of a very wide modal, leaving a wall of empty white
+   box to the right of "07:00 PM". */
+.row-4{display:grid;grid-template-columns:repeat(4,minmax(120px,190px));gap:10px;justify-content:start}
 @media (max-width: 620px){
-  .row-4{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .row-4{grid-template-columns:repeat(2,minmax(0,1fr));justify-content:stretch}
 }
 .field{display:flex;flex-direction:column;gap:4px;min-width:0}
 .field label{font-size:11.5px;color:var(--ink-3);font-weight:500}
@@ -234,7 +238,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
    the widget's own white chrome no matter what these variables said.
    color-scheme:light pins that native chrome to light too. */
 .field input,.field select,.field textarea{border:1px solid var(--line);background:#fff;color:#111;color-scheme:light;
-                                            border-radius:var(--radius);padding:7px 9px;font-size:13.5px;width:100%;min-width:0}
+                                            border-radius:var(--radius);padding:6px 8px;font-size:13px;width:100%;min-width:0}
 .field textarea{resize:vertical;min-height:58px}
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px var(--accent-soft)}
 .hint{font-size:11.5px;color:var(--ink-3)}
@@ -255,10 +259,20 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
   .memberrow input:nth-child(3){grid-area:email} .memberrow .rowdel{grid-area:x}}
 .checkfield{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
 .checkfield input{width:auto}
+
+.openslots{background:var(--hold-1-bg);border:1px solid var(--hold-1);border-radius:var(--radius);
+           padding:10px 12px;margin-bottom:16px}
+.openslots summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--hold-1);list-style:revert}
+.openslots-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.openslots-row{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;
+               background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:7px 10px;
+               font-size:12.5px;color:var(--ink)}
+.openslots-row:hover{border-color:var(--accent)}
 .holddaterow{display:grid;grid-template-columns:110px 1fr 32px;gap:8px;align-items:center;margin-bottom:6px}
 
 .msgthread{display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:10px}
 .msgrow{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px}
+.msgrow-reply{margin-left:24px;border-left:2px solid var(--accent-soft)}
 .msghead{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-3);margin-bottom:4px}
 .msgauthor{font-weight:600;color:var(--ink-2)}
 .msghead .x{margin-left:auto;border:none;background:none;color:var(--ink-3);width:20px;height:20px;border-radius:50%;
@@ -266,9 +280,14 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .msghead .x:hover{color:var(--dead);background:var(--surface)}
 .msgbody{margin:0;font-size:13.5px;white-space:pre-wrap;line-height:1.4}
 .msgactions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:6px}
-.msgcompose{display:flex;gap:8px;align-items:flex-end}
-.msgcompose textarea{flex:1;resize:vertical;min-height:44px}
-.msgcompose .expandwrap{flex:1}
+.msgcompose{display:flex;flex-direction:column;gap:6px}
+.replybanner{display:flex;align-items:center;gap:8px;background:var(--accent-soft);color:var(--accent);
+             border-radius:var(--radius);padding:5px 10px;font-size:12px}
+.replybanner .x{margin-left:auto;border:none;background:none;color:inherit;width:20px;height:20px;border-radius:50%;
+                display:grid;place-items:center;padding:0}
+.msgcomposerow{display:flex;gap:8px;align-items:flex-end}
+.msgcomposerow textarea{flex:1;resize:vertical;min-height:44px}
+.msgcomposerow .expandwrap{flex:1}
 .mentionsuggest{position:absolute;left:0;bottom:100%;margin-bottom:4px;width:220px;max-height:180px;overflow-y:auto;
                  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);z-index:5}
 .mentionsuggest-item{display:block;width:100%;text-align:left;background:none;border:none;border-bottom:1px solid var(--line);
@@ -298,10 +317,10 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
    through the editor, off the exact same two classes. */
 .act-pending{font-weight:400;text-transform:lowercase}
 .act-confirmed{font-weight:700;text-transform:uppercase}
-.actlist{display:flex;flex-direction:column;gap:8px;margin:8px 0}
-.actlistrow{border:1px solid var(--line);border-radius:var(--radius);padding:8px;background:var(--surface-2)}
-.actlistrow-top{display:flex;align-items:center;gap:8px}
-.actname{flex:1;cursor:pointer;user-select:none}
+.actlist{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.actlistrow{border:1px solid var(--line);border-radius:var(--radius);padding:6px 8px;background:var(--surface-2)}
+.actlistrow-top{display:flex;align-items:center;gap:6px}
+.actname{flex:1;cursor:pointer;user-select:none;font-size:13.5px}
 .rowbtn{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);width:28px;height:28px;
         color:var(--ink-2);display:grid;place-items:center;padding:0;font-size:11px;line-height:1}
 .rowbtn:disabled{opacity:.35;cursor:default}
@@ -324,19 +343,19 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .actgrip{cursor:grab;touch-action:none;color:var(--ink-3);font-size:15px;line-height:1;padding:0 2px;user-select:none}
 .act-dragging{position:relative;z-index:5;opacity:.85;box-shadow:var(--shadow);cursor:grabbing}
 
-/* Role + contact log share one compact line; wraps only if the viewport
-   genuinely can't fit them (narrow phone), never by default. */
-.actmidrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
-.actmidrow select{width:auto;flex:none}
-.actmidrow-fig{display:flex;align-items:center;gap:4px;font-size:12px;color:var(--ink-3)}
-.actmidrow-fig input{width:70px}
-.actnotesrow{display:flex;gap:6px;align-items:flex-start;margin-top:6px}
-.actnotesrow textarea{flex:1;resize:vertical;min-height:30px;border:1px solid var(--line);border-radius:var(--radius);
-                       padding:6px 8px;font-size:13px;font-family:inherit}
-.actnotesrow .expandbtn{flex:none;margin-top:0}
-.btn-sm{padding:4px 10px;font-size:12px;border-radius:var(--radius)}
-.actcontact{margin-top:8px;padding-top:8px;border-top:1px dashed var(--line)}
-.actcontact-entry{margin:0 0 4px;font-size:12px;color:var(--ink-3)}
+/* Role, contact log, and notes all share one compact line; wraps only if
+   the viewport genuinely can't fit them (narrow phone), never by default. */
+.actmidrow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-top:4px}
+.actmidrow select{width:auto;flex:none;font-size:11.5px;padding:3px 5px}
+.actmidrow-fig{display:flex;align-items:center;gap:3px;font-size:11px;color:var(--ink-3)}
+.actmidrow-fig input{width:56px;font-size:11.5px;padding:3px 5px}
+.actmidrow textarea{flex:1 1 120px;min-width:80px;resize:vertical;min-height:24px;border:1px solid var(--line);
+                     border-radius:var(--radius);padding:3px 6px;font-size:11.5px;font-family:inherit}
+.actmidrow .expandbtn{flex:none;margin-top:0}
+.btn-sm{padding:3px 8px;font-size:11px;border-radius:var(--radius)}
+.actcontact{margin-top:4px;padding-top:4px;border-top:1px dashed var(--line);display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.actcontact-entry{margin:0;font-size:11px;color:var(--ink-3)}
+.link-btn{border:none;background:none;color:var(--accent);font-size:11px;padding:0;text-decoration:underline;cursor:pointer}
 
 .tasklist{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
 .taskitem{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--radius);background:var(--ground);border:1px solid transparent}
@@ -1245,6 +1264,33 @@ function renderStaffView(){
     ? allRows.filter(function(ev){ return (ev.staff||[]).some(function(s){ return s.person_id === me.id; }); })
     : allRows;
 
+  // Every open slot across these shows — a TBA placeholder is a real gap,
+  // not coverage, same as a role with no assignment at all.
+  var openSlots = [];
+  allRows.forEach(function(ev){
+    (ev.staff||[]).filter(function(s){ return s.person_id === null; }).forEach(function(s){
+      openSlots.push({ev: ev, role: s.role});
+    });
+  });
+  if(openSlots.length){
+    var openBox = document.createElement("details"); openBox.className = "openslots";
+    var summary = document.createElement("summary");
+    summary.textContent = openSlots.length + " open shift" + (openSlots.length===1?"":"s") + " still need a name";
+    openBox.appendChild(summary);
+    var openList = el("div","openslots-list");
+    openSlots.slice().sort(function(a,b){ return a.ev.show_date < b.ev.show_date ? -1 : a.ev.show_date > b.ev.show_date ? 1 : 0; })
+      .forEach(function(slot){
+        var row = el("button","openslots-row");
+        row.type = "button";
+        row.onclick = function(){ openEvent(slot.ev.id); };
+        row.appendChild(el("span",null, shortDate(slot.ev.show_date) + " · " + slot.ev.venue + " · " + showName(slot.ev)));
+        row.appendChild(el("span","pill s-hold2", slot.role));
+        openList.appendChild(row);
+      });
+    openBox.appendChild(openList);
+    host.appendChild(openBox);
+  }
+
   host.appendChild(el("h3","section","Who's working — upcoming"));
   if(!rows.length){
     var e = el("div","empty");
@@ -1272,16 +1318,19 @@ function renderStaffView(){
       tr.appendChild(el("td","title-cell", showName(ev)));
       tr.appendChild(el("td","date-col", time12(ev.doors)));
       usedRoles.forEach(function(role){
-        var who = (ev.staff||[]).filter(function(s){ return s.role === role.name; }).map(staffLabel).filter(function(n){ return n; });
-        if(!who.length) unfilled++;
-        tr.appendChild(el("td", who.length ? null : "sub", who.join(", ") || "—"));
+        var staffForRole = (ev.staff||[]).filter(function(s){ return s.role === role.name; });
+        var named = staffForRole.filter(function(s){ return s.person_id !== null; }).map(staffLabel);
+        var tbaCount = staffForRole.length - named.length;
+        if(!named.length) unfilled++;
+        var label = named.join(", ") + (tbaCount ? (named.length ? " + " : "") + tbaCount + " TBA" : "");
+        tr.appendChild(el("td", named.length ? null : "sub", label || "—"));
       });
       tb.appendChild(tr);
     });
     t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
     host.appendChild(el("p","notice", unfilled
-      ? unfilled + " role" + (unfilled===1?"":"s") + " unfilled across " + rows.length + " upcoming show" + (rows.length===1?"":"s") + ". Click a row to assign."
-      : "Every role is covered on all " + rows.length + " upcoming shows."));
+      ? unfilled + " role" + (unfilled===1?"":"s") + " with no name on it across " + rows.length + " upcoming show" + (rows.length===1?"":"s") + ". Click a row to assign."
+      : "Every role has a name on it across all " + rows.length + " upcoming shows."));
   }
   host.appendChild(el("p","notice","This is assignment — who's covering each show. Hours, availability and time off would be a separate build."));
 
@@ -1678,7 +1727,6 @@ function renderSheet(){
       }
     };
     top.appendChild(name);
-    if(idx === 0) top.appendChild(el("span","pill pill-muted","Headliner"));
 
     var declineBtn = el("button","btn btn-sm", a.declined ? "Can do it after all" : "Can't do it");
     declineBtn.type = "button";
@@ -1703,9 +1751,9 @@ function renderSheet(){
     top.appendChild(x);
     row.appendChild(top);
 
-    // Role + contact log on one compact line — guarantee lives in the
-    // show-level Deal fieldset now, not per act; if a booker needs to note
-    // a one-off figure for a specific act it goes in that act's notes.
+    // Role, contact log, and notes all share one compact line — guarantee
+    // lives in the show-level Deal fieldset now, not per act; if a booker
+    // needs a one-off figure for a specific act it goes in that act's notes.
     var midRow = el("div","actmidrow");
     midRow.appendChild(selectKV(
       [{value:"",label:"Role —"}].concat(BILL_ROLES.map(function(r){ return {value:r,label:r}; })),
@@ -1720,8 +1768,10 @@ function renderSheet(){
       walkupsWrap.appendChild(input("number", a.walkups, function(v){ a.walkups = v; }));
       midRow.appendChild(walkupsWrap);
     }
+    var methodSel;
     if(a.id){
-      var methodSel = selectKV([{value:"phone",label:"Phone"},{value:"text",label:"Text"},{value:"email",label:"Email"}], "phone", function(){});
+      methodSel = selectKV([{value:"phone",label:"Phone"},{value:"text",label:"Text"},
+        {value:"email",label:"Email"},{value:"messenger",label:"Messenger"}], "phone", function(){});
       midRow.appendChild(methodSel);
       var logBtn = el("button","btn btn-sm","Log contact");
       logBtn.type = "button";
@@ -1739,25 +1789,12 @@ function renderSheet(){
       };
       midRow.appendChild(logBtn);
     }
-    row.appendChild(midRow);
-    if(a.id && (a.contacts||[]).length){
-      var contactWrap = el("div","actcontact");
-      a.contacts.forEach(function(c){
-        contactWrap.appendChild(el("p","actcontact-entry",
-          c.method + " — " + (c.person_name||"someone") + " — " + messageTime(c.created_at)));
-      });
-      row.appendChild(contactWrap);
-    }
-
-    // Notes: one line, with Expand at the end of that same line rather
-    // than a separate row below it.
-    var notesRow = el("div","actnotesrow");
     var notesTa = document.createElement("textarea");
     notesTa.rows = 1;
     notesTa.value = a.notes || "";
-    notesTa.placeholder = "Notes for this band, this show";
+    notesTa.placeholder = "Notes";
     notesTa.oninput = function(){ a.notes = notesTa.value; scheduleAutosave(); };
-    notesRow.appendChild(notesTa);
+    midRow.appendChild(notesTa);
     var notesExpandBtn = el("button","btn btn-sm expandbtn","Expand");
     notesExpandBtn.type = "button";
     var notesExpanded = false;
@@ -1766,8 +1803,32 @@ function renderSheet(){
       notesTa.rows = notesExpanded ? 6 : 1;
       notesExpandBtn.textContent = notesExpanded ? "Collapse" : "Expand";
     };
-    notesRow.appendChild(notesExpandBtn);
-    row.appendChild(notesRow);
+    midRow.appendChild(notesExpandBtn);
+    row.appendChild(midRow);
+
+    // Contact log: only the most recent entry by default — a well-worked
+    // band can rack up a dozen of these and it was eating the whole card.
+    if(a.id && (a.contacts||[]).length){
+      var contacts = a.contacts.slice().sort(function(x,y){ return new Date(y.created_at) - new Date(x.created_at); });
+      var contactWrap = el("div","actcontact");
+      var contactsExpanded = false;
+      function paintContacts(){
+        contactWrap.innerHTML = "";
+        var toShow = contactsExpanded ? contacts : contacts.slice(0,1);
+        toShow.forEach(function(c){
+          contactWrap.appendChild(el("p","actcontact-entry",
+            c.method + " — " + (c.person_name||"someone") + " — " + messageTime(c.created_at)));
+        });
+        if(contacts.length > 1){
+          var toggle = el("button","link-btn", contactsExpanded ? "Show less" : "Show all " + contacts.length + " contacts");
+          toggle.type = "button";
+          toggle.onclick = function(){ contactsExpanded = !contactsExpanded; paintContacts(); };
+          contactWrap.appendChild(toggle);
+        }
+      }
+      paintContacts();
+      row.appendChild(contactWrap);
+    }
 
     actList.appendChild(row);
   });
@@ -1992,8 +2053,9 @@ function renderSheet(){
     var fs9 = document.createElement("fieldset");
     fs9.appendChild(el("legend",null,"Messages"));
     var thread = el("div","msgthread");
-    (draft.messages||[]).forEach(function(m){
-      var row = el("div","msgrow");
+
+    function renderMsgRow(m, isReply){
+      var row = el("div","msgrow" + (isReply ? " msgrow-reply" : ""));
       var head = el("div","msghead");
       head.appendChild(el("span","msgauthor", m.person_name || "(removed person)"));
       head.appendChild(el("span",null, messageTime(m.created_at)));
@@ -2011,11 +2073,11 @@ function renderSheet(){
       var bodyP = el("p","msgbody"); bodyP.appendChild(messageBodyNodes(m.body));
       row.appendChild(bodyP);
 
-      var iAcked = (m.acks||[]).some(function(a){ return a.person_id === me.id; });
       var actionsRow = el("div","msgactions");
       var replyBtn = el("button","btn btn-sm","Reply");
       replyBtn.type = "button";
       replyBtn.onclick = function(){
+        setReplyTarget(m);
         // @mentioning the original author reuses the existing notify
         // path — no separate "this is a reply" concept needed. Replying
         // to your own message just focuses the box; there's no one to
@@ -2028,42 +2090,86 @@ function renderSheet(){
         msgInput.setSelectionRange(msgInput.value.length, msgInput.value.length);
       };
       actionsRow.appendChild(replyBtn);
-      var ackBtn = el("button","btn btn-sm", iAcked ? "✓ Acknowledged" : "Acknowledge");
-      ackBtn.type = "button";
-      ackBtn.disabled = iAcked;
-      ackBtn.onclick = async function(){
-        await api("/api/messages/" + m.id + "/ack", {method:"POST"});
-        await refreshEventMessages();
-      };
-      actionsRow.appendChild(ackBtn);
+
+      // Acknowledge only means something coming from the person a message
+      // actually @mentioned — anyone else clicking it would make it look
+      // like the person being asked had answered when they hadn't. A
+      // message with no @mention asked no one in particular, so anyone
+      // booker/owner can ack it.
+      var mentionedIds = m.mentioned_person_ids || [];
+      var canAck = !mentionedIds.length || mentionedIds.indexOf(me.id) !== -1;
+      if(canAck){
+        var iAcked = (m.acks||[]).some(function(a){ return a.person_id === me.id; });
+        var ackBtn = el("button","btn btn-sm", iAcked ? "✓ Acknowledged" : "Acknowledge");
+        ackBtn.type = "button";
+        ackBtn.disabled = iAcked;
+        ackBtn.onclick = async function(){
+          await api("/api/messages/" + m.id + "/ack", {method:"POST"});
+          await refreshEventMessages();
+        };
+        actionsRow.appendChild(ackBtn);
+      }
       if((m.acks||[]).length){
         actionsRow.appendChild(el("span","hint",
           "Seen by " + m.acks.map(function(a){ return a.person_name; }).join(", ")));
       }
       row.appendChild(actionsRow);
+      return row;
+    }
 
-      thread.appendChild(row);
+    var allMessages = draft.messages || [];
+    var topLevel = allMessages.filter(function(m){ return !m.parent_message_id; });
+    topLevel.forEach(function(m){
+      thread.appendChild(renderMsgRow(m, false));
+      allMessages.filter(function(r){ return r.parent_message_id === m.id; })
+        .forEach(function(r){ thread.appendChild(renderMsgRow(r, true)); });
     });
     fs9.appendChild(thread);
-    if(!(draft.messages||[]).length) fs9.appendChild(el("p","hint","No messages yet — leave one for whoever opens this show next."));
+    if(!allMessages.length) fs9.appendChild(el("p","hint","No messages yet — leave one for whoever opens this show next."));
 
     var msgCompose = el("div","msgcompose"); msgCompose.style.position = "relative";
+    var replyTarget = null;
+    var replyBanner = el("div","replybanner"); replyBanner.hidden = true;
+    function setReplyTarget(m){
+      // One level of nesting: replying to a reply still attaches to
+      // that reply's own root, so a thread never grows more than one
+      // level deep and "Reply" always means "stay on the original
+      // message" the way Broc expects it to.
+      replyTarget = m ? (m.parent_message_id || m.id) : null;
+      replyBanner.innerHTML = "";
+      if(m){
+        replyBanner.hidden = false;
+        replyBanner.appendChild(el("span",null,"Replying to " + (m.person_name || "someone")));
+        var cancel = el("button","x","✕");
+        cancel.type = "button";
+        cancel.onclick = function(){ setReplyTarget(null); };
+        replyBanner.appendChild(cancel);
+      } else {
+        replyBanner.hidden = true;
+      }
+    }
+    msgCompose.appendChild(replyBanner);
+    var msgComposeRow = el("div","msgcomposerow");
     var msgWrap = expandableTextarea("", function(){}, 2);
     var msgInput = msgWrap.querySelector("textarea");
     msgInput.placeholder = "Leave a note on this show... @Name notifies them";
     // A message isn't a show field — replace expandableTextarea's default
     // oninput (which also pings scheduleAutosave) so typing a chat message
     // doesn't spuriously PATCH the show and bump its version/audit trail.
-    msgCompose.appendChild(msgWrap);
+    msgComposeRow.appendChild(msgWrap);
     var sendBtn = el("button","btn","Send");
     sendBtn.type = "button";
     sendBtn.onclick = async function(){
       var text = msgInput.value.trim();
       if(!text) return;
-      await api("/api/events/" + draft.id + "/messages", {method:"POST", body: JSON.stringify({body:text})});
+      var payload = {body: text};
+      if(replyTarget) payload.parent_message_id = replyTarget;
+      await api("/api/events/" + draft.id + "/messages", {method:"POST", body: JSON.stringify(payload)});
+      setReplyTarget(null);
       await refreshEventMessages();
     };
-    msgCompose.appendChild(sendBtn);
+    msgComposeRow.appendChild(sendBtn);
+    msgCompose.appendChild(msgComposeRow);
 
     // @mention autocomplete: filters on any WORD of a person's name so
     // "@c" shows both Christian and Cody, "@ch" narrows to Christian —

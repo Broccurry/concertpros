@@ -519,7 +519,7 @@ def create_app():
         opening this act sees it and doesn't call the same band again."""
         body = request.get_json(silent=True) or {}
         method = body.get("method")
-        if method not in ("text", "email", "phone"):
+        if method not in ("text", "email", "phone", "messenger"):
             return jsonify(error="invalid_method"), 400
         cur = g.db.cursor()
         cur.execute("SELECT event_id FROM event_artists WHERE id = %s", (event_artist_id,))
@@ -1298,7 +1298,7 @@ def create_app():
         if cur.fetchone() is None:
             return jsonify(error="not_found"), 404
         cur.execute(
-            "SELECT m.id, m.body, m.created_at, m.person_id, p.name AS person_name "
+            "SELECT m.id, m.body, m.created_at, m.person_id, p.name AS person_name, m.parent_message_id "
             "FROM event_messages m LEFT JOIN people p ON p.id = m.person_id "
             "WHERE m.event_id = %s ORDER BY m.created_at",
             (event_id,),
@@ -1307,19 +1307,33 @@ def create_app():
         messages = [dict(zip(cols, row)) for row in cur.fetchall()]
 
         if messages:
+            ids = [m["id"] for m in messages]
             cur.execute(
                 "SELECT a.message_id, a.person_id, p.name AS person_name, a.created_at "
                 "FROM event_message_acks a JOIN people p ON p.id = a.person_id "
                 "WHERE a.message_id = ANY(%(ids)s) ORDER BY a.created_at",
-                {"ids": [m["id"] for m in messages]},
+                {"ids": ids},
             )
             acols = [c.name for c in cur.description]
             acks_by_message: dict[int, list[dict]] = {}
             for row in cur.fetchall():
                 d = dict(zip(acols, row))
                 acks_by_message.setdefault(d.pop("message_id"), []).append(d)
+
+            # Who a message is actually asking — an ack only means
+            # something if it comes from one of these people (or from
+            # anyone, if the message asked no one in particular).
+            cur.execute(
+                "SELECT message_id, person_id FROM event_message_mentions WHERE message_id = ANY(%(ids)s)",
+                {"ids": ids},
+            )
+            mentioned_by_message: dict[int, list[int]] = {}
+            for message_id, person_id in cur.fetchall():
+                mentioned_by_message.setdefault(message_id, []).append(person_id)
+
             for m in messages:
                 m["acks"] = acks_by_message.get(m["id"], [])
+                m["mentioned_person_ids"] = mentioned_by_message.get(m["id"], [])
 
         # Opening this thread is what "reading" a mention means here — no
         # separate mark-as-read click.
@@ -1337,12 +1351,22 @@ def create_app():
         """A lightweight "seen this" — separate from a mention's read_at
         (private, per-recipient inbox state); an ack is public, so anyone
         opening the thread can see who's already acknowledged it and skip
-        chasing them. Acking twice is a no-op, not an error."""
+        chasing them. Acking twice is a no-op, not an error.
+
+        If the message @mentioned specific people, only THEY can ack it —
+        otherwise "Cody, can you confirm the deposit" could be marked
+        acknowledged by anyone else in the thread, which would tell Broc
+        the wrong person answered. A message that asked no one in
+        particular can be acked by any booker/owner."""
         cur = g.db.cursor()
         cur.execute("SELECT event_id FROM event_messages WHERE id = %s", (message_id,))
         row = cur.fetchone()
         if row is None:
             return jsonify(error="not_found"), 404
+        cur.execute("SELECT person_id FROM event_message_mentions WHERE message_id = %s", (message_id,))
+        mentioned_ids = [r[0] for r in cur.fetchall()]
+        if mentioned_ids and g.viewer.id not in mentioned_ids:
+            return jsonify(error="not_the_person_being_asked"), 403
         cur.execute(
             "INSERT INTO event_message_acks (message_id, person_id) VALUES (%s, %s) "
             "ON CONFLICT (message_id, person_id) DO NOTHING",
@@ -1376,13 +1400,19 @@ def create_app():
         text = (body.get("body") or "").strip()
         if not text:
             return jsonify(error="body_required"), 400
+        parent_message_id = body.get("parent_message_id") or None
         cur = g.db.cursor()
         cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
         if cur.fetchone() is None:
             return jsonify(error="not_found"), 404
+        if parent_message_id is not None:
+            cur.execute("SELECT 1 FROM event_messages WHERE id = %s AND event_id = %s",
+                        (parent_message_id, event_id))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_parent_message"), 400
         cur.execute(
-            "INSERT INTO event_messages (event_id, person_id, body) VALUES (%s, %s, %s) RETURNING id",
-            (event_id, g.viewer.id, text),
+            "INSERT INTO event_messages (event_id, person_id, body, parent_message_id) VALUES (%s, %s, %s, %s) RETURNING id",
+            (event_id, g.viewer.id, text, parent_message_id),
         )
         message_id = cur.fetchone()[0]
         _record_mentions(g.db, message_id, text)
