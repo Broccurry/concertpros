@@ -1052,6 +1052,52 @@ def create_app():
                      {"assignment_id": assignment_id, "person_id": person_id})
         return jsonify(ok=True, clocked_in_at=clocked_in_at, clocked_out_at=clocked_out_at)
 
+    @app.patch("/api/assignments/<int:assignment_id>")
+    @require_booker
+    def update_assignment(assignment_id):
+        """Changing who's filling a slot (TBA -> a real name, or moving it
+        to someone else) or its scheduled time — the role itself isn't
+        editable here; swap the assignment for a different role instead
+        of repurposing this one, so a role never silently becomes a
+        different role."""
+        body = request.get_json(silent=True) or {}
+        cur = g.db.cursor()
+        cur.execute("SELECT event_id FROM assignments WHERE id = %s", (assignment_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        event_id = row[0]
+
+        updates = {}
+        if "person_id" in body:
+            person_id = body["person_id"] or None
+            if person_id is not None:
+                cur.execute("SELECT 1 FROM people WHERE id = %s AND active", (person_id,))
+                if cur.fetchone() is None:
+                    return jsonify(error="unknown_person"), 400
+            updates["person_id"] = person_id
+            # A slot moving to someone new (or back to TBA) starts its
+            # clock state over — the old clock-in wasn't this person's.
+            updates["clocked_in_at"] = None
+            updates["clocked_out_at"] = None
+        if "scheduled_time" in body:
+            val = body["scheduled_time"]
+            if val in (None, ""):
+                updates["scheduled_time"] = None
+            else:
+                try:
+                    updates["scheduled_time"] = time.fromisoformat(val)
+                except ValueError:
+                    return jsonify(error="invalid_scheduled_time"), 400
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur.execute(f"UPDATE assignments SET {set_clause} WHERE id = %s", list(updates.values()) + [assignment_id])
+        audit.record(g.db, g.viewer, "event", event_id, "update_assignment",
+                     {"assignment_id": assignment_id, **{k: audit.jsonable(v) for k, v in updates.items()}})
+        return jsonify(ok=True)
+
     @app.delete("/api/assignments/<int:assignment_id>")
     @require_booker
     def delete_assignment(assignment_id):

@@ -245,6 +245,12 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 
 .tierrow,.stafrow{display:grid;grid-template-columns:1fr 120px 32px;gap:8px;margin-bottom:6px;align-items:center}
 .stafrow{grid-template-columns:140px 1fr 32px}
+.stafrow-edit{grid-template-columns:110px 1fr 110px auto 32px}
+@media (max-width: 620px){
+  .stafrow-edit{display:flex;flex-wrap:wrap;gap:6px}
+  .stafrow-edit select{flex:1 1 120px}
+  .stafrow-edit input[type=time]{flex:0 0 100px}
+}
 .clockrow{display:grid;grid-template-columns:1fr auto 110px;gap:10px;align-items:center;margin-bottom:8px}
 @media (max-width: 480px){
   .clockrow{grid-template-columns:1fr;justify-items:start}
@@ -1967,13 +1973,33 @@ function renderSheet(){
     fs6.appendChild(el("p","hint","Book the show first, then assign staff on the next edit."));
   } else {
     (draft.staff||[]).forEach(function(s){
-      var row = el("div","stafrow");
+      var row = el("div","stafrow stafrow-edit");
       row.appendChild(el("span",null, s.role));
-      var who = staffLabel(s);
-      if(s.scheduled_time) who += " — " + time12(s.scheduled_time);
-      if(s.clocked_out_at) who += " — out " + messageTime(s.clocked_out_at);
-      else if(s.clocked_in_at) who += " — in " + messageTime(s.clocked_in_at);
-      row.appendChild(el("span",null, who));
+
+      var personEditSel = selectKV([{value:"",label:"TBA (unfilled)"}].concat(
+        store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; })),
+        s.person_id || "", async function(v){
+          await api("/api/assignments/" + s.id, {method:"PATCH", body: JSON.stringify({person_id: v ? Number(v) : null})});
+          await refreshDraft();
+        });
+      row.appendChild(personEditSel);
+
+      // onchange, not the shared input() helper's oninput — a time input
+      // fires input events while the picker is still mid-edit (hour, then
+      // minute, then AM/PM), and refreshDraft() re-renders the whole
+      // sheet; saving after every keystroke would fight the picker.
+      var timeEditInput = document.createElement("input");
+      timeEditInput.type = "time";
+      timeEditInput.value = s.scheduled_time || "";
+      timeEditInput.onchange = async function(){
+        await api("/api/assignments/" + s.id, {method:"PATCH", body: JSON.stringify({scheduled_time: timeEditInput.value || null})});
+        await refreshDraft();
+      };
+      row.appendChild(timeEditInput);
+
+      if(s.clocked_out_at) row.appendChild(el("span","hint","out " + messageTime(s.clocked_out_at)));
+      else if(s.clocked_in_at) row.appendChild(el("span","hint","in " + messageTime(s.clocked_in_at)));
+
       var del = el("button","rowdel","✕");
       del.type = "button";
       del.onclick = async function(){

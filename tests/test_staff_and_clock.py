@@ -110,6 +110,66 @@ class StaffAndClock(unittest.TestCase):
         self.assertEqual(len(mine["staff"]), 2)
         self.assertTrue(all(s["person_id"] is None for s in mine["staff"]))
 
+    def test_can_edit_a_tba_slot_to_a_named_person(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        assignment_id = self._assign(client)
+
+        r = client.patch(f"/api/assignments/{assignment_id}", json={"person_id": self.crew_id})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        events = client.get("/api/events").get_json()["events"]
+        mine = next(e for e in events if e["id"] == self.event_id)
+        self.assertEqual(mine["staff"][0]["person_id"], self.crew_id)
+
+    def test_can_edit_a_named_slot_back_to_tba(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        assignment_id = self._assign(client, person_id=self.crew_id)
+
+        r = client.patch(f"/api/assignments/{assignment_id}", json={"person_id": None})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        events = client.get("/api/events").get_json()["events"]
+        mine = next(e for e in events if e["id"] == self.event_id)
+        self.assertIsNone(mine["staff"][0]["person_id"])
+
+    def test_editing_the_person_resets_clock_state(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        assignment_id = self._assign(client, person_id=self.crew_id)
+        client.post(f"/api/assignments/{assignment_id}/clock", json={"action": "in"})
+
+        client.patch(f"/api/assignments/{assignment_id}", json={"person_id": self.other_crew_id})
+        events = client.get("/api/events").get_json()["events"]
+        mine = next(e for e in events if e["id"] == self.event_id)
+        self.assertIsNone(mine["staff"][0]["clocked_in_at"], "a new person's slot must not inherit the old person's clock-in")
+
+    def test_can_edit_the_scheduled_time(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        assignment_id = self._assign(client, person_id=self.crew_id, scheduled_time="18:00")
+
+        r = client.patch(f"/api/assignments/{assignment_id}", json={"scheduled_time": "19:30"})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        events = client.get("/api/events").get_json()["events"]
+        mine = next(e for e in events if e["id"] == self.event_id)
+        self.assertEqual(mine["staff"][0]["scheduled_time"], "19:30:00")
+
+    def test_editing_to_an_unknown_person_is_rejected(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        assignment_id = self._assign(client)
+        r = client.patch(f"/api/assignments/{assignment_id}", json={"person_id": 999999})
+        self.assertEqual(r.status_code, 400)
+
+    def test_crew_cannot_edit_an_assignment(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        assignment_id = self._assign(client)
+        crew_client = self.app.test_client()
+        self._login(crew_client, self.crew_email)
+        r = crew_client.patch(f"/api/assignments/{assignment_id}", json={"person_id": self.crew_id})
+        self.assertEqual(r.status_code, 403)
+
     def test_scheduled_time_round_trips(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)
