@@ -249,40 +249,35 @@ CREATE TABLE audit_log (
 CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX idx_audit_created ON audit_log(created_at);
 
--- The vision board: rough, editable-anytime ideas/goals with a soft target
--- quarter, not a real commitment like a booking. quarter/year travel
--- together (both set or both null = "someday, no target yet") so sorting
--- and grouping by quarter never has to parse a free-text date out of a
--- string.
-CREATE TABLE vision_notes (
-    id              SERIAL PRIMARY KEY,
-    content         TEXT NOT NULL,
-    target_quarter  INTEGER CHECK (target_quarter BETWEEN 1 AND 4),
-    target_year     INTEGER,
-    created_by      INTEGER REFERENCES people(id),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+-- The vision board: a Trello-style pipeline for turning a loose idea into
+-- a booked show, one card per idea/opportunity. Replaces the old separate
+-- vision_notes (freeform ideas) and ma_offers (live negotiations) tables —
+-- those were the same underlying concept ("something we're chasing") with
+-- two different, disconnected homes. column_key is the one place that
+-- decides a card's stage, an allowlist so a stage added later doesn't
+-- silently mean something everywhere at once.
+--
+-- trigger_event_id is the "strike while it's hot" case Broc described: a
+-- local band opens a packed show and gets real exposure, so the follow-up
+-- ask should be ready to go, linked back to the show that created the
+-- opening rather than living only in someone's memory.
+CREATE TABLE vision_cards (
+    id                SERIAL PRIMARY KEY,
+    title             TEXT NOT NULL,
+    column_key        TEXT NOT NULL DEFAULT 'idea'
+                      CHECK (column_key IN ('idea', 'reaching_out', 'offer_sent', 'booked')),
+    sort_order        INTEGER NOT NULL DEFAULT 0,
+    artist_id         INTEGER REFERENCES artists(id),
+    trigger_event_id  INTEGER REFERENCES events(id) ON DELETE SET NULL,
+    notes             TEXT,
+    link              TEXT,
+    follow_up_date    DATE,
+    created_by        INTEGER REFERENCES people(id),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- Mutually-agreeable offers: sent, no fixed response deadline, but someone
--- still needs to check back on it. Separate from vision_notes on purpose —
--- these are live negotiations with a real follow-up date, not brainstorming.
--- artist_id is optional: a band not yet in the roster can still get an M/A
--- offer logged under a plain title.
-CREATE TABLE ma_offers (
-    id              SERIAL PRIMARY KEY,
-    title           TEXT NOT NULL,
-    artist_id       INTEGER REFERENCES artists(id),
-    notes           TEXT,
-    link            TEXT,               -- URL to the actual offer doc, if hosted elsewhere
-    submitted_date  DATE NOT NULL DEFAULT CURRENT_DATE,
-    follow_up_date  DATE,
-    status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
-    created_by      INTEGER REFERENCES people(id),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_ma_offers_follow_up ON ma_offers(follow_up_date) WHERE status = 'open';
+CREATE INDEX idx_vision_cards_column ON vision_cards(column_key, sort_order);
+CREATE INDEX idx_vision_cards_follow_up ON vision_cards(follow_up_date) WHERE follow_up_date IS NOT NULL;
 
 -- A band can have more than one point of contact (the singer, the manager,
 -- whoever actually answers) — this is the list of them, separate from the

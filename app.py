@@ -467,11 +467,11 @@ def create_app():
     @app.delete("/api/artists/<int:artist_id>")
     @require_booker
     def delete_artist(artist_id):
-        """A band with any show or M/A-offer history can't be hard-deleted
-        — that's real booking history, not something to lose because a
-        band stopped touring. Archive it instead (PATCH active=false).
-        Only a band that's never actually been booked is safe to remove
-        outright, e.g. a duplicate created by a typo."""
+        """A band with any show or vision-board history can't be
+        hard-deleted — that's real booking history/pipeline, not something
+        to lose because a band stopped touring. Archive it instead (PATCH
+        active=false). Only a band that's never actually been booked or
+        chased is safe to remove outright, e.g. a duplicate from a typo."""
         cur = g.db.cursor()
         cur.execute("SELECT name FROM artists WHERE id = %s", (artist_id,))
         row = cur.fetchone()
@@ -479,7 +479,7 @@ def create_app():
             return jsonify(error="not_found"), 404
         cur.execute("SELECT 1 FROM event_artists WHERE artist_id = %s LIMIT 1", (artist_id,))
         has_shows = cur.fetchone() is not None
-        cur.execute("SELECT 1 FROM ma_offers WHERE artist_id = %s LIMIT 1", (artist_id,))
+        cur.execute("SELECT 1 FROM vision_cards WHERE artist_id = %s LIMIT 1", (artist_id,))
         has_offers = cur.fetchone() is not None
         if has_shows or has_offers:
             return jsonify(error="has_history_archive_instead"), 400
@@ -1581,175 +1581,58 @@ def create_app():
         audit.record(g.db, g.viewer, "event", event_id, "delete_message", {"message_id": message_id})
         return jsonify(ok=True)
 
-    @app.get("/api/vision_notes")
+    _VISION_COLUMNS = ("idea", "reaching_out", "offer_sent", "booked")
+
+    @app.get("/api/vision_cards")
     @require_booker
-    def list_vision_notes():
+    def list_vision_cards():
         cur = g.db.cursor()
         cur.execute(
-            "SELECT id, content, target_quarter, target_year, created_by, created_at "
-            "FROM vision_notes ORDER BY target_year NULLS LAST, target_quarter NULLS LAST, created_at"
+            "SELECT c.id, c.title, c.column_key, c.sort_order, c.artist_id, a.name AS artist_name, "
+            "c.trigger_event_id, e.show_date AS trigger_show_date, v.name AS trigger_venue, "
+            "c.notes, c.link, c.follow_up_date, c.created_by, c.created_at "
+            "FROM vision_cards c "
+            "LEFT JOIN artists a ON a.id = c.artist_id "
+            "LEFT JOIN events e ON e.id = c.trigger_event_id "
+            "LEFT JOIN venues v ON v.id = e.venue_id "
+            "ORDER BY c.column_key, c.sort_order"
         )
         cols = [c.name for c in cur.description]
-        return jsonify(notes=[dict(zip(cols, row)) for row in cur.fetchall()])
+        cards = [dict(zip(cols, row)) for row in cur.fetchall()]
+        if cards:
+            ids = [c["id"] for c in cards]
+            cur.execute(
+                "SELECT event_id, artist_id FROM event_artists WHERE event_id = ANY(%(ids)s)",
+                {"ids": [c["trigger_event_id"] for c in cards if c["trigger_event_id"]] or [0]},
+            )
+            bill_by_event: dict[int, list[int]] = {}
+            for event_id, artist_id in cur.fetchall():
+                bill_by_event.setdefault(event_id, []).append(artist_id)
+            for c in cards:
+                c["trigger_bill_artist_ids"] = bill_by_event.get(c["trigger_event_id"], []) if c["trigger_event_id"] else []
+        return jsonify(cards=cards)
 
-    def _parse_quarter_year(body):
-        """quarter and year are a pair — both set (a real target) or both
-        null (someday, no target yet). Returns (quarter, year, error)."""
-        q, y = body.get("target_quarter"), body.get("target_year")
-        if q in (None, ""):
-            q = None
-        else:
-            try:
-                q = int(q)
-            except (TypeError, ValueError):
-                return None, None, "invalid_target_quarter"
-            if q not in (1, 2, 3, 4):
-                return None, None, "invalid_target_quarter"
-        if y in (None, ""):
-            y = None
-        else:
-            try:
-                y = int(y)
-            except (TypeError, ValueError):
-                return None, None, "invalid_target_year"
-        if (q is None) != (y is None):
-            return None, None, "target_quarter_and_year_go_together"
-        return q, y, None
-
-    @app.post("/api/vision_notes")
-    @require_booker
-    def create_vision_note():
-        body = request.get_json(silent=True) or {}
-        content = (body.get("content") or "").strip()
-        if not content:
-            return jsonify(error="content_required"), 400
-        quarter, year, err = _parse_quarter_year(body)
-        if err:
-            return jsonify(error=err), 400
-        cur = g.db.cursor()
-        cur.execute(
-            "INSERT INTO vision_notes (content, target_quarter, target_year, created_by) "
-            "VALUES (%s, %s, %s, %s) RETURNING id",
-            (content, quarter, year, g.viewer.id),
-        )
-        note_id = cur.fetchone()[0]
-        audit.record(g.db, g.viewer, "vision_note", note_id, "create",
-                     {"content": content, "target_quarter": quarter, "target_year": year})
-        return jsonify(id=note_id), 201
-
-    @app.patch("/api/vision_notes/<int:note_id>")
-    @require_booker
-    def update_vision_note(note_id):
-        cur = g.db.cursor()
-        cur.execute("SELECT 1 FROM vision_notes WHERE id = %s", (note_id,))
-        if cur.fetchone() is None:
-            return jsonify(error="not_found"), 404
-        body = request.get_json(silent=True) or {}
+    def _parse_vision_card_fields(body, require_title=False):
+        """One place deciding what a valid card looks like, used by both
+        create and update. Returns (updates, error)."""
         updates = {}
-        if "content" in body:
-            content = (body["content"] or "").strip()
-            if not content:
-                return jsonify(error="content_required"), 400
-            updates["content"] = content
-        if "target_quarter" in body or "target_year" in body:
-            quarter, year, err = _parse_quarter_year(body)
-            if err:
-                return jsonify(error=err), 400
-            updates["target_quarter"] = quarter
-            updates["target_year"] = year
-        if not updates:
-            return jsonify(error="no_fields_to_update"), 400
-        set_clause = ", ".join(f"{k} = %s" for k in updates)
-        cur.execute(f"UPDATE vision_notes SET {set_clause}, updated_at = now() WHERE id = %s",
-                    list(updates.values()) + [note_id])
-        audit.record(g.db, g.viewer, "vision_note", note_id, "update",
-                     {k: audit.jsonable(v) for k, v in updates.items()})
-        return jsonify(ok=True)
-
-    @app.delete("/api/vision_notes/<int:note_id>")
-    @require_booker
-    def delete_vision_note(note_id):
-        cur = g.db.cursor()
-        cur.execute("SELECT 1 FROM vision_notes WHERE id = %s", (note_id,))
-        if cur.fetchone() is None:
-            return jsonify(error="not_found"), 404
-        cur.execute("DELETE FROM vision_notes WHERE id = %s", (note_id,))
-        audit.record(g.db, g.viewer, "vision_note", note_id, "delete", None)
-        return jsonify(ok=True)
-
-    @app.get("/api/ma_offers")
-    @require_booker
-    def list_ma_offers():
-        cur = g.db.cursor()
-        cur.execute(
-            "SELECT o.id, o.title, o.artist_id, a.name AS artist_name, o.notes, o.link, "
-            "o.submitted_date, o.follow_up_date, o.status "
-            "FROM ma_offers o LEFT JOIN artists a ON a.id = o.artist_id "
-            "ORDER BY (o.status = 'open') DESC, o.follow_up_date NULLS LAST, o.submitted_date DESC"
-        )
-        cols = [c.name for c in cur.description]
-        return jsonify(offers=[dict(zip(cols, row)) for row in cur.fetchall()])
-
-    @app.post("/api/ma_offers")
-    @require_booker
-    def create_ma_offer():
-        body = request.get_json(silent=True) or {}
-        title = (body.get("title") or "").strip()
-        if not title:
-            return jsonify(error="title_required"), 400
-        submitted_raw = body.get("submitted_date")
-        try:
-            submitted = date.fromisoformat(submitted_raw) if submitted_raw else date.today()
-        except ValueError:
-            return jsonify(error="invalid_submitted_date"), 400
-        follow_up_raw = body.get("follow_up_date")
-        try:
-            follow_up = date.fromisoformat(follow_up_raw) if follow_up_raw else None
-        except ValueError:
-            return jsonify(error="invalid_follow_up_date"), 400
-        cur = g.db.cursor()
-        cur.execute(
-            "INSERT INTO ma_offers (title, artist_id, notes, link, submitted_date, follow_up_date, created_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
-            (title, body.get("artist_id") or None, body.get("notes") or None, body.get("link") or None,
-             submitted, follow_up, g.viewer.id),
-        )
-        offer_id = cur.fetchone()[0]
-        audit.record(g.db, g.viewer, "ma_offer", offer_id, "create", {"title": title})
-        return jsonify(id=offer_id), 201
-
-    @app.patch("/api/ma_offers/<int:offer_id>")
-    @require_booker
-    def update_ma_offer(offer_id):
-        cur = g.db.cursor()
-        cur.execute("SELECT 1 FROM ma_offers WHERE id = %s", (offer_id,))
-        if cur.fetchone() is None:
-            return jsonify(error="not_found"), 404
-        body = request.get_json(silent=True) or {}
-        updates = {}
-        if "title" in body:
-            title = (body["title"] or "").strip()
+        if "title" in body or require_title:
+            title = (body.get("title") or "").strip()
             if not title:
-                return jsonify(error="title_required"), 400
+                return None, "title_required"
             updates["title"] = title
+        if "column_key" in body:
+            if body["column_key"] not in _VISION_COLUMNS:
+                return None, "invalid_column"
+            updates["column_key"] = body["column_key"]
         if "artist_id" in body:
             updates["artist_id"] = body["artist_id"] or None
+        if "trigger_event_id" in body:
+            updates["trigger_event_id"] = body["trigger_event_id"] or None
         if "notes" in body:
-            updates["notes"] = body["notes"] or None
+            updates["notes"] = (body["notes"] or "").strip() or None
         if "link" in body:
-            updates["link"] = body["link"] or None
-        if "status" in body:
-            if body["status"] not in ("open", "closed"):
-                return jsonify(error="invalid_status"), 400
-            updates["status"] = body["status"]
-        if "submitted_date" in body:
-            val = body["submitted_date"]
-            if not val:
-                return jsonify(error="submitted_date_required"), 400
-            try:
-                updates["submitted_date"] = date.fromisoformat(val)
-            except ValueError:
-                return jsonify(error="invalid_submitted_date"), 400
+            updates["link"] = (body["link"] or "").strip() or None
         if "follow_up_date" in body:
             val = body["follow_up_date"]
             if val in (None, ""):
@@ -1758,25 +1641,82 @@ def create_app():
                 try:
                     updates["follow_up_date"] = date.fromisoformat(val)
                 except ValueError:
-                    return jsonify(error="invalid_follow_up_date"), 400
+                    return None, "invalid_follow_up_date"
+        return updates, None
+
+    @app.post("/api/vision_cards")
+    @require_booker
+    def create_vision_card():
+        body = request.get_json(silent=True) or {}
+        updates, err = _parse_vision_card_fields(body, require_title=True)
+        if err:
+            return jsonify(error=err), 400
+        title = updates.pop("title")
+        column_key = updates.pop("column_key", "idea")
+        cur = g.db.cursor()
+        cur.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM vision_cards WHERE column_key = %s", (column_key,))
+        sort_order = cur.fetchone()[0]
+        cols = ["title", "column_key", "sort_order", "created_by"] + list(updates.keys())
+        vals = [title, column_key, sort_order, g.viewer.id] + list(updates.values())
+        cur.execute(
+            f"INSERT INTO vision_cards ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(vals))}) RETURNING id",
+            vals,
+        )
+        card_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "vision_card", card_id, "create", {"title": title})
+        return jsonify(id=card_id), 201
+
+    @app.patch("/api/vision_cards/<int:card_id>")
+    @require_booker
+    def update_vision_card(card_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM vision_cards WHERE id = %s", (card_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        body = request.get_json(silent=True) or {}
+        updates, err = _parse_vision_card_fields(body)
+        if err:
+            return jsonify(error=err), 400
         if not updates:
             return jsonify(error="no_fields_to_update"), 400
         set_clause = ", ".join(f"{k} = %s" for k in updates)
-        cur.execute(f"UPDATE ma_offers SET {set_clause}, updated_at = now() WHERE id = %s",
-                    list(updates.values()) + [offer_id])
-        audit.record(g.db, g.viewer, "ma_offer", offer_id, "update",
+        cur.execute(f"UPDATE vision_cards SET {set_clause}, updated_at = now() WHERE id = %s",
+                    list(updates.values()) + [card_id])
+        audit.record(g.db, g.viewer, "vision_card", card_id, "update",
                      {k: audit.jsonable(v) for k, v in updates.items()})
         return jsonify(ok=True)
 
-    @app.delete("/api/ma_offers/<int:offer_id>")
+    @app.post("/api/vision_cards/reorder")
     @require_booker
-    def delete_ma_offer(offer_id):
+    def reorder_vision_cards():
+        """Persists a drag: the client sends the full, final ordered list
+        of card ids for whichever column(s) changed. Simpler and more
+        robust than trying to compute an insertion index server-side —
+        the client already knows the exact order it just rendered."""
+        body = request.get_json(silent=True) or {}
+        column_key = body.get("column_key")
+        card_ids = body.get("card_ids")
+        if column_key not in _VISION_COLUMNS:
+            return jsonify(error="invalid_column"), 400
+        if not isinstance(card_ids, list) or not card_ids:
+            return jsonify(error="card_ids_required"), 400
         cur = g.db.cursor()
-        cur.execute("SELECT 1 FROM ma_offers WHERE id = %s", (offer_id,))
+        for i, card_id in enumerate(card_ids):
+            cur.execute(
+                "UPDATE vision_cards SET column_key = %s, sort_order = %s WHERE id = %s",
+                (column_key, i, card_id),
+            )
+        return jsonify(ok=True)
+
+    @app.delete("/api/vision_cards/<int:card_id>")
+    @require_booker
+    def delete_vision_card(card_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM vision_cards WHERE id = %s", (card_id,))
         if cur.fetchone() is None:
             return jsonify(error="not_found"), 404
-        cur.execute("DELETE FROM ma_offers WHERE id = %s", (offer_id,))
-        audit.record(g.db, g.viewer, "ma_offer", offer_id, "delete", None)
+        cur.execute("DELETE FROM vision_cards WHERE id = %s", (card_id,))
+        audit.record(g.db, g.viewer, "vision_card", card_id, "delete", None)
         return jsonify(ok=True)
 
     return app
