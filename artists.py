@@ -36,6 +36,26 @@ def find_or_create(conn, name: str) -> int:
 
 def list_artists(conn) -> list[dict]:
     cur = conn.cursor()
-    cur.execute("SELECT id, name, tier, genre, tags, location FROM artists ORDER BY name")
+    cur.execute(
+        "SELECT id, name, tier, genre, tags, location, instagram, facebook, website, spotify "
+        "FROM artists ORDER BY name"
+    )
     cols = [c.name for c in cur.description]
-    return [dict(zip(cols, row)) for row in cur.fetchall()]
+    artists = [dict(zip(cols, row)) for row in cur.fetchall()]
+    if not artists:
+        return artists
+
+    ids = [a["id"] for a in artists]
+    cur.execute(
+        "SELECT id, artist_id, name, phone, email FROM artist_members "
+        "WHERE artist_id = ANY(%s) ORDER BY sort_order",
+        (ids,),
+    )
+    members_by_artist: dict[int, list[dict]] = {}
+    mcols = [c.name for c in cur.description]
+    for row in cur.fetchall():
+        d = dict(zip(mcols, row))
+        members_by_artist.setdefault(d.pop("artist_id"), []).append(d)
+    for a in artists:
+        a["members"] = members_by_artist.get(a["id"], [])
+    return artists

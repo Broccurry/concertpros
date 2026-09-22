@@ -40,6 +40,7 @@ class ArtistProfile(unittest.TestCase):
         self.app = app_module.create_app()
         self.app.config["TESTING"] = True
         self.event_id = None
+        self.new_artist_id = None
 
     def _email(self, person_id):
         cur = self.conn.cursor()
@@ -56,7 +57,12 @@ class ArtistProfile(unittest.TestCase):
             cur.execute("DELETE FROM audit_log WHERE entity_type = 'event' AND entity_id = %s", (self.event_id,))
             cur.execute("DELETE FROM events WHERE id = %s", (self.event_id,))
         cur.execute("DELETE FROM audit_log WHERE entity_type = 'artist' AND entity_id = %s", (self.artist_id,))
+        cur.execute("DELETE FROM artist_members WHERE artist_id = %s", (self.artist_id,))
         cur.execute("DELETE FROM artists WHERE id = %s", (self.artist_id,))
+        if self.new_artist_id and self.new_artist_id != self.artist_id:
+            cur.execute("DELETE FROM audit_log WHERE entity_type = 'artist' AND entity_id = %s", (self.new_artist_id,))
+            cur.execute("DELETE FROM artist_members WHERE artist_id = %s", (self.new_artist_id,))
+            cur.execute("DELETE FROM artists WHERE id = %s", (self.new_artist_id,))
         cur.execute("DELETE FROM sessions WHERE person_id IN (%s, %s)", (self.booker_id, self.crew_id))
         cur.execute("DELETE FROM people WHERE id IN (%s, %s)", (self.booker_id, self.crew_id))
         self.conn.commit()
@@ -129,6 +135,77 @@ class ArtistProfile(unittest.TestCase):
             "show_date": "2027-10-01",
         })
         self.assertEqual(r.status_code, 400)
+
+    def test_booker_can_add_a_new_band(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        new_name = f"Brand New Band {id(self)}"
+        r = client.post("/api/artists", json={"name": new_name})
+        self.assertEqual(r.status_code, 201, r.get_json())
+        self.new_artist_id = r.get_json()["id"]
+
+        artists = client.get("/api/artists").get_json()["artists"]
+        self.assertIn(new_name, [a["name"] for a in artists])
+
+    def test_adding_a_band_with_an_existing_name_reuses_it(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post("/api/artists", json={"name": self.artist_name.upper()})
+        self.assertEqual(r.status_code, 201, r.get_json())
+        self.assertEqual(r.get_json()["id"], self.artist_id, "adding an existing band by name must reuse it, not duplicate it")
+
+    def test_crew_cannot_add_a_band(self):
+        client = self.app.test_client()
+        self._login(client, self.crew_email)
+        r = client.post("/api/artists", json={"name": "Should Never Exist"})
+        self.assertEqual(r.status_code, 403)
+
+    def test_socials_round_trip(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.patch(f"/api/artists/{self.artist_id}", json={
+            "instagram": "instagram.com/test", "facebook": "facebook.com/test",
+            "website": "https://test.band", "spotify": "open.spotify.com/artist/test",
+        })
+        self.assertEqual(r.status_code, 200, r.get_json())
+        artists = client.get("/api/artists").get_json()["artists"]
+        mine = next(a for a in artists if a["id"] == self.artist_id)
+        self.assertEqual(mine["instagram"], "instagram.com/test")
+        self.assertEqual(mine["website"], "https://test.band")
+
+    def test_band_members_round_trip(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.put(f"/api/artists/{self.artist_id}/members", json={
+            "members": [{"name": "Lead Singer", "phone": "555-0100", "email": "singer@example.invalid"},
+                        {"name": "Drummer", "phone": "", "email": ""}],
+        })
+        self.assertEqual(r.status_code, 200, r.get_json())
+
+        artists = client.get("/api/artists").get_json()["artists"]
+        mine = next(a for a in artists if a["id"] == self.artist_id)
+        self.assertEqual([m["name"] for m in mine["members"]], ["Lead Singer", "Drummer"])
+        self.assertEqual(mine["members"][0]["phone"], "555-0100")
+        self.assertIsNone(mine["members"][1]["phone"])
+
+        # replacing the set drops whoever isn't sent again
+        r2 = client.put(f"/api/artists/{self.artist_id}/members", json={"members": [{"name": "Drummer"}]})
+        self.assertEqual(r2.status_code, 200)
+        artists = client.get("/api/artists").get_json()["artists"]
+        mine = next(a for a in artists if a["id"] == self.artist_id)
+        self.assertEqual([m["name"] for m in mine["members"]], ["Drummer"])
+
+    def test_member_without_a_name_is_rejected(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.put(f"/api/artists/{self.artist_id}/members", json={"members": [{"name": ""}]})
+        self.assertEqual(r.status_code, 400)
+
+    def test_crew_cannot_set_band_members(self):
+        client = self.app.test_client()
+        self._login(client, self.crew_email)
+        r = client.put(f"/api/artists/{self.artist_id}/members", json={"members": []})
+        self.assertEqual(r.status_code, 403)
 
 
 if __name__ == "__main__":

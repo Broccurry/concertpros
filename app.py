@@ -116,50 +116,10 @@ class ConcertProsJSONProvider(DefaultJSONProvider):
         return super().default(obj)
 
 
-def _apply_pending_schema_additions():
-    """TEMPORARY: the SSH tunnel used to run schema.sql by hand against
-    production is down (Railway-side, unrelated to this app), so these two
-    new tables get created here instead — idempotent, additive only, safe
-    to run on every boot. Remove this once the tunnel's back and schema.sql
-    has been applied the normal way."""
-    conn = db.get_connection()
-    cur = conn.cursor()
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS vision_notes (
-            id              SERIAL PRIMARY KEY,
-            content         TEXT NOT NULL,
-            target_quarter  INTEGER CHECK (target_quarter BETWEEN 1 AND 4),
-            target_year     INTEGER,
-            created_by      INTEGER REFERENCES people(id),
-            created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-            updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-    """)
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS ma_offers (
-            id              SERIAL PRIMARY KEY,
-            title           TEXT NOT NULL,
-            artist_id       INTEGER REFERENCES artists(id),
-            notes           TEXT,
-            link            TEXT,
-            submitted_date  DATE NOT NULL DEFAULT CURRENT_DATE,
-            follow_up_date  DATE,
-            status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
-            created_by      INTEGER REFERENCES people(id),
-            created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-            updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-        )
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ma_offers_follow_up ON ma_offers(follow_up_date) WHERE status = 'open'")
-    conn.commit()
-    conn.close()
-
-
 def create_app():
     app = Flask(__name__)
     app.json = ConcertProsJSONProvider(app)
     secure_cookies = os.environ.get("SECURE_COOKIES", "1") != "0"
-    _apply_pending_schema_additions()
 
     @app.before_request
     def open_db():
@@ -330,11 +290,16 @@ def create_app():
         booking, not a direct edit, so it stays subject to the same
         normalization/dedup rule everywhere."""
         cur = g.db.cursor()
-        cur.execute("SELECT tier, genre, tags, location FROM artists WHERE id = %s", (artist_id,))
+        cur.execute(
+            "SELECT tier, genre, tags, location, instagram, facebook, website, spotify "
+            "FROM artists WHERE id = %s",
+            (artist_id,),
+        )
         row = cur.fetchone()
         if row is None:
             return jsonify(error="not_found"), 404
-        before = dict(zip(["tier", "genre", "tags", "location"], row))
+        before = dict(zip(
+            ["tier", "genre", "tags", "location", "instagram", "facebook", "website", "spotify"], row))
 
         body = request.get_json(silent=True) or {}
         updates = {}
@@ -347,6 +312,9 @@ def create_app():
             updates["genre"] = (body["genre"] or "").strip() or None
         if "location" in body:
             updates["location"] = (body["location"] or "").strip() or None
+        for key in ("instagram", "facebook", "website", "spotify"):
+            if key in body:
+                updates[key] = (body[key] or "").strip() or None
         if "tags" in body:
             raw_tags = body["tags"]
             if not isinstance(raw_tags, list):
@@ -368,6 +336,55 @@ def create_app():
         audit.record(g.db, g.viewer, "artist", artist_id, "update",
                      {"before": {k: audit.jsonable(before.get(k)) for k in updates},
                       "after": {k: audit.jsonable(v) for k, v in updates.items()}})
+        return jsonify(ok=True)
+
+    @app.post("/api/artists")
+    @require_booker
+    def create_artist():
+        """The '+ Add band' button — goes through the same find_or_create
+        as booking does, so typing a name that already exists opens that
+        band's own card instead of minting a duplicate."""
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "").strip()
+        if not name:
+            return jsonify(error="name_required"), 400
+        artist_id = artists_module.find_or_create(g.db, name)
+        audit.record(g.db, g.viewer, "artist", artist_id, "create_or_find", {"name": name})
+        return jsonify(id=artist_id), 201
+
+    @app.put("/api/artists/<int:artist_id>/members")
+    @require_booker
+    def set_artist_members(artist_id):
+        """Replaces the whole list — same pattern as ticket_tiers/acts.
+        A band can have more than one point of contact; each gets their
+        own name/phone/email rather than the single legacy contact fields."""
+        body = request.get_json(silent=True) or {}
+        raw = body.get("members")
+        if not isinstance(raw, list):
+            return jsonify(error="members_must_be_a_list"), 400
+        cleaned = []
+        for m in raw:
+            name = (m.get("name") or "").strip() if isinstance(m, dict) else ""
+            if not name:
+                return jsonify(error="every_member_needs_a_name"), 400
+            phone = (m.get("phone") or "").strip() if isinstance(m, dict) else ""
+            email = (m.get("email") or "").strip() if isinstance(m, dict) else ""
+            cleaned.append((name, phone or None, email or None))
+
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM artists WHERE id = %s", (artist_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+
+        cur.execute("DELETE FROM artist_members WHERE artist_id = %s", (artist_id,))
+        for i, (name, phone, email) in enumerate(cleaned):
+            cur.execute(
+                "INSERT INTO artist_members (artist_id, name, phone, email, sort_order) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (artist_id, name, phone, email, i),
+            )
+        audit.record(g.db, g.viewer, "artist", artist_id, "set_members",
+                     {"members": [{"name": n} for n, _, _ in cleaned]})
         return jsonify(ok=True)
 
     @app.post("/api/events")

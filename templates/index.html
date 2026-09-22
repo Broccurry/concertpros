@@ -204,6 +204,11 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .rowdel{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);width:32px;height:32px;
         color:var(--ink-3);display:grid;place-items:center;padding:0}
 .rowdel:hover{color:var(--dead);border-color:var(--dead)}
+.memberlist{display:flex;flex-direction:column;gap:6px;margin-bottom:8px}
+.memberrow{display:grid;grid-template-columns:1fr 140px 1fr 32px;gap:8px;align-items:center}
+@media (max-width:600px){.memberrow{grid-template-columns:1fr 32px;grid-template-areas:"name x" "phone phone" "email email"}
+  .memberrow input:nth-child(1){grid-area:name} .memberrow input:nth-child(2){grid-area:phone}
+  .memberrow input:nth-child(3){grid-area:email} .memberrow .rowdel{grid-area:x}}
 
 /* A show's bill: each act starts lowercase/normal weight as a tentative
    hold; double-clicking one marks it confirmed (bold caps) — see
@@ -811,10 +816,16 @@ function filteredArtists(){
 function renderArtistsView(){
   var host = document.getElementById("view-artists");
   host.innerHTML = "";
+  var addBtn = el("button","btn btn-primary","+ Add band");
+  addBtn.type = "button";
+  addBtn.style.marginBottom = "14px";
+  addBtn.onclick = function(){ openArtistForm(null); };
+  host.appendChild(addBtn);
+
   if(!store.artists.length){
     var e = el("div","empty");
     e.appendChild(el("h3",null,"No artists yet"));
-    e.appendChild(el("p",null,"Book a show and each act is created automatically."));
+    e.appendChild(el("p",null,"Add one above, or book a show and it's created automatically."));
     host.appendChild(e);
     return;
   }
@@ -887,86 +898,155 @@ function artistShowHistory(artistId){
   return rows.sort(function(a,b){ return a.show_date < b.show_date ? 1 : a.show_date > b.show_date ? -1 : 0; });
 }
 function openArtistForm(artistId){
-  var a = store.artists.find(function(x){ return x.id === artistId; });
-  if(!a) return;
+  var a = artistId ? store.artists.find(function(x){ return x.id === artistId; }) : null;
+  if(artistId && !a) return;
   var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
-  document.getElementById("sheetTitle").textContent = a.name;
-  body.innerHTML = ""; foot.innerHTML = "";
 
-  var draftA = {tier: a.tier || "", genre: a.genre || "", location: a.location || "",
-                tags: (a.tags||[]).join(", ")};
-
-  var fs = document.createElement("fieldset");
-  fs.appendChild(el("legend",null,"Classification"));
-  var tierGrid = el("div","statusgrid");
-  [["","—"],["Local","Local"],["Regional","Regional"],["National","National"]].forEach(function(opt){
-    var b = el("button","statusopt", opt[1]);
-    b.type = "button";
-    b.setAttribute("aria-pressed", draftA.tier === opt[0] ? "true" : "false");
-    b.onclick = function(){ draftA.tier = opt[0]; tierGrid.querySelectorAll("button").forEach(function(x){
-      x.setAttribute("aria-pressed", x.textContent === (opt[0]||"—") ? "true" : "false"); }); };
-    tierGrid.appendChild(b);
-  });
-  fs.appendChild(tierGrid);
-  var r1 = el("div","row"); r1.style.marginTop = "10px";
-  r1.appendChild(field("Genre", input("text", draftA.genre, function(v){ draftA.genre = v; })));
-  r1.appendChild(field("Location", input("text", draftA.location, function(v){ draftA.location = v; })));
-  fs.appendChild(r1);
-  var tagsInput = input("text", draftA.tags, function(v){ draftA.tags = v; });
-  tagsInput.placeholder = "comma-separated — style, location, whatever helps you search later";
-  var tagsField = field("Tags", tagsInput); tagsField.style.marginTop = "10px";
-  fs.appendChild(tagsField);
-  body.appendChild(fs);
-
-  var history = artistShowHistory(artistId);
-  var fsH = document.createElement("fieldset");
-  fsH.appendChild(el("legend",null,"Show history"));
-  if(!history.length){
-    fsH.appendChild(el("p","hint","No shows booked yet."));
-  } else {
-    var wrap = el("div","tablewrap"), t = document.createElement("table");
-    var thead = document.createElement("thead"), hr = document.createElement("tr");
-    ["Date","Venue","Status","Guarantee","Paid","Walk-ups"].forEach(function(h){
-      var th = el("th",null,h);
-      if(["Guarantee","Paid","Walk-ups"].indexOf(h) >= 0) th.className = "num";
-      hr.appendChild(th);
-    });
-    thead.appendChild(hr); t.appendChild(thead);
-    var tb = document.createElement("tbody");
-    history.forEach(function(h){
-      var tr = document.createElement("tr");
-      tr.appendChild(el("td","date-col", shortDate(h.show_date)));
-      tr.appendChild(el("td",null, h.venue));
-      var stc = document.createElement("td");
-      stc.appendChild(el("span","pill " + (STATUS[h.status]||STATUS.hold1).cls, (STATUS[h.status]||STATUS.hold1).label));
-      tr.appendChild(stc);
-      tr.appendChild(el("td","num", h.guarantee != null ? money(h.guarantee) : "—"));
-      tr.appendChild(el("td","num", h.paid != null ? money(h.paid) : "—"));
-      tr.appendChild(el("td","num", h.walkups != null ? String(h.walkups) : "—"));
-      tb.appendChild(tr);
-    });
-    t.appendChild(tb); wrap.appendChild(t); fsH.appendChild(wrap);
-  }
-  body.appendChild(fsH);
-
-  var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
-  var save = el("button","btn btn-primary","Save");
-  save.onclick = async function(){
-    errLine.textContent = "";
-    var tags = draftA.tags.split(",").map(function(t){ return t.trim(); }).filter(function(t){ return t; });
-    var r = await api("/api/artists/" + artistId, {method:"PATCH", body: JSON.stringify({
-      tier: draftA.tier || null, genre: draftA.genre, location: draftA.location, tags: tags,
-    })});
-    if(!r.ok){ errLine.textContent = r.body.error || "Could not save."; return; }
-    await loadBookerLookups();
-    closeSheet();
-    renderAll();
+  var draftA = {
+    name: a ? a.name : "",
+    tier: a ? (a.tier || "") : "", genre: a ? (a.genre || "") : "", location: a ? (a.location || "") : "",
+    tags: a ? (a.tags||[]).join(", ") : "",
+    instagram: a ? (a.instagram||"") : "", facebook: a ? (a.facebook||"") : "",
+    website: a ? (a.website||"") : "", spotify: a ? (a.spotify||"") : "",
+    members: a ? (a.members||[]).map(function(m){ return {name:m.name, phone:m.phone||"", email:m.email||""}; }) : [],
   };
-  foot.appendChild(save);
-  var cancel = el("button","btn","Cancel");
-  cancel.onclick = closeSheet;
-  foot.appendChild(cancel);
-  foot.appendChild(errLine);
+
+  function renderForm(){
+    document.getElementById("sheetTitle").textContent = a ? a.name : "Add a band";
+    body.innerHTML = ""; foot.innerHTML = "";
+
+    var fs = document.createElement("fieldset");
+    fs.appendChild(el("legend",null,"Classification"));
+    if(!a){
+      var nameField = field("Band name", input("text", draftA.name, function(v){ draftA.name = v; }));
+      nameField.style.marginBottom = "10px";
+      fs.appendChild(nameField);
+    }
+    var tierGrid = el("div","statusgrid");
+    [["","—"],["Local","Local"],["Regional","Regional"],["National","National"]].forEach(function(opt){
+      var b = el("button","statusopt", opt[1]);
+      b.type = "button";
+      b.setAttribute("aria-pressed", draftA.tier === opt[0] ? "true" : "false");
+      b.onclick = function(){ draftA.tier = opt[0]; tierGrid.querySelectorAll("button").forEach(function(x){
+        x.setAttribute("aria-pressed", x.textContent === (opt[0]||"—") ? "true" : "false"); }); };
+      tierGrid.appendChild(b);
+    });
+    fs.appendChild(tierGrid);
+    var r1 = el("div","row"); r1.style.marginTop = "10px";
+    r1.appendChild(field("Genre", input("text", draftA.genre, function(v){ draftA.genre = v; })));
+    r1.appendChild(field("Location", input("text", draftA.location, function(v){ draftA.location = v; })));
+    fs.appendChild(r1);
+    var tagsInput = input("text", draftA.tags, function(v){ draftA.tags = v; });
+    tagsInput.placeholder = "comma-separated — style, location, whatever helps you search later";
+    var tagsField = field("Tags", tagsInput); tagsField.style.marginTop = "10px";
+    fs.appendChild(tagsField);
+    body.appendChild(fs);
+
+    var fsS = document.createElement("fieldset");
+    fsS.appendChild(el("legend",null,"Socials"));
+    var rS1 = el("div","row");
+    var igInput = input("text", draftA.instagram, function(v){ draftA.instagram = v; }); igInput.placeholder = "instagram.com/...";
+    var fbInput = input("text", draftA.facebook, function(v){ draftA.facebook = v; }); fbInput.placeholder = "facebook.com/...";
+    rS1.appendChild(field("Instagram", igInput));
+    rS1.appendChild(field("Facebook", fbInput));
+    fsS.appendChild(rS1);
+    var rS2 = el("div","row"); rS2.style.marginTop = "10px";
+    var webInput = input("text", draftA.website, function(v){ draftA.website = v; }); webInput.placeholder = "https://...";
+    var spInput = input("text", draftA.spotify, function(v){ draftA.spotify = v; }); spInput.placeholder = "open.spotify.com/artist/...";
+    rS2.appendChild(field("Website", webInput));
+    rS2.appendChild(field("Spotify", spInput));
+    fsS.appendChild(rS2);
+    body.appendChild(fsS);
+
+    var fsM = document.createElement("fieldset");
+    fsM.appendChild(el("legend",null,"Band members"));
+    var memberList = el("div","memberlist");
+    draftA.members.forEach(function(m, idx){
+      var row = el("div","memberrow");
+      row.appendChild(input("text", m.name, function(v){ m.name = v; }));
+      var pInput = input("tel", m.phone, function(v){ m.phone = v; }); pInput.placeholder = "Phone";
+      row.appendChild(pInput);
+      var eInput = input("email", m.email, function(v){ m.email = v; }); eInput.placeholder = "Email";
+      row.appendChild(eInput);
+      var del = el("button","rowdel","✕");
+      del.type = "button";
+      del.onclick = function(){ draftA.members.splice(idx,1); renderForm(); };
+      row.appendChild(del);
+      memberList.appendChild(row);
+    });
+    fsM.appendChild(memberList);
+    var addMemberBtn = el("button","btn","+ Add a member");
+    addMemberBtn.type = "button";
+    addMemberBtn.onclick = function(){ draftA.members.push({name:"",phone:"",email:""}); renderForm(); };
+    fsM.appendChild(addMemberBtn);
+    body.appendChild(fsM);
+
+    if(a){
+      var history = artistShowHistory(artistId);
+      var fsH = document.createElement("fieldset");
+      fsH.appendChild(el("legend",null,"Show history"));
+      if(!history.length){
+        fsH.appendChild(el("p","hint","No shows booked yet."));
+      } else {
+        var wrap = el("div","tablewrap"), t = document.createElement("table");
+        var thead = document.createElement("thead"), hr = document.createElement("tr");
+        ["Date","Venue","Status","Guarantee","Paid","Walk-ups"].forEach(function(h){
+          var th = el("th",null,h);
+          if(["Guarantee","Paid","Walk-ups"].indexOf(h) >= 0) th.className = "num";
+          hr.appendChild(th);
+        });
+        thead.appendChild(hr); t.appendChild(thead);
+        var tb = document.createElement("tbody");
+        history.forEach(function(h){
+          var tr = document.createElement("tr");
+          tr.appendChild(el("td","date-col", shortDate(h.show_date)));
+          tr.appendChild(el("td",null, h.venue));
+          var stc = document.createElement("td");
+          stc.appendChild(el("span","pill " + (STATUS[h.status]||STATUS.hold1).cls, (STATUS[h.status]||STATUS.hold1).label));
+          tr.appendChild(stc);
+          tr.appendChild(el("td","num", h.guarantee != null ? money(h.guarantee) : "—"));
+          tr.appendChild(el("td","num", h.paid != null ? money(h.paid) : "—"));
+          tr.appendChild(el("td","num", h.walkups != null ? String(h.walkups) : "—"));
+          tb.appendChild(tr);
+        });
+        t.appendChild(tb); wrap.appendChild(t); fsH.appendChild(wrap);
+      }
+      body.appendChild(fsH);
+    }
+
+    var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
+    var save = el("button","btn btn-primary","Save");
+    save.onclick = async function(){
+      errLine.textContent = "";
+      var name = draftA.name.trim();
+      if(!a && !name){ errLine.textContent = "Give the band a name."; return; }
+      var members = draftA.members.filter(function(m){ return m.name.trim(); });
+
+      var id = artistId;
+      if(!id){
+        var created = await api("/api/artists", {method:"POST", body: JSON.stringify({name: name})});
+        if(!created.ok){ errLine.textContent = created.body.error || "Could not create."; return; }
+        id = created.body.id;
+      }
+      var tags = draftA.tags.split(",").map(function(t){ return t.trim(); }).filter(function(t){ return t; });
+      var r = await api("/api/artists/" + id, {method:"PATCH", body: JSON.stringify({
+        tier: draftA.tier || null, genre: draftA.genre, location: draftA.location, tags: tags,
+        instagram: draftA.instagram, facebook: draftA.facebook, website: draftA.website, spotify: draftA.spotify,
+      })});
+      if(!r.ok){ errLine.textContent = r.body.error || "Could not save."; return; }
+      await api("/api/artists/" + id + "/members", {method:"PUT", body: JSON.stringify({members: members})});
+      await loadBookerLookups();
+      closeSheet();
+      renderAll();
+    };
+    foot.appendChild(save);
+    var cancel = el("button","btn","Cancel");
+    cancel.onclick = closeSheet;
+    foot.appendChild(cancel);
+    foot.appendChild(errLine);
+  }
+
+  renderForm();
   openScrim();
 }
 

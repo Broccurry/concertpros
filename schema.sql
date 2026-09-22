@@ -239,6 +239,18 @@ CREATE TABLE ma_offers (
 );
 CREATE INDEX idx_ma_offers_follow_up ON ma_offers(follow_up_date) WHERE status = 'open';
 
+-- A band can have more than one point of contact (the singer, the manager,
+-- whoever actually answers) — this is the list of them, separate from the
+-- single legacy contact_name/email/phone columns on artists itself.
+CREATE TABLE artist_members (
+    id          SERIAL PRIMARY KEY,
+    artist_id   INTEGER NOT NULL REFERENCES artists(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    phone       TEXT,
+    email       TEXT,
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+
 -- Seed data matching what's already live in the artifact prototype.
 INSERT INTO venues (name) VALUES ('Frankies'), ('Ottawa Tavern'), ('Cla-Zel Theater');
 INSERT INTO roles (name) VALUES

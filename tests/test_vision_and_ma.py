@@ -99,11 +99,11 @@ class VisionBoardAndMAOffers(unittest.TestCase):
         client = self.app.test_client()
         self._login(client, self.booker_email)
         r = client.post("/api/vision_notes", json={"content": "temp idea"})
-        note_id = r.get_json()["id"]
-        d = client.delete(f"/api/vision_notes/{note_id}")
+        self.note_id = r.get_json()["id"]  # tearDown cleans up audit_log + the (already-deleted) row
+        d = client.delete(f"/api/vision_notes/{self.note_id}")
         self.assertEqual(d.status_code, 200)
         notes = client.get("/api/vision_notes").get_json()["notes"]
-        self.assertNotIn(note_id, [n["id"] for n in notes])
+        self.assertNotIn(self.note_id, [n["id"] for n in notes])
 
     def test_booker_can_log_and_follow_up_an_ma_offer(self):
         client = self.app.test_client()
