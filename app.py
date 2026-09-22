@@ -27,6 +27,7 @@ from permissions import Viewer
 
 VALID_HOLD_STATUSES = ("hold1", "hold2", "hold3", "confirmed")  # what a NEW show can be booked as
 ALL_STATUSES = ("hold1", "hold2", "hold3", "confirmed", "complete", "dead")  # what an EXISTING show can move to
+TASK_TEMPLATE = ("Website", "Marketing", "Offer", "Contract")  # spawned on every new booking
 
 load_dotenv()  # local dev only — a no-op if .env doesn't exist (Railway sets real env vars directly)
 
@@ -243,6 +244,11 @@ def create_app():
             (venue_id, artist_id, show_date, status, g.viewer.id),
         )
         event_id = cur.fetchone()[0]
+        for i, label in enumerate(TASK_TEMPLATE):
+            cur.execute(
+                "INSERT INTO event_tasks (event_id, label, sort_order) VALUES (%s, %s, %s)",
+                (event_id, label, i),
+            )
         audit.record(g.db, g.viewer, "event", event_id, "create",
                      {"venue_id": venue_id, "headliner": headliner,
                       "show_date": show_date_raw, "status": status})
@@ -633,6 +639,107 @@ def create_app():
                 "after": {k: audit.jsonable(v) for k, v in values.items()},
             },
         )
+        return jsonify(ok=True)
+
+    @app.put("/api/events/<int:event_id>/ticket_tiers")
+    @require_booker
+    def set_ticket_tiers(event_id):
+        """Replaces the whole set — same pattern as person_roles. A booker
+        editing prices re-sends the full tier list each time rather than
+        this endpoint tracking incremental add/remove/reorder."""
+        body = request.get_json(silent=True) or {}
+        tiers = body.get("tiers")
+        if not isinstance(tiers, list):
+            return jsonify(error="tiers_must_be_a_list"), 400
+
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+
+        cleaned = []
+        for t in tiers:
+            label = (t.get("label") or "").strip() if isinstance(t, dict) else ""
+            if not label:
+                return jsonify(error="every_tier_needs_a_label"), 400
+            price = t.get("price")
+            if price in (None, ""):
+                price = None
+            else:
+                try:
+                    price = float(price)
+                except (TypeError, ValueError):
+                    return jsonify(error="invalid_price"), 400
+            cleaned.append((label, price))
+
+        cur.execute("DELETE FROM ticket_tiers WHERE event_id = %s", (event_id,))
+        for i, (label, price) in enumerate(cleaned):
+            cur.execute(
+                "INSERT INTO ticket_tiers (event_id, label, price, sort_order) VALUES (%s, %s, %s, %s)",
+                (event_id, label, price, i),
+            )
+        audit.record(g.db, g.viewer, "event", event_id, "set_ticket_tiers",
+                     {"tiers": [{"label": l, "price": p} for l, p in cleaned]})
+        return jsonify(ok=True)
+
+    @app.post("/api/events/<int:event_id>/tasks")
+    @require_booker
+    def add_task(event_id):
+        body = request.get_json(silent=True) or {}
+        label = (body.get("label") or "").strip()
+        if not label:
+            return jsonify(error="label_required"), 400
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM event_tasks WHERE event_id = %s", (event_id,))
+        next_order = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO event_tasks (event_id, label, sort_order) VALUES (%s, %s, %s) RETURNING id",
+            (event_id, label, next_order),
+        )
+        task_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "event", event_id, "add_task", {"label": label})
+        return jsonify(id=task_id), 201
+
+    @app.patch("/api/tasks/<int:task_id>")
+    @require_booker
+    def update_task(task_id):
+        body = request.get_json(silent=True) or {}
+        cur = g.db.cursor()
+        cur.execute("SELECT event_id FROM event_tasks WHERE id = %s", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        event_id = row[0]
+
+        updates = {}
+        if "done" in body:
+            updates["done"] = bool(body["done"])
+        if "owner_person_id" in body:
+            v = body["owner_person_id"]
+            updates["owner_person_id"] = None if v in (None, "") else v
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur.execute(f"UPDATE event_tasks SET {set_clause} WHERE id = %s", list(updates.values()) + [task_id])
+        audit.record(g.db, g.viewer, "event", event_id, "update_task",
+                     {"task_id": task_id, **{k: audit.jsonable(v) for k, v in updates.items()}})
+        return jsonify(ok=True)
+
+    @app.delete("/api/tasks/<int:task_id>")
+    @require_booker
+    def delete_task(task_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT event_id FROM event_tasks WHERE id = %s", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        event_id = row[0]
+        cur.execute("DELETE FROM event_tasks WHERE id = %s", (task_id,))
+        audit.record(g.db, g.viewer, "event", event_id, "delete_task", {"task_id": task_id})
         return jsonify(ok=True)
 
     return app

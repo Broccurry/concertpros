@@ -153,7 +153,7 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
 
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT event_id, label, price, sort_order FROM ticket_tiers "
+            "SELECT id, event_id, label, price, sort_order FROM ticket_tiers "
             "WHERE event_id = ANY(%(ids)s) ORDER BY sort_order",
             {"ids": ids},
         )
@@ -162,6 +162,18 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         for row in cur.fetchall():
             d = dict(zip(cols, row))
             tiers_by_event.setdefault(d["event_id"], []).append(d)
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, event_id, label, done, owner_person_id, sort_order FROM event_tasks "
+            "WHERE event_id = ANY(%(ids)s) ORDER BY sort_order",
+            {"ids": ids},
+        )
+        tasks_by_event: dict[int, list[dict]] = {}
+        cols = [c.name for c in cur.description]
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            tasks_by_event.setdefault(d["event_id"], []).append(d)
 
     with conn.cursor() as cur:
         cur.execute(
@@ -184,4 +196,5 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         e["settlement"] = settlements.get(e["id"])
         e["ticket_tiers"] = tiers_by_event.get(e["id"], [])
         e["staff"] = staff_by_event.get(e["id"], [])
+        e["tasks"] = tasks_by_event.get(e["id"], [])
     return events

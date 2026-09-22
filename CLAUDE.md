@@ -2,7 +2,7 @@
 
 A booking calendar + venue management app for Innovation Concerts (3 venues: Frankies, Ottawa Tavern, Cla-Zel Theater). Deliberately separate from SellHQ — different business, different repo, different Railway project, no shared database or credentials.
 
-Full design history and decisions live in this Claude Code project's memory (`project_concertpros.md`) — read it before starting work each session. It covers: why off-the-shelf tools (Prism, Opendate, Muzeek) were rejected, the ClickUp audit findings, the Airtable-prototype-turned-artifact, and the concertpros.com build plan.
+Full design history and decisions live in this Claude Code project's memory (`project_concertpros.md`) — read it before starting work each session. It covers: why off-the-shelf tools (Prism, Opendate, Muzeek) were rejected, the ClickUp audit findings, the Airtable-prototype-turned-artifact, and the concertpro.live build plan.
 
 ## The core problem this app exists to solve
 
@@ -28,7 +28,7 @@ Broc's booking team (Cody, Christian) uses ClickUp today. It "works" for them bu
 
 - This repo lives at `C:\Users\takin\concertpros`, **outside OneDrive on purpose** — SellHQ's history has two separate incidents where OneDrive syncing a git pointer file silently broke backups across machines. GitHub is the sync mechanism between machines here, not OneDrive.
 - Deploys to its own Railway **project** (not a service inside the SellHQ project) — no shared private network, no shared credentials.
-- Domain: `concertpros.com` — point **both the apex and `www`** at Railway from day one (SellHQ/Cla-Zel learned this the hard way: an apex-only setup silently 404s).
+- Domain: `concertpro.live` — point **both the apex and `www`** at Railway from day one (SellHQ/Cla-Zel learned this the hard way: an apex-only setup silently 404s).
 - Auth: email + password (not a PIN — the PIN in SellHQ exists because a *register device* is shared; here every user has their own phone, so the session already identifies the person).
 
 ## Working agreements
