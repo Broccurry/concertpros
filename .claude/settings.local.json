@@ -44,7 +44,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "D=\"${CLAUDE_PROJECT_DIR:-$PWD}\"; git -C \"$D\" remote get-url origin >/dev/null 2>&1 || exit 0; out=$(git -C \"$D\" pull -q --rebase origin master 2>&1); if [ $? -eq 0 ]; then printf '{\"systemMessage\":\"ConcertPros: pulled latest from GitHub.\"}'; else printf '{\"systemMessage\":\"WARNING: ConcertPros could not pull from GitHub — %s\"}' \"$(printf '%s' \"$out\" | tr -d '\\n\"' | head -c 200)\"; fi; exit 0",
+            "command": "D=\"${CLAUDE_PROJECT_DIR:-$PWD}\"; git -C \"$D\" remote get-url origin >/dev/null 2>&1 || exit 0; out=$(git -C \"$D\" pull -q --rebase origin main 2>&1); if [ $? -eq 0 ]; then printf '{\"systemMessage\":\"ConcertPros: pulled latest from GitHub.\"}'; else printf '{\"systemMessage\":\"WARNING: ConcertPros could not pull from GitHub — %s\"}' \"$(printf '%s' \"$out\" | tr -d '\\n\"' | head -c 200)\"; fi; exit 0",
             "shell": "bash",
             "timeout": 60,
             "statusMessage": "pulling latest from GitHub…"

@@ -49,14 +49,14 @@ if ! git_ fetch -q origin 2>>"$LOG"; then
   exit 0
 fi
 
-if git_ rev-parse --verify -q origin/master >/dev/null 2>&1; then
-  if ! git_ pull -q --rebase origin master 2>>"$LOG"; then
+if git_ rev-parse --verify -q origin/main >/dev/null 2>&1; then
+  if ! git_ pull -q --rebase origin main 2>>"$LOG"; then
     alarm "ConcertPros backup could not merge with GitHub on $(hostname) — likely a real conflict with the other machine's edits. Work is saved locally but NOT uploaded. Resolve manually: cd \"$W\" && git status"
     exit 0
   fi
 fi
 
-if git_ push -q origin master 2>>"$LOG"; then
+if git_ push -q origin main 2>>"$LOG"; then
   echo "$(date '+%F %T') ok $(git_ rev-parse --short HEAD)" >> "$LOG"
 else
   alarm "Backup upload to GitHub FAILED on $(hostname). This computer's ConcertPros work is NOT backed up."
