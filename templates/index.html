@@ -367,10 +367,10 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 /* Role, contact log, and notes all share one compact line; wraps only if
    the viewport genuinely can't fit them (narrow phone), never by default. */
 .actmidrow{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin-top:4px}
-.actmidrow select{width:auto;flex:none;font-size:11.5px;padding:3px 5px}
+.actmidrow select{width:auto;flex:none;font-size:11.5px;padding:3px 5px;height:25px}
 .actmidrow-fig{display:flex;align-items:center;gap:3px;font-size:11px;color:var(--ink-3)}
-.actmidrow-fig input{width:56px;font-size:11.5px;padding:3px 5px}
-.actcontact-note-input{flex:1 1 110px;min-width:90px;font-size:11.5px;padding:3px 6px;
+.actmidrow-fig input{width:56px;font-size:11.5px;padding:3px 5px;height:25px}
+.actcontact-note-input{flex:1 1 110px;min-width:90px;font-size:11.5px;padding:3px 6px;height:25px;
                         border:1px solid var(--line);border-radius:var(--radius)}
 .actmidrow textarea{flex:1 1 120px;min-width:80px;resize:vertical;min-height:24px;border:1px solid var(--line);
                      border-radius:var(--radius);padding:3px 6px;font-size:11.5px;font-family:inherit}
@@ -1936,10 +1936,14 @@ function renderSheet(){
       contactNoteInput.type = "text";
       contactNoteInput.placeholder = "e.g. checking with band";
       contactNoteInput.className = "actcontact-note-input";
+      // Typing a note and hitting Enter (the natural move after filling
+      // in a single text field) did nothing — there's no <form> here to
+      // implicitly submit, so it just looked like the note never saved.
+      contactNoteInput.onkeydown = function(e){ if(e.key === "Enter"){ e.preventDefault(); logContact(); } };
       midRow.appendChild(contactNoteInput);
       var logBtn = el("button","btn btn-sm","Log contact");
       logBtn.type = "button";
-      logBtn.onclick = async function(){
+      async function logContact(){
         var note = contactNoteInput.value.trim() || null;
         var r = await api("/api/event_artists/" + a.id + "/contacts", {method:"POST",
           body: JSON.stringify({method: methodSel.value, note: note})});
@@ -1952,7 +1956,8 @@ function renderSheet(){
           a.contacts.push({method: methodSel.value, note: note, person_name: me.name, created_at: new Date().toISOString()});
           renderSheet();
         }
-      };
+      }
+      logBtn.onclick = logContact;
       midRow.appendChild(logBtn);
     }
     var notesTa = document.createElement("textarea");
