@@ -31,6 +31,50 @@ TASK_TEMPLATE = ("Website", "Marketing", "Offer", "Contract")  # spawned on ever
 
 load_dotenv()  # local dev only — a no-op if .env doesn't exist (Railway sets real env vars directly)
 
+
+def _parse_acts(raw):
+    """Parses an `acts`/`artists` field into [(name, confirmed), ...] — the
+    one place that decides what a valid bill looks like, used by both
+    event creation and PUT .../artists so there's no second, slightly
+    different rule to drift out of sync with this one."""
+    if not isinstance(raw, list) or not raw:
+        return None, "at_least_one_act_required"
+    acts = []
+    for item in raw:
+        if isinstance(item, dict):
+            name = (item.get("name") or "").strip()
+            confirmed = bool(item.get("confirmed"))
+        elif isinstance(item, str):
+            name, confirmed = item.strip(), False
+        else:
+            name, confirmed = "", False
+        if not name:
+            return None, "every_act_needs_a_name"
+        acts.append((name, confirmed))
+    return acts, None
+
+
+def _replace_event_artists(conn, event_id, acts):
+    """Replaces a show's whole bill — same replace-the-set pattern as
+    ticket_tiers. Each act is resolved independently via find_or_create,
+    in order, so typing 'Foo Fighters' then 'Nirvana' always creates two
+    acts, never one artist named 'Foo Fighters Nirvana'."""
+    cur = conn.cursor()
+    cur.execute("DELETE FROM event_artists WHERE event_id = %s", (event_id,))
+    seen_artist_ids = set()
+    sort_order = 0
+    for name, confirmed in acts:
+        artist_id = artists_module.find_or_create(conn, name)
+        if artist_id in seen_artist_ids:
+            continue
+        seen_artist_ids.add(artist_id)
+        cur.execute(
+            "INSERT INTO event_artists (event_id, artist_id, confirmed, sort_order) "
+            "VALUES (%s, %s, %s, %s)",
+            (event_id, artist_id, confirmed, sort_order),
+        )
+        sort_order += 1
+
 SESSION_COOKIE = "cp_session"
 SESSION_LIFETIME = timedelta(days=90)
 
@@ -218,12 +262,14 @@ def create_app():
     def create_event():
         body = request.get_json(silent=True) or {}
         venue_id = body.get("venue_id")
-        headliner = (body.get("headliner") or "").strip()
         show_date_raw = body.get("show_date")
         status = body.get("status", "hold1")
 
-        if not venue_id or not headliner or not show_date_raw:
-            return jsonify(error="venue_id, headliner, and show_date are required"), 400
+        acts, err = _parse_acts(body.get("acts"))
+        if err:
+            return jsonify(error=err), 400
+        if not venue_id or not show_date_raw:
+            return jsonify(error="venue_id, acts, and show_date are required"), 400
         if status not in VALID_HOLD_STATUSES:
             return jsonify(error="invalid_status"), 400
         try:
@@ -236,21 +282,20 @@ def create_app():
         if cur.fetchone() is None:
             return jsonify(error="unknown_venue"), 400
 
-        artist_id = artists_module.find_or_create(g.db, headliner)
-
         cur.execute(
-            """INSERT INTO events (venue_id, artist_id, show_date, status, created_by)
-               VALUES (%s, %s, %s, %s, %s) RETURNING id""",
-            (venue_id, artist_id, show_date, status, g.viewer.id),
+            """INSERT INTO events (venue_id, show_date, status, created_by)
+               VALUES (%s, %s, %s, %s) RETURNING id""",
+            (venue_id, show_date, status, g.viewer.id),
         )
         event_id = cur.fetchone()[0]
+        _replace_event_artists(g.db, event_id, acts)
         for i, label in enumerate(TASK_TEMPLATE):
             cur.execute(
                 "INSERT INTO event_tasks (event_id, label, sort_order) VALUES (%s, %s, %s)",
                 (event_id, label, i),
             )
         audit.record(g.db, g.viewer, "event", event_id, "create",
-                     {"venue_id": venue_id, "headliner": headliner,
+                     {"venue_id": venue_id, "acts": [name for name, _ in acts],
                       "show_date": show_date_raw, "status": status})
         return jsonify(id=event_id), 201
 
@@ -272,7 +317,7 @@ def create_app():
 
         cur = g.db.cursor()
         cur.execute(
-            """SELECT venue_id, artist_id, support, show_date, doors, show_time, status,
+            """SELECT venue_id, show_date, doors, show_time, status,
                       deal_type, guarantee, backend_pct, deal_notes, announce_date, onsale_date, notes
                FROM events WHERE id = %s""",
             (event_id,),
@@ -280,17 +325,12 @@ def create_app():
         row = cur.fetchone()
         if row is None:
             return jsonify(error="not_found"), 404
-        before_cols = ["venue_id", "artist_id", "support", "show_date", "doors", "show_time", "status",
+        before_cols = ["venue_id", "show_date", "doors", "show_time", "status",
                        "deal_type", "guarantee", "backend_pct", "deal_notes", "announce_date",
                        "onsale_date", "notes"]
         before = dict(zip(before_cols, row))
 
         updates = {}
-        if "headliner" in body:
-            name = (body["headliner"] or "").strip()
-            if not name:
-                return jsonify(error="headliner_cannot_be_empty"), 400
-            updates["artist_id"] = artists_module.find_or_create(g.db, name)
         if "venue_id" in body:
             cur.execute("SELECT 1 FROM venues WHERE id = %s", (body["venue_id"],))
             if cur.fetchone() is None:
@@ -300,7 +340,7 @@ def create_app():
             if body["status"] not in ALL_STATUSES:
                 return jsonify(error="invalid_status"), 400
             updates["status"] = body["status"]
-        for key in ("support", "deal_type", "deal_notes", "notes"):
+        for key in ("deal_type", "deal_notes", "notes"):
             if key in body:
                 updates[key] = body[key]
         for key in ("show_date", "announce_date", "onsale_date"):
@@ -680,6 +720,48 @@ def create_app():
             )
         audit.record(g.db, g.viewer, "event", event_id, "set_ticket_tiers",
                      {"tiers": [{"label": l, "price": p} for l, p in cleaned]})
+        return jsonify(ok=True)
+
+    @app.put("/api/events/<int:event_id>/artists")
+    @require_booker
+    def set_event_artists(event_id):
+        """Replaces a show's whole bill — same pattern as ticket_tiers.
+        Each act's confirmed flag travels with it in the same payload, so
+        this also carries any confirm/unconfirm toggles made on acts that
+        weren't persisted yet (a brand-new act added this editing session)."""
+        body = request.get_json(silent=True) or {}
+        acts, err = _parse_acts(body.get("artists"))
+        if err:
+            return jsonify(error=err), 400
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        _replace_event_artists(g.db, event_id, acts)
+        audit.record(g.db, g.viewer, "event", event_id, "set_artists",
+                     {"artists": [{"name": n, "confirmed": c} for n, c in acts]})
+        return jsonify(ok=True)
+
+    @app.patch("/api/event_artists/<int:event_artist_id>")
+    @require_booker
+    def toggle_event_artist(event_artist_id):
+        """The double-click-to-confirm action on one act — saved
+        immediately, same as a task checkbox, rather than waiting for the
+        main Save button. Only reachable on an act that's already been
+        persisted at least once (has its own id)."""
+        body = request.get_json(silent=True) or {}
+        if "confirmed" not in body:
+            return jsonify(error="confirmed_required"), 400
+        cur = g.db.cursor()
+        cur.execute("SELECT event_id FROM event_artists WHERE id = %s", (event_artist_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        event_id = row[0]
+        confirmed = bool(body["confirmed"])
+        cur.execute("UPDATE event_artists SET confirmed = %s WHERE id = %s", (confirmed, event_artist_id))
+        audit.record(g.db, g.viewer, "event", event_id, "confirm_artist",
+                     {"event_artist_id": event_artist_id, "confirmed": confirmed})
         return jsonify(ok=True)
 
     @app.post("/api/events/<int:event_id>/tasks")

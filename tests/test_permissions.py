@@ -47,23 +47,31 @@ class CrewCannotSeeHoldsOrMoney(unittest.TestCase):
 
         # A hold — crew must never see this.
         cur.execute(
-            """INSERT INTO events (venue_id, artist_id, show_date, status,
+            """INSERT INTO events (venue_id, show_date, status,
                                     guarantee, deal_notes)
-               VALUES (%s, %s, %s, 'hold1', 5000, 'top secret deal terms')
+               VALUES (%s, %s, 'hold1', 5000, 'top secret deal terms')
                RETURNING id""",
-            (self.venue_id, self.artist_id, date(2026, 12, 1)),
+            (self.venue_id, date(2026, 12, 1)),
         )
         self.hold_event_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO event_artists (event_id, artist_id) VALUES (%s, %s)",
+            (self.hold_event_id, self.artist_id),
+        )
 
         # A confirmed show — crew should see the public fields, nothing else.
         cur.execute(
-            """INSERT INTO events (venue_id, artist_id, show_date, status,
+            """INSERT INTO events (venue_id, show_date, status,
                                     guarantee, deal_notes)
-               VALUES (%s, %s, %s, 'confirmed', 9999, 'also secret')
+               VALUES (%s, %s, 'confirmed', 9999, 'also secret')
                RETURNING id""",
-            (self.venue_id, self.artist_id, date(2026, 12, 15)),
+            (self.venue_id, date(2026, 12, 15)),
         )
         self.confirmed_event_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO event_artists (event_id, artist_id, confirmed) VALUES (%s, %s, TRUE)",
+            (self.confirmed_event_id, self.artist_id),
+        )
 
         cur.execute(
             """INSERT INTO settlements (event_id, gross, artist_payout)
@@ -105,7 +113,8 @@ class CrewCannotSeeHoldsOrMoney(unittest.TestCase):
     def test_crew_sees_the_confirmed_show_but_not_the_money(self):
         events = permissions.events_for(self.conn, self.crew_viewer)
         mine = next(e for e in events if e["id"] == self.confirmed_event_id)
-        self.assertEqual(mine["headliner"], self.artist_name)
+        self.assertEqual([a["name"] for a in mine["artists"]], [self.artist_name])
+        self.assertTrue(mine["artists"][0]["confirmed"])
         self.assertEqual(mine["my_roles"], ["Sound"])
         for forbidden in ("guarantee", "backend_pct", "deal_notes", "settlement",
                           "ticket_tiers", "staff", "notes", "announce_date", "onsale_date"):

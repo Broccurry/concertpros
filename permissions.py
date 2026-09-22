@@ -72,11 +72,9 @@ def _events_for_crew(conn, viewer: Viewer, date_from, date_to, venue_id) -> list
     # backend_pct, deal_notes, announce_date, onsale_date, notes, and no
     # join to settlements or ticket_tiers.
     sql = f"""
-        SELECT e.id, v.name AS venue, a.name AS headliner, e.support,
-               e.show_date, e.doors, e.show_time
+        SELECT e.id, v.name AS venue, e.show_date, e.doors, e.show_time
         FROM events e
         JOIN venues v ON v.id = e.venue_id
-        JOIN artists a ON a.id = e.artist_id
         WHERE {' AND '.join(where)}
         ORDER BY e.show_date, e.doors
     """
@@ -88,8 +86,10 @@ def _events_for_crew(conn, viewer: Viewer, date_from, date_to, venue_id) -> list
     if not events:
         return events
 
-    # The viewer's own assignment(s) only — never who else is working.
     ids = [e["id"] for e in events]
+    artists_by_event = _artists_by_event(conn, ids)
+
+    # The viewer's own assignment(s) only — never who else is working.
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -105,8 +105,28 @@ def _events_for_crew(conn, viewer: Viewer, date_from, date_to, venue_id) -> list
             my_roles_by_event.setdefault(event_id, []).append(role)
 
     for e in events:
+        e["artists"] = artists_by_event.get(e["id"], [])
         e["my_roles"] = my_roles_by_event.get(e["id"], [])
     return events
+
+
+def _artists_by_event(conn, ids: list[int]) -> dict[int, list[dict]]:
+    """A show's bill, in running order — see the event_artists table
+    comment in schema.sql. Shared by both the crew and booker branches so
+    there's exactly one query deciding what an act on a bill looks like."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT ea.event_id, ea.id, a.name, ea.confirmed FROM event_artists ea "
+            "JOIN artists a ON a.id = ea.artist_id "
+            "WHERE ea.event_id = ANY(%(ids)s) ORDER BY ea.sort_order",
+            {"ids": ids},
+        )
+        by_event: dict[int, list[dict]] = {}
+        cols = [c.name for c in cur.description]
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            by_event.setdefault(d.pop("event_id"), []).append(d)
+        return by_event
 
 
 def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
@@ -123,13 +143,12 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         params["venue_id"] = venue_id
 
     sql = f"""
-        SELECT e.id, e.venue_id, v.name AS venue, e.artist_id, a.name AS headliner,
-               e.support, e.show_date, e.doors, e.show_time, e.status,
+        SELECT e.id, e.venue_id, v.name AS venue,
+               e.show_date, e.doors, e.show_time, e.status,
                e.deal_type, e.guarantee, e.backend_pct, e.deal_notes,
                e.announce_date, e.onsale_date, e.notes, e.version
         FROM events e
         JOIN venues v ON v.id = e.venue_id
-        JOIN artists a ON a.id = e.artist_id
         WHERE {' AND '.join(where)}
         ORDER BY e.show_date, e.doors
     """
@@ -141,6 +160,7 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
     if not events:
         return events
     ids = [e["id"] for e in events]
+    artists_by_event = _artists_by_event(conn, ids)
 
     with conn.cursor() as cur:
         cur.execute(
@@ -193,6 +213,7 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
             staff_by_event.setdefault(d["event_id"], []).append(d)
 
     for e in events:
+        e["artists"] = artists_by_event.get(e["id"], [])
         e["settlement"] = settlements.get(e["id"])
         e["ticket_tiers"] = tiers_by_event.get(e["id"], [])
         e["staff"] = staff_by_event.get(e["id"], [])

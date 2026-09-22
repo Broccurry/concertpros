@@ -35,11 +35,15 @@ class SettlingAShow(unittest.TestCase):
         )
         self.artist_id = cur.fetchone()[0]
         cur.execute(
-            """INSERT INTO events (venue_id, artist_id, show_date, status, created_by)
-               VALUES (%s, %s, '2027-02-01', 'complete', %s) RETURNING id""",
-            (self.venue_id, self.artist_id, self.booker_id),
+            """INSERT INTO events (venue_id, show_date, status, created_by)
+               VALUES (%s, '2027-02-01', 'complete', %s) RETURNING id""",
+            (self.venue_id, self.booker_id),
         )
         self.event_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO event_artists (event_id, artist_id, confirmed) VALUES (%s, %s, TRUE)",
+            (self.event_id, self.artist_id),
+        )
         self.conn.commit()
 
         self.booker_email = self._email(self.booker_id)

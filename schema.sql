@@ -75,8 +75,6 @@ CREATE TABLE artists (
 CREATE TABLE events (
     id              SERIAL PRIMARY KEY,
     venue_id        INTEGER NOT NULL REFERENCES venues(id),
-    artist_id       INTEGER NOT NULL REFERENCES artists(id),
-    support         TEXT,               -- free-text support-act list, phase 1
     show_date       DATE NOT NULL,
     doors           TIME,
     show_time       TIME,
@@ -109,6 +107,20 @@ CREATE TABLE events (
 CREATE INDEX idx_events_date ON events(show_date);
 CREATE INDEX idx_events_venue ON events(venue_id);
 CREATE INDEX idx_events_status ON events(status);
+
+-- A show's bill: one row per act, in running order. Replaces the old
+-- single artist_id + free-text `support` column — a show can have any
+-- number of acts, each independently confirmed (a headliner can be
+-- locked in while a support act is still a tentative hold). sort_order 0
+-- is the headliner by convention.
+CREATE TABLE event_artists (
+    id          SERIAL PRIMARY KEY,
+    event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    artist_id   INTEGER NOT NULL REFERENCES artists(id),
+    confirmed   BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (event_id, artist_id)
+);
 
 CREATE TABLE ticket_tiers (
     id          SERIAL PRIMARY KEY,

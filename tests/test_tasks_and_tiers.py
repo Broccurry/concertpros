@@ -70,7 +70,7 @@ class TasksAndTiers(unittest.TestCase):
 
     def _book_show(self, client):
         r = client.post("/api/events", json={
-            "venue_id": self.venue_id, "headliner": self.artist_name, "show_date": "2027-09-01",
+            "venue_id": self.venue_id, "acts": [self.artist_name], "show_date": "2027-09-01",
         })
         self.assertEqual(r.status_code, 201, r.get_json())
         self.event_id = r.get_json()["id"]

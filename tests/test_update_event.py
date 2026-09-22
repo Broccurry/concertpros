@@ -35,12 +35,17 @@ class UpdatingAShow(unittest.TestCase):
         )
         self.artist_id = cur.fetchone()[0]
         cur.execute(
-            """INSERT INTO events (venue_id, artist_id, show_date, status, created_by)
-               VALUES (%s, %s, '2027-07-01', 'hold1', %s) RETURNING id, version""",
-            (self.venue_id, self.artist_id, self.booker_id),
+            """INSERT INTO events (venue_id, show_date, status, created_by)
+               VALUES (%s, '2027-07-01', 'hold1', %s) RETURNING id, version""",
+            (self.venue_id, self.booker_id),
         )
         self.event_id, self.initial_version = cur.fetchone()
-        self.new_artist_id = None  # set by test_editing_the_headliner_relinks_the_artist
+        cur.execute(
+            "INSERT INTO event_artists (event_id, artist_id) VALUES (%s, %s)",
+            (self.event_id, self.artist_id),
+        )
+        self.new_artist_id = None  # set by test_replacing_the_bill_relinks_and_supports_multiple_acts
+        self.second_artist_id = None
         self.conn.commit()
 
         self.booker_email = self._email(self.booker_id)
@@ -64,6 +69,8 @@ class UpdatingAShow(unittest.TestCase):
         cur.execute("DELETE FROM artists WHERE id = %s", (self.artist_id,))
         if self.new_artist_id is not None:
             cur.execute("DELETE FROM artists WHERE id = %s", (self.new_artist_id,))
+        if self.second_artist_id is not None:
+            cur.execute("DELETE FROM artists WHERE id = %s", (self.second_artist_id,))
         cur.execute("DELETE FROM sessions WHERE person_id IN (%s, %s)", (self.booker_id, self.crew_id))
         cur.execute("DELETE FROM people WHERE id IN (%s, %s)", (self.booker_id, self.crew_id))
         self.conn.commit()
@@ -124,23 +131,57 @@ class UpdatingAShow(unittest.TestCase):
         cur.execute("SELECT notes FROM events WHERE id = %s", (self.event_id,))
         self.assertEqual(cur.fetchone()[0], "Cody's edit", "the second, stale write must not land")
 
-    def test_editing_the_headliner_relinks_the_artist(self):
+    def test_replacing_the_bill_relinks_and_supports_multiple_acts(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)
         new_name = f"Renamed Band {id(self)}"
-        r = client.patch(f"/api/events/{self.event_id}", json={
-            "version": self.initial_version, "headliner": new_name,
+        second_name = f"Second Act {id(self)}"
+        r = client.put(f"/api/events/{self.event_id}/artists", json={
+            "artists": [{"name": new_name, "confirmed": True}, {"name": second_name, "confirmed": False}],
         })
         self.assertEqual(r.status_code, 200, r.get_json())
 
         events = client.get("/api/events").get_json()["events"]
         mine = next(e for e in events if e["id"] == self.event_id)
-        self.assertEqual(mine["headliner"], new_name)
+        self.assertEqual([a["name"] for a in mine["artists"]], [new_name, second_name])
+        self.assertTrue(mine["artists"][0]["confirmed"])
+        self.assertFalse(mine["artists"][1]["confirmed"])
 
         cur = self.conn.cursor()
-        cur.execute("SELECT artist_id FROM events WHERE id = %s", (self.event_id,))
-        self.new_artist_id = cur.fetchone()[0]  # cleaned up in tearDown, after the event row is gone
+        cur.execute("SELECT artist_id FROM event_artists WHERE event_id = %s ORDER BY sort_order",
+                    (self.event_id,))
+        ids = [row[0] for row in cur.fetchall()]
+        self.new_artist_id, self.second_artist_id = ids  # cleaned up in tearDown, after the event row is gone
         self.assertNotEqual(self.new_artist_id, self.artist_id)
+
+    def test_double_click_confirm_toggles_one_act_immediately(self):
+        """The confirm action doesn't wait for the main Save button — it
+        persists the instant it's toggled, same as a task checkbox."""
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        cur = self.conn.cursor()
+        cur.execute("SELECT id, confirmed FROM event_artists WHERE event_id = %s", (self.event_id,))
+        event_artist_id, was_confirmed = cur.fetchone()
+        self.assertFalse(was_confirmed)
+
+        r = client.patch(f"/api/event_artists/{event_artist_id}", json={"confirmed": True})
+        self.assertEqual(r.status_code, 200, r.get_json())
+
+        events = client.get("/api/events").get_json()["events"]
+        mine = next(e for e in events if e["id"] == self.event_id)
+        self.assertTrue(mine["artists"][0]["confirmed"])
+
+    def test_crew_cannot_touch_the_bill(self):
+        client = self.app.test_client()
+        self._login(client, self.crew_email)
+        r1 = client.put(f"/api/events/{self.event_id}/artists", json={"artists": [{"name": "x"}]})
+        self.assertEqual(r1.status_code, 403)
+
+        cur = self.conn.cursor()
+        cur.execute("SELECT id FROM event_artists WHERE event_id = %s", (self.event_id,))
+        event_artist_id = cur.fetchone()[0]
+        r2 = client.patch(f"/api/event_artists/{event_artist_id}", json={"confirmed": True})
+        self.assertEqual(r2.status_code, 403)
 
 
 if __name__ == "__main__":

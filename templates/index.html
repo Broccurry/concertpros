@@ -4,6 +4,15 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ConcertPro</title>
+<script>
+// Applied before first paint so switching themes never flashes the old one.
+(function(){
+  try{
+    var t = localStorage.getItem("cp_theme");
+    if(t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+  }catch(e){}
+})();
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
@@ -32,6 +41,18 @@
     --dead:#f2c2c2; --dead-bg:#4d2b2b;
     --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
   }
+}
+/* A manually-picked theme (Settings tab) overrides the system preference
+   either direction — same variable values as the media query above,
+   just gated on data-theme instead of prefers-color-scheme. */
+:root[data-theme="dark"]{
+  --ink:#e9ebf1; --ink-2:#b3b9c7; --ink-3:#848c9d;
+  --ground:#14161b; --surface:#1d2027; --surface-2:#272b34;
+  --line:#333846; --line-strong:#49505f; --accent:#8fa3f0; --accent-soft:#232a44;
+  --hold-1:#2a1e05; --hold-1-bg:#d99a2b; --hold-2-bg:#6b5323; --hold-3-bg:#3a3222;
+  --confirm:#b9f0d2; --confirm-bg:#1d4634; --done:#c3cad8; --done-bg:#333948;
+  --dead:#f2c2c2; --dead-bg:#4d2b2b;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box}
 [hidden]{display:none!important}
@@ -184,6 +205,21 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         color:var(--ink-3);display:grid;place-items:center;padding:0}
 .rowdel:hover{color:var(--dead);border-color:var(--dead)}
 
+/* A show's bill: each act starts lowercase/normal weight as a tentative
+   hold; double-clicking one marks it confirmed (bold caps) — see
+   event_artists.confirmed. Applied everywhere a bill is shown, calendar
+   through the editor, off the exact same two classes. */
+.act-pending{font-weight:400;text-transform:lowercase}
+.act-confirmed{font-weight:700;text-transform:uppercase}
+.actchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.actchip{display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 12px;border-radius:999px;
+         background:var(--surface-2);border:1px solid var(--line);cursor:pointer;user-select:none}
+.actchip .x{border:none;background:none;color:var(--ink-3);width:20px;height:20px;border-radius:50%;
+            display:grid;place-items:center;padding:0}
+.actchip .x:hover{color:var(--dead);background:var(--surface)}
+.actrow{display:flex;gap:8px;align-items:flex-start}
+.actrow input{flex:1}
+
 .tasklist{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
 .taskitem{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--radius);background:var(--ground);border:1px solid transparent}
 .taskitem:hover{border-color:var(--line)}
@@ -250,6 +286,7 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
         <button role="tab" data-view="artists" aria-selected="false">Artists</button>
         <button role="tab" data-view="staff" aria-selected="false">Staff</button>
         <button role="tab" data-view="people" aria-selected="false">People</button>
+        <button role="tab" data-view="settings" aria-selected="false">Settings</button>
       </div>
       <div class="monthnav" id="monthnav">
         <button class="icon-btn" id="prevMonth" aria-label="Previous month">&#8249;</button>
@@ -286,6 +323,7 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
       <button type="button" class="btn btn-primary" id="addPersonBtn" style="margin-bottom:12px">+ Add a person</button>
       <div id="peopleHost"></div>
     </section>
+    <section id="view-settings" hidden></section>
     <p class="notice" id="storeNotice"></p>
   </main>
 </div>
@@ -352,7 +390,24 @@ function time12(t){
 }
 function isUnsettled(ev){ return !!ev && ev.status === "confirmed" && ev.show_date < todayISO(); }
 function st(ev){ if(isUnsettled(ev)) return STATUS.unsettled; return (ev && STATUS[ev.status]) || STATUS.hold1; }
-function showName(ev){ return ev.headliner || "Untitled hold"; }
+function actLabel(a){ return a.confirmed ? a.name.toUpperCase() : a.name.toLowerCase(); }
+function showName(ev){
+  var acts = ev.artists || [];
+  return acts.length ? acts.map(actLabel).join(", ") : "Untitled hold";
+}
+/* Same bill, styled: each act gets its own confirmed/pending class instead
+   of one plain string, so a headliner already confirmed can render bold
+   caps while a support act still on hold stays lowercase next to it. */
+function actsNodes(ev){
+  var frag = document.createDocumentFragment();
+  var acts = ev.artists || [];
+  if(!acts.length){ frag.appendChild(document.createTextNode("Untitled hold")); return frag; }
+  acts.forEach(function(a, i){
+    if(i > 0) frag.appendChild(document.createTextNode(", "));
+    frag.appendChild(el("span", a.confirmed ? "act-confirmed" : "act-pending", a.name));
+  });
+  return frag;
+}
 function dealSummary(ev){
   var bits = [];
   if(ev.guarantee !== "" && ev.guarantee != null) bits.push(money(ev.guarantee));
@@ -385,7 +440,8 @@ function visibleEvents(){
 function artistTotals(name){
   var n = normName(name), paid = 0, played = 0, count = 0, last = "";
   store.events.forEach(function(ev){
-    if(normName(ev.headliner) !== n) return;
+    var acts = ev.artists || [];
+    if(!acts.some(function(a){ return normName(a.name) === n; })) return;
     count++;
     var p = ev.settlement && ev.settlement.artist_payout;
     if(p !== "" && p != null && !isNaN(+p)) paid += +p;
@@ -437,7 +493,7 @@ function renderAll(){
   }).length;
   document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + all.length + " total";
 
-  ["calendar","list","artists","staff","people"].forEach(function(v){
+  ["calendar","list","artists","staff","people","settings"].forEach(function(v){
     document.getElementById("view-" + v).hidden = (v !== ui.view);
   });
   if(ui.view === "calendar") renderCalendar();
@@ -445,6 +501,7 @@ function renderAll(){
   if(ui.view === "artists") renderArtistsView();
   if(ui.view === "staff") renderStaffView();
   if(ui.view === "people") renderPeopleTable();
+  if(ui.view === "settings") renderSettingsView();
 }
 
 function renderVenueChips(){
@@ -495,7 +552,8 @@ function setActiveTab(){
 /* ============================== calendar ============================= */
 function showChip(ev){
   var b = el("button","show " + st(ev).cls);
-  b.appendChild(el("span","name", showName(ev)));
+  var name = el("span","name"); name.appendChild(actsNodes(ev));
+  b.appendChild(name);
   var bits = [];
   if(ev.doors) bits.push(time12(ev.doors));
   if(ui.venue === "__all__") bits.push(ev.venue);
@@ -576,11 +634,11 @@ function openDay(ds, list){
     list.forEach(function(ev){
       var card = el("button","show " + st(ev).cls);
       card.style.padding = "9px 10px";
-      card.appendChild(el("span","name", showName(ev)));
+      var name = el("span","name"); name.appendChild(actsNodes(ev));
+      card.appendChild(name);
       var bits = [ev.venue, st(ev).label];
       if(ev.doors) bits.push("doors " + time12(ev.doors));
       card.appendChild(el("span","meta", bits.join(" · ")));
-      if(ev.support) card.appendChild(el("span","meta", ev.support));
       card.onclick = function(){ openEvent(ev.id); };
       wrap.appendChild(card);
     });
@@ -627,8 +685,7 @@ function renderListView(){
     tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
     tr.appendChild(el("td",null, ev.venue));
     var td = el("td","title-cell");
-    td.appendChild(document.createTextNode(showName(ev)));
-    if(ev.support) td.appendChild(el("div","sub", ev.support));
+    td.appendChild(actsNodes(ev));
     tr.appendChild(td);
     var stc = document.createElement("td"); stc.appendChild(statusPill(ev)); tr.appendChild(stc);
     tr.appendChild(el("td","date-col", time12(ev.doors)));
@@ -694,7 +751,7 @@ function renderArtistsView(){
   if(!store.artists.length){
     var e = el("div","empty");
     e.appendChild(el("h3",null,"No artists yet"));
-    e.appendChild(el("p",null,"Book a show and the artist is created automatically from the headliner."));
+    e.appendChild(el("p",null,"Book a show and each act is created automatically."));
     host.appendChild(e);
     return;
   }
@@ -839,7 +896,7 @@ function openEvent(id, dateHint){
   } else {
     draft = {
       id:null, venue_id: store.venues[0] ? store.venues[0].id : null, venue: store.venues[0] ? store.venues[0].name : "",
-      headliner:"", support:"", status:"hold1", show_date: dateHint || todayISO(), doors:"19:00", show_time:"20:00",
+      artists:[], status:"hold1", show_date: dateHint || todayISO(), doors:"19:00", show_time:"20:00",
       deal_type:NO_DEAL, guarantee:"", backend_pct:"", deal_notes:"",
       ticket_tiers:[{label:"Advance",price:""},{label:"Day of show",price:""}],
       announce_date:"", onsale_date:"", notes:"",
@@ -868,7 +925,6 @@ function renderSheet(){
   var r1b = el("div","row");
   r1b.appendChild(field("Venue", selectKV(store.venues.map(function(v){ return {value:v.id, label:v.name}; }), draft.venue_id,
     function(v){ draft.venue_id = Number(v); })));
-  r1b.appendChild(field("Support", input("text", draft.support, function(v){ draft.support = v; })));
   fs1.appendChild(r1b);
 
   var dl = document.createElement("datalist");
@@ -881,17 +937,38 @@ function renderSheet(){
   });
   body.appendChild(dl);
 
-  var hlInput = input("text", draft.headliner, function(v){ draft.headliner = v; paintArtistLink(); });
-  hlInput.id = "bookBand";
-  hlInput.setAttribute("list","artistNames"); hlInput.setAttribute("autocomplete","off");
-  hlInput.placeholder = "Start typing — known artists will offer themselves";
-  var hl = field("Headliner", hlInput);
-  hl.style.marginTop = "10px";
+  var actsField = el("div","field"); actsField.style.marginTop = "10px";
+  actsField.appendChild(el("label", null, "Acts"));
+  var chips = el("div","actchips");
+  (draft.artists||[]).forEach(function(a, idx){
+    var chip = el("span","actchip " + (a.confirmed ? "act-confirmed" : "act-pending"), a.name);
+    chip.title = "Double-click to " + (a.confirmed ? "un-confirm" : "confirm") + " this act";
+    chip.ondblclick = async function(){
+      if(a.id){
+        await api("/api/event_artists/" + a.id, {method:"PATCH", body: JSON.stringify({confirmed: !a.confirmed})});
+        await refreshDraft();
+      } else {
+        a.confirmed = !a.confirmed;
+        renderSheet();
+      }
+    };
+    var x = el("button","x","✕");
+    x.type = "button";
+    x.title = "Remove " + a.name;
+    x.onclick = function(e){ e.stopPropagation(); draft.artists.splice(idx,1); renderSheet(); };
+    chip.appendChild(x);
+    chips.appendChild(chip);
+  });
+  actsField.appendChild(chips);
+
+  var actRow = el("div","actrow");
+  var actInput = input("text", "", function(){});
+  actInput.id = "bookBand";
+  actInput.setAttribute("list","artistNames"); actInput.setAttribute("autocomplete","off");
+  actInput.placeholder = (draft.artists||[]).length ? "Add another act" : "Start typing — known artists will offer themselves";
   var linkNote = el("p","hint");
-  hl.appendChild(linkNote);
-  fs1.appendChild(hl);
   function paintArtistLink(){
-    var n = (draft.headliner||"").trim();
+    var n = actInput.value.trim();
     if(!n){ linkNote.textContent = ""; return; }
     var match = store.artists.find(function(a){ return normName(a.name) === normName(n); });
     if(match){
@@ -904,7 +981,26 @@ function renderSheet(){
       linkNote.style.color = "var(--ink-3)";
     }
   }
-  paintArtistLink();
+  actInput.oninput = paintArtistLink;
+  function addAct(){
+    var name = actInput.value.trim();
+    if(!name) return;
+    draft.artists = draft.artists || [];
+    draft.artists.push({name: name, confirmed: false});
+    actInput.value = "";
+    renderSheet();
+  }
+  actInput.onkeydown = function(e){
+    if(e.key === "Enter" || e.key === ","){ e.preventDefault(); addAct(); }
+  };
+  actRow.appendChild(actInput);
+  var addBtn = el("button","btn","+ Add");
+  addBtn.type = "button";
+  addBtn.onclick = addAct;
+  actRow.appendChild(addBtn);
+  actsField.appendChild(actRow);
+  actsField.appendChild(linkNote);
+  fs1.appendChild(actsField);
   body.appendChild(fs1);
 
   var fs2 = document.createElement("fieldset");
@@ -1086,15 +1182,18 @@ function renderSheet(){
   var save = el("button","btn btn-primary", draftIsNew ? "Book it" : "Save changes");
   save.onclick = async function(){
     errLine.textContent = "";
+    var acts = (draft.artists||[]).filter(function(a){ return (a.name||"").trim(); });
+    if(!acts.length){ errLine.textContent = "Add at least one act."; return; }
     var payload = {
-      venue_id: draft.venue_id, headliner: draft.headliner, show_date: draft.show_date,
-      status: draft.status, support: draft.support, doors: draft.doors, show_time: draft.show_time,
+      venue_id: draft.venue_id, show_date: draft.show_date,
+      status: draft.status, doors: draft.doors, show_time: draft.show_time,
       deal_type: draft.deal_type, guarantee: draft.guarantee, backend_pct: draft.backend_pct,
       deal_notes: draft.deal_notes, announce_date: draft.announce_date, onsale_date: draft.onsale_date,
       notes: draft.notes,
     };
     var r;
     if(draftIsNew){
+      payload.acts = acts;
       r = await api("/api/events", {method:"POST", body: JSON.stringify(payload)});
     } else {
       payload.version = draft.version;
@@ -1107,6 +1206,9 @@ function renderSheet(){
       return;
     }
     var eventId = draftIsNew ? r.body.id : draft.id;
+    if(!draftIsNew){
+      await api("/api/events/" + eventId + "/artists", {method:"PUT", body: JSON.stringify({artists: acts})});
+    }
     var tiersToSave = (draft.ticket_tiers||[]).filter(function(t){ return (t.label||"").trim(); });
     await api("/api/events/" + eventId + "/ticket_tiers", {method:"PUT", body: JSON.stringify({tiers: tiersToSave})});
     closeSheet();
@@ -1140,7 +1242,7 @@ function renderSheetNet(){
 /* Fields the user edits in-place and only persists on the main "Save"
    click — a task/staff/settlement action must not silently wipe these
    out from under them while they're mid-edit. */
-var UNSAVED_FIELDS = ["venue_id","headliner","support","show_date","doors","show_time",
+var UNSAVED_FIELDS = ["venue_id","artists","show_date","doors","show_time",
   "status","deal_type","guarantee","backend_pct","deal_notes","ticket_tiers",
   "announce_date","onsale_date","notes"];
 
@@ -1288,6 +1390,42 @@ function openPersonForm(personId){
   openScrim();
 }
 
+/* ============================== settings ============================== */
+function currentTheme(){
+  try{
+    var t = localStorage.getItem("cp_theme");
+    return (t === "light" || t === "dark") ? t : "system";
+  }catch(e){ return "system"; }
+}
+function setTheme(theme){
+  if(theme === "light" || theme === "dark"){
+    document.documentElement.setAttribute("data-theme", theme);
+    try{ localStorage.setItem("cp_theme", theme); }catch(e){}
+  } else {
+    document.documentElement.removeAttribute("data-theme");
+    try{ localStorage.removeItem("cp_theme"); }catch(e){}
+  }
+  renderSettingsView();
+}
+function renderSettingsView(){
+  var host = document.getElementById("view-settings");
+  host.innerHTML = "";
+  var fs = document.createElement("fieldset");
+  fs.appendChild(el("legend",null,"Appearance"));
+  var grid = el("div","statusgrid");
+  var active = currentTheme();
+  [["system","Match device"],["light","Light"],["dark","Dark"]].forEach(function(opt){
+    var b = el("button","statusopt", opt[1]);
+    b.type = "button";
+    b.setAttribute("aria-pressed", active === opt[0] ? "true" : "false");
+    b.onclick = function(){ setTheme(opt[0]); };
+    grid.appendChild(b);
+  });
+  fs.appendChild(grid);
+  fs.appendChild(el("p","hint","Dark and Light stay picked on this device regardless of your system setting. Match device follows whatever your phone or computer is set to."));
+  host.appendChild(fs);
+}
+
 /* ============================== boot =================================== */
 async function boot(){
   var r = await api("/api/me");
@@ -1296,11 +1434,15 @@ async function boot(){
   document.getElementById("loginCard").style.display = "none";
   document.getElementById("app").style.display = "block";
   document.getElementById("whoami").textContent = me.name + " · " + me.access_level;
-  document.getElementById("navTabs").style.display = canBook() ? "flex" : "none";
+  document.getElementById("navTabs").style.display = "flex";
   document.getElementById("bookBtn").style.display = canBook() ? "inline-block" : "none";
   document.getElementById("filterbar").style.display = "flex";
   if(!canBook()){
-    document.getElementById("navTabs").innerHTML = "";
+    // Crew gets the calendar and their own theme preference — booking,
+    // staffing, and admin views are booker/owner-only screens.
+    document.querySelectorAll("#navTabs button").forEach(function(b){
+      if(b.dataset.view !== "calendar" && b.dataset.view !== "settings") b.remove();
+    });
   }
   await loadBookerLookups();
   await loadEvents();

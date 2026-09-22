@@ -31,11 +31,15 @@ class LoginAndEventsEndToEnd(unittest.TestCase):
         )
         artist_id = cur.fetchone()[0]
         cur.execute(
-            """INSERT INTO events (venue_id, artist_id, show_date, status)
-               VALUES (%s, %s, %s, 'confirmed') RETURNING id""",
-            (venue_id, artist_id, date(2027, 1, 10)),
+            """INSERT INTO events (venue_id, show_date, status)
+               VALUES (%s, %s, 'confirmed') RETURNING id""",
+            (venue_id, date(2027, 1, 10)),
         )
         self.event_id = cur.fetchone()[0]
+        cur.execute(
+            "INSERT INTO event_artists (event_id, artist_id, confirmed) VALUES (%s, %s, TRUE)",
+            (self.event_id, artist_id),
+        )
         self.artist_id = artist_id
         self.conn.commit()
 

@@ -65,14 +65,14 @@ class BookingAShow(unittest.TestCase):
         client = self.app.test_client()
         self._login(client, self.crew_email)
         r = client.post("/api/events", json={
-            "venue_id": self.venue_id, "headliner": "Should Never Exist", "show_date": "2027-06-01",
+            "venue_id": self.venue_id, "acts": ["Should Never Exist"], "show_date": "2027-06-01",
         })
         self.assertEqual(r.status_code, 403)
 
     def test_unauthenticated_cannot_book_a_show(self):
         client = self.app.test_client()
         r = client.post("/api/events", json={
-            "venue_id": self.venue_id, "headliner": "Should Never Exist", "show_date": "2027-06-01",
+            "venue_id": self.venue_id, "acts": ["Should Never Exist"], "show_date": "2027-06-01",
         })
         self.assertEqual(r.status_code, 401)
 
@@ -81,14 +81,15 @@ class BookingAShow(unittest.TestCase):
         self._login(client, self.booker_email)
         band = f"Booking Test Band {id(self)}"
         r = client.post("/api/events", json={
-            "venue_id": self.venue_id, "headliner": band, "show_date": "2027-06-01", "status": "hold1",
+            "venue_id": self.venue_id, "acts": [band], "show_date": "2027-06-01", "status": "hold1",
         })
         self.assertEqual(r.status_code, 201, r.get_json())
         event_id = r.get_json()["id"]
 
         listed = client.get("/api/events").get_json()["events"]
         mine = next(e for e in listed if e["id"] == event_id)
-        self.assertEqual(mine["headliner"], band)
+        self.assertEqual([a["name"] for a in mine["artists"]], [band])
+        self.assertFalse(mine["artists"][0]["confirmed"])
         self.assertEqual(mine["status"], "hold1")
 
         cur = self.conn.cursor()
@@ -105,19 +106,42 @@ class BookingAShow(unittest.TestCase):
         self._login(client, self.booker_email)
         band = f"  Booking Test Band {id(self)}  "  # deliberately messy whitespace
         r1 = client.post("/api/events", json={
-            "venue_id": self.venue_id, "headliner": band, "show_date": "2027-06-01",
+            "venue_id": self.venue_id, "acts": [band], "show_date": "2027-06-01",
         })
         r2 = client.post("/api/events", json={
-            "venue_id": self.venue_id, "headliner": band.strip().upper(), "show_date": "2027-06-08",
+            "venue_id": self.venue_id, "acts": [band.strip().upper()], "show_date": "2027-06-08",
         })
         self.assertEqual(r1.status_code, 201)
         self.assertEqual(r2.status_code, 201)
 
         cur = self.conn.cursor()
-        cur.execute("SELECT artist_id FROM events WHERE id IN (%s, %s)",
+        cur.execute("SELECT artist_id FROM event_artists WHERE event_id IN (%s, %s)",
                     (r1.get_json()["id"], r2.get_json()["id"]))
         artist_ids = {row[0] for row in cur.fetchall()}
         self.assertEqual(len(artist_ids), 1, "booking the same band twice created two artist rows")
+
+    def test_booking_two_acts_creates_two_separate_artists_never_one_merged_name(self):
+        """The exact scenario Broc described: typing 'Foo Fighters' then
+        adding 'Nirvana' must create two acts on the bill, never one artist
+        named 'Foo Fighters Nirvana'."""
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        band1 = f"Booking Test Band {id(self)} One"
+        band2 = f"Booking Test Band {id(self)} Two"
+        r = client.post("/api/events", json={
+            "venue_id": self.venue_id, "acts": [band1, band2], "show_date": "2027-06-01",
+        })
+        self.assertEqual(r.status_code, 201, r.get_json())
+        event_id = r.get_json()["id"]
+
+        listed = client.get("/api/events").get_json()["events"]
+        mine = next(e for e in listed if e["id"] == event_id)
+        names = [a["name"] for a in mine["artists"]]
+        self.assertEqual(names, [band1, band2], "acts must stay separate, in order, never concatenated")
+
+        cur = self.conn.cursor()
+        cur.execute("SELECT name FROM artists WHERE name = %s", (band1 + " " + band2,))
+        self.assertIsNone(cur.fetchone(), "a single merged artist row must never be created")
 
 
 if __name__ == "__main__":
