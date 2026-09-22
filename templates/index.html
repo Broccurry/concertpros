@@ -1507,6 +1507,7 @@ function renderStaffView(){
 /* ============================== the editor ============================= */
 var draft = null, draftIsNew = false;
 var addingAct = false; // the "+ Add act" input is hidden until this is true, so an existing show's acts list doesn't sit next to a permanent empty box
+var addingShift = false; // same idea for "+ New shift" under Who's working
 
 function field(label, node){
   var f = el("div","field");
@@ -1558,6 +1559,7 @@ function select(options, value, onChange){ return selectKV(options.map(function(
 
 async function openEvent(id, dateHint){
   addingAct = false;
+  addingShift = false;
   if(!canBook()){
     // Crew never gets the booker sheet — it's built around fields
     // (status, deal, settlement) their own /api/events response never
@@ -2191,27 +2193,26 @@ function renderSheet(){
       row.appendChild(del);
       fs6.appendChild(row);
     });
-    var addRow = el("div","row-3");
-    var roleSel = selectKV([{value:"",label:"—"}].concat(store.roles.map(function(r){ return {value:r.id, label:r.name}; })),
-      "", function(){});
-    var personSel = selectKV([{value:"",label:"TBA (unfilled)"}].concat(
-      store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; })), "", function(){});
-    var timeInput = input("time", "", function(){});
-    addRow.appendChild(field("Role", roleSel));
-    addRow.appendChild(field("Person", personSel));
-    addRow.appendChild(field("Time", timeInput));
-    fs6.appendChild(addRow);
-    var addStaffBtn = el("button","btn","+ Assign");
-    addStaffBtn.type = "button";
-    addStaffBtn.onclick = async function(){
-      var role_id = Number(roleSel.value);
-      if(!role_id) return;
-      var person_id = personSel.value ? Number(personSel.value) : null;
-      await api("/api/events/" + draft.id + "/assignments", {method:"POST",
-        body: JSON.stringify({role_id:role_id, person_id:person_id, scheduled_time: timeInput.value || null})});
-      await refreshDraft();
-    };
-    fs6.appendChild(addStaffBtn);
+    // No standing empty Role/Person/Time box — picking a role saves that
+    // shift immediately (as an open TBA slot), same "build it as you go"
+    // idea as the acts list. Person/time then get filled in on the row
+    // itself, the same in-place editing every other shift already has.
+    if(!addingShift){
+      var newShiftBtn = el("button","btn","+ New shift");
+      newShiftBtn.type = "button";
+      newShiftBtn.onclick = function(){ addingShift = true; renderSheet(); };
+      fs6.appendChild(newShiftBtn);
+    } else {
+      var roleSel = selectKV([{value:"",label:"Pick a role —"}].concat(
+        store.roles.map(function(r){ return {value:r.id, label:r.name}; })), "", async function(v){
+          if(!v) return;
+          await api("/api/events/" + draft.id + "/assignments", {method:"POST",
+            body: JSON.stringify({role_id: Number(v)})});
+          addingShift = false;
+          await refreshDraft();
+        });
+      fs6.appendChild(roleSel);
+    }
     if(!store.people.length) fs6.appendChild(el("p","hint","No people on the roster yet — add them under “People”."));
   }
   body.appendChild(fs6);
