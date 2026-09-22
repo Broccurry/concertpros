@@ -4,110 +4,226 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ConcertPros</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
-  :root{
-    --ink:#16181d; --ink-2:#3d434f; --ink-3:#6b7382;
-    --ground:#f2f3f6; --surface:#fff; --line:#d5d9e2;
-    --accent:#2a3d8f; --accent-soft:#e6e9f6;
-    --confirm:#1c6b45; --confirm-bg:#c9ecd8;
-    --display:"Oswald","Arial Narrow",sans-serif;
-    --body:"Segoe UI",system-ui,sans-serif;
+:root{
+  --ink:#16181d; --ink-2:#3d434f; --ink-3:#6b7382;
+  --ground:#f2f3f6; --surface:#fff; --surface-2:#e9ebf0;
+  --line:#d5d9e2; --line-strong:#b4bac7;
+  --accent:#2a3d8f; --accent-soft:#e6e9f6;
+  --hold-1:#b26a00; --hold-1-bg:#f6b73c; --hold-2-bg:#fbdfa4; --hold-3-bg:#fdf1d8;
+  --confirm:#1c6b45; --confirm-bg:#c9ecd8;
+  --done:#4a5262; --done-bg:#dde1e9;
+  --dead:#9a3b3b; --dead-bg:#f0dada;
+  --shadow:0 1px 2px rgba(20,24,35,.08), 0 8px 24px rgba(20,24,35,.06);
+  --radius:6px;
+  --display:"Oswald","Arial Narrow",sans-serif;
+  --body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ink:#e9ebf1; --ink-2:#b3b9c7; --ink-3:#848c9d;
+    --ground:#14161b; --surface:#1d2027; --surface-2:#272b34;
+    --line:#333846; --line-strong:#49505f; --accent:#8fa3f0; --accent-soft:#232a44;
+    --hold-1:#2a1e05; --hold-1-bg:#d99a2b; --hold-2-bg:#6b5323; --hold-3-bg:#3a3222;
+    --confirm:#b9f0d2; --confirm-bg:#1d4634; --done:#c3cad8; --done-bg:#333948;
+    --dead:#f2c2c2; --dead-bg:#4d2b2b;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
   }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);
-       min-height:100vh;display:flex;align-items:center;justify-content:center}
-  .brand{font-family:var(--display);font-weight:600;font-size:24px;text-transform:uppercase;
-         letter-spacing:.02em;margin:0 0 20px;text-align:center}
-  .brand span{color:var(--accent)}
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+@media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
 
-  #loginCard{background:var(--surface);border:1px solid var(--line);border-radius:8px;
-             padding:28px;width:320px;box-shadow:0 4px 16px rgba(0,0,0,.06)}
-  #loginCard label{display:block;font-size:12px;color:var(--ink-3);margin:12px 0 4px}
-  #loginCard input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;
-                    font-size:14px}
-  #loginCard button{width:100%;margin-top:18px;padding:10px;border:0;border-radius:6px;
-                     background:var(--accent);color:#fff;font-size:14px;font-weight:600;cursor:pointer}
-  #loginError{color:#9a3b3b;font-size:12.5px;margin-top:10px;min-height:1em}
+.brand{font-family:var(--display);font-weight:600;text-transform:uppercase;letter-spacing:.02em;margin:0}
+.brand span{color:var(--accent)}
 
-  #app{display:none;width:100%;max-width:900px;padding:20px}
-  #topbar{display:flex;align-items:center;gap:12px;margin-bottom:16px}
-  #topbar .who{color:var(--ink-3);font-size:13px}
-  #logoutBtn{border:1px solid var(--line);background:var(--surface);
-             border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer}
-  #bookBtn{margin-left:auto;border:0;background:var(--accent);color:#fff;font-weight:600;
-           border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer}
+#loginCard{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:28px;
+           width:320px;box-shadow:var(--shadow);margin:80px auto}
+#loginCard h1{font-size:24px;text-align:center;margin-bottom:20px}
+#loginCard label{display:block;font-size:12px;color:var(--ink-3);margin:12px 0 4px}
+#loginCard input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px}
+#loginCard button{width:100%;margin-top:18px;padding:10px;border:0;border-radius:6px;
+                   background:var(--accent);color:#fff;font-size:14px;font-weight:600}
+#loginError{color:var(--dead);font-size:12.5px;margin-top:10px;min-height:1em}
 
-  #bookForm{background:var(--surface);border:1px solid var(--line);border-radius:8px;
-            padding:16px;margin-bottom:16px;display:none}
-  #bookForm .row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
-  #bookForm .field{flex:1;min-width:140px}
-  #bookForm label{display:block;font-size:11px;color:var(--ink-3);margin-bottom:3px}
-  #bookForm input,#bookForm select{width:100%;padding:8px 9px;border:1px solid var(--line);
-                                    border-radius:6px;font-size:13.5px}
-  #bookForm .actions{display:flex;gap:8px;align-items:center}
-  #bookForm button{border:0;border-radius:6px;padding:9px 16px;font-size:13.5px;cursor:pointer}
-  #bookSubmit{background:var(--accent);color:#fff;font-weight:600}
-  #bookCancel{background:var(--ground);color:var(--ink-2)}
-  #bookError{color:#9a3b3b;font-size:12.5px}
+#app{display:none}
+.topbar{position:sticky;top:0;z-index:30;background:var(--surface);border-bottom:1px solid var(--line)}
+.topbar-inner{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:10px;
+              display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.topbar .brand{font-size:22px;line-height:1;white-space:nowrap}
+.views{display:flex;gap:2px;background:var(--surface-2);padding:2px;border-radius:var(--radius)}
+.views button{border:0;background:transparent;color:var(--ink-3);padding:5px 12px;border-radius:4px;font-size:13px;font-weight:500}
+.views button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.spacer{flex:1 1 auto}
+.who{color:var(--ink-3);font-size:13px;white-space:nowrap}
 
-  #staffPanel{background:var(--surface);border:1px solid var(--line);border-radius:8px;
-              padding:14px 16px;margin:-6px 0 16px}
-  #staffPanel .row{margin-bottom:0}
-  #staffPanel select{padding:7px 8px}
-  #staffAddBtn{background:var(--ground);color:var(--ink-2);border:1px solid var(--line);
-               white-space:nowrap;padding:7px 12px}
-  .staffRow{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13.5px}
-  .staffRow .role{color:var(--ink-3);width:110px;flex:none}
-  .staffRow button{border:0;background:none;color:#9a3b3b;cursor:pointer;font-size:13px;margin-left:auto}
+.monthnav{display:flex;align-items:center;gap:6px}
+.monthnav h2{font-family:var(--display);font-weight:500;font-size:19px;text-transform:uppercase;
+             letter-spacing:.03em;margin:0;min-width:170px;text-align:center}
+.icon-btn{width:30px;height:30px;display:grid;place-items:center;padding:0;border:1px solid var(--line);
+          background:var(--surface);border-radius:var(--radius);color:var(--ink-2)}
+.icon-btn:hover{border-color:var(--line-strong);color:var(--ink)}
+.btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:6px 12px;
+     border-radius:var(--radius);font-size:13px;font-weight:500}
+.btn:hover{border-color:var(--line-strong)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-primary:hover{opacity:.9}
+.btn-danger{color:var(--dead);border-color:var(--line)}
 
-  #settlementPanel{background:var(--surface);border:1px solid var(--line);border-radius:8px;
-                   padding:14px 16px;margin:-6px 0 16px}
-  #settlementPanel .row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
-  #settlementPanel .field{flex:1;min-width:120px}
-  #settlementPanel label{display:block;font-size:11px;color:var(--ink-3);margin-bottom:3px}
-  #settlementPanel input{width:100%;padding:7px 8px;border:1px solid var(--line);border-radius:6px;
-                          font-size:13.5px}
-  #settlementPanel .actions{display:flex;gap:8px;align-items:center}
-  #setSaveBtn{border:0;background:var(--accent);color:#fff;font-weight:600;border-radius:6px;
-              padding:8px 14px;font-size:13px;cursor:pointer}
-  #setError{color:#9a3b3b;font-size:12.5px}
+.filterbar{border-bottom:1px solid var(--line);background:var(--surface)}
+.filterbar-inner{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:8px;
+                 display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.eyebrow{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);white-space:nowrap}
+.chip{border:1px solid var(--line);background:transparent;color:var(--ink-2);padding:3px 10px;
+      border-radius:999px;font-size:12.5px;white-space:nowrap}
+.chip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
+.legend{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-left:auto}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3);white-space:nowrap}
+.swatch{width:11px;height:11px;border-radius:2px;flex:none}
 
-  table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);
-        border-radius:8px;overflow:hidden}
-  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);font-size:13.5px}
-  th{background:var(--ground);font-size:11px;text-transform:uppercase;letter-spacing:.06em;
-     color:var(--ink-3)}
-  tr:last-child td{border-bottom:0}
-  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;
-        background:var(--confirm-bg);color:var(--confirm)}
-  #empty{text-align:center;color:var(--ink-3);padding:30px;background:var(--surface);
-         border:1px dashed var(--line);border-radius:8px}
+main{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:16px 48px}
 
-  #navTabs{display:flex;gap:2px;background:var(--ground);padding:2px;border-radius:6px}
-  .navBtn{border:0;background:transparent;color:var(--ink-3);padding:6px 12px;border-radius:5px;
-          font-size:13px;cursor:pointer}
-  .navBtn[aria-selected="true"]{background:var(--surface);color:var(--ink);font-weight:600}
+.dow{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+.dow div{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);text-align:center;padding:2px 0}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cell{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);min-height:116px;
+      padding:5px;display:flex;flex-direction:column;gap:4px;position:relative}
+.cell.out{background:transparent;border-style:dashed;opacity:.55}
+.cell.today{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.cell-head{display:flex;align-items:center;justify-content:space-between;gap:4px}
+.daynum{font-family:var(--display);font-size:14px;font-weight:500;color:var(--ink-2);line-height:1}
+.cell.today .daynum{color:var(--accent);font-weight:600}
+.addday{opacity:0;border:0;background:transparent;color:var(--ink-3);font-size:16px;line-height:1;padding:0 3px;border-radius:3px}
+.cell:hover .addday,.addday:focus-visible{opacity:1}
+.addday:hover{background:var(--surface-2);color:var(--ink)}
 
-  #addPersonBtn{border:0;background:var(--accent);color:#fff;font-weight:600;border-radius:6px;
-                padding:8px 14px;font-size:13px;cursor:pointer;margin-bottom:12px}
-  #personForm{background:var(--surface);border:1px solid var(--line);border-radius:8px;
-              padding:16px;margin-bottom:16px}
-  #personForm .row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px}
-  #personForm .field{flex:1;min-width:140px}
-  #personForm label{display:block;font-size:11px;color:var(--ink-3);margin-bottom:3px}
-  #personForm input,#personForm select{width:100%;padding:8px 9px;border:1px solid var(--line);
-                                        border-radius:6px;font-size:13.5px}
-  #personForm .actions{display:flex;gap:8px;align-items:center;margin-top:4px}
-  #personForm button{border:0;border-radius:6px;padding:9px 16px;font-size:13.5px;cursor:pointer}
-  #pSaveBtn{background:var(--accent);color:#fff;font-weight:600}
-  #pCancelBtn{background:var(--ground);color:var(--ink-2)}
-  #pResetBtn{background:var(--ground);color:var(--ink-2);border:1px solid var(--line)}
-  #pError{color:#9a3b3b;font-size:12.5px}
-  #pTempPassword{margin-top:10px;padding:10px 12px;background:var(--accent-soft);color:var(--accent);
-                 border-radius:6px;font-size:13px}
-  .roleChip{display:flex;align-items:center;gap:5px;font-size:13px}
-  .roleChip input{width:auto}
-  .pill-muted{background:var(--ground);color:var(--ink-3)}
+.show{text-align:left;border:1px solid transparent;border-radius:4px;padding:3px 5px;display:block;width:100%;
+      font-size:12px;line-height:1.25;overflow:hidden}
+.show .name{font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.show .meta{display:block;font-size:10.5px;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
+.s-hold1{background:var(--hold-1-bg);color:var(--hold-1);border-color:var(--hold-1-bg)}
+.s-hold2{background:var(--hold-2-bg);color:var(--hold-1);border-color:var(--hold-2-bg)}
+.s-hold3{background:transparent;color:var(--ink-2);border:1px dashed var(--line-strong)}
+.s-confirmed{background:var(--confirm-bg);color:var(--confirm);border-color:var(--confirm-bg)}
+.s-complete{background:var(--done-bg);color:var(--done);border-color:var(--done-bg)}
+.s-dead{background:var(--dead-bg);color:var(--dead);border-color:var(--dead-bg)}
+.s-dead .name{text-decoration:line-through}
+.s-unsettled{background:var(--done-bg);color:var(--done);border-color:var(--hold-1-bg);box-shadow:inset 0 0 0 1px var(--hold-1-bg)}
+
+.cell-btn{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);min-height:58px;
+          padding:4px 3px 5px;display:flex;flex-direction:column;align-items:center;gap:3px;width:100%;color:inherit;text-align:center}
+.cell-btn.out{background:transparent;border-style:dashed;opacity:.5}
+.cell-btn.today{border-color:var(--accent);box-shadow:inset 0 0 0 1px var(--accent)}
+.cell-btn .daynum{font-size:13px}
+.cell-btn.today .daynum{color:var(--accent);font-weight:600}
+.cell-btn.free .daynum{color:var(--ink-3);font-weight:400}
+.dots{display:flex;flex-wrap:wrap;gap:3px;justify-content:center;align-items:center;min-height:8px}
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.dot-more{font-size:9px;color:var(--ink-3);line-height:1;font-variant-numeric:tabular-nums}
+.daylist{display:flex;flex-direction:column;gap:6px}
+
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius)}
+table{border-collapse:collapse;width:100%;min-width:900px}
+th{text-align:left;font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);
+   padding:9px 12px;border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0;background:var(--surface)}
+td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+tbody tr{cursor:pointer}
+tbody tr:hover td{background:var(--surface-2)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.date-col{font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--ink-2)}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap;border:1px solid transparent}
+.pill-muted{background:var(--ground);color:var(--ink-3)}
+.title-cell{font-weight:600}
+.sub{font-size:11.5px;color:var(--ink-3)}
+
+.taskbar{display:flex;align-items:center;gap:6px;min-width:96px}
+.taskbar-track{flex:1;height:4px;background:var(--surface-2);border-radius:2px;overflow:hidden;min-width:44px}
+.taskbar-fill{height:100%;background:var(--accent);border-radius:2px}
+.taskbar-num{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+
+#empty,.empty{border:1px dashed var(--line-strong);border-radius:var(--radius);padding:40px 20px;text-align:center;color:var(--ink-3)}
+.empty h3{font-family:var(--display);text-transform:uppercase;letter-spacing:.04em;color:var(--ink-2);margin:0 0 6px}
+h3.section{font-family:var(--display);font-size:16px;text-transform:uppercase;letter-spacing:.05em;margin:24px 0 8px;color:var(--ink-2)}
+h3.section:first-child{margin-top:0}
+
+.scrim{position:fixed;inset:0;background:rgba(12,14,20,.55);z-index:50;display:flex;align-items:flex-start;
+       justify-content:center;padding:16px;overflow-y:auto}
+.sheet{background:var(--surface);border-radius:10px;box-shadow:var(--shadow);width:100%;max-width:720px;
+       margin:auto;border:1px solid var(--line)}
+.sheet-head{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);
+            position:sticky;top:0;background:var(--surface);border-radius:10px 10px 0 0;z-index:2}
+.sheet-head h2{font-family:var(--display);font-size:19px;text-transform:uppercase;letter-spacing:.03em;margin:0}
+.sheet-body{padding:18px}
+.sheet-foot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:14px 18px;border-top:1px solid var(--line);
+            position:sticky;bottom:0;background:var(--surface);border-radius:0 0 10px 10px}
+
+fieldset{border:0;padding:0;margin:0 0 20px}
+legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);padding:0;margin-bottom:8px}
+.row{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.row-3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.field{display:flex;flex-direction:column;gap:4px;min-width:0}
+.field label{font-size:11.5px;color:var(--ink-3);font-weight:500}
+.field input,.field select,.field textarea{border:1px solid var(--line);background:var(--ground);color:var(--ink);
+                                            border-radius:var(--radius);padding:7px 9px;font-size:13.5px;width:100%;min-width:0}
+.field textarea{resize:vertical;min-height:58px}
+.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px var(--accent-soft)}
+.hint{font-size:11.5px;color:var(--ink-3)}
+
+.tierrow,.stafrow{display:grid;grid-template-columns:1fr 120px 32px;gap:8px;margin-bottom:6px;align-items:center}
+.stafrow{grid-template-columns:140px 1fr 32px}
+.rowdel{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);width:32px;height:32px;
+        color:var(--ink-3);display:grid;place-items:center;padding:0}
+.rowdel:hover{color:var(--dead);border-color:var(--dead)}
+
+.tasklist{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
+.taskitem{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--radius);background:var(--ground);border:1px solid transparent}
+.taskitem:hover{border-color:var(--line)}
+.taskitem input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);flex:none;cursor:pointer}
+.taskitem .tlabel{flex:1;font-size:13.5px;min-width:0}
+.taskitem.done .tlabel{color:var(--ink-3);text-decoration:line-through}
+.taskitem input[type=text]{border:1px solid transparent;background:transparent;color:var(--ink-3);font-size:12px;
+                            width:120px;padding:2px 6px;border-radius:4px;text-align:right}
+.taskitem input[type=text]:focus{border-color:var(--line);background:var(--surface);outline:none}
+
+.person{border:1px solid var(--line);border-radius:var(--radius);padding:10px;margin-bottom:8px;background:var(--ground)}
+.person-top{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.person-top input{flex:1;min-width:0}
+.person-top .btn{flex:none;white-space:nowrap}
+.rolepick{display:flex;flex-wrap:wrap;gap:5px}
+.rolepick .chip{background:var(--surface)}
+.rolepick .chip[aria-pressed="true"]{background:var(--accent-soft)}
+
+.statusgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.statusopt{border:1px solid var(--line);border-radius:var(--radius);padding:8px 6px;text-align:center;
+           font-size:12.5px;font-weight:600;background:var(--surface);color:var(--ink-3)}
+.statusopt[aria-pressed="true"]{border-color:currentColor;box-shadow:inset 0 0 0 1px currentColor}
+
+.banner{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--accent);
+        color:var(--accent);border-radius:var(--radius);padding:8px 12px;margin-bottom:14px;font-size:12.5px}
+.banner strong{font-weight:600}
+.banner .btn{margin-left:auto;background:transparent;border-color:currentColor;color:inherit}
+.banner.warn{background:var(--hold-3-bg);border-color:var(--hold-1-bg);color:var(--hold-1)}
+tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
+.notice{font-size:12px;color:var(--ink-3);margin-top:14px;text-align:center}
+
+@media (max-width:860px){.legend{margin-left:0;width:100%}.monthnav h2{min-width:140px;font-size:17px}}
+@media (max-width:660px){
+  .dow div{font-size:9px;letter-spacing:.05em}
+  .grid{gap:3px}
+  .row,.row-3,.statusgrid{grid-template-columns:1fr}
+  .statusgrid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .brand{font-size:19px}
+  .sheet-body{padding:14px}
+}
 </style>
 </head>
 <body>
@@ -125,151 +241,72 @@
 </div>
 
 <div id="app">
-  <div id="topbar">
-    <h1 class="brand" style="margin:0;font-size:19px">Concert<span>Pros</span></h1>
-    <div id="navTabs" style="display:none">
-      <button type="button" class="navBtn" data-view="calendar">Calendar</button>
-      <button type="button" class="navBtn" data-view="people">People</button>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <h1 class="brand">Concert<span>Pros</span></h1>
+      <div class="views" role="tablist" aria-label="View" id="navTabs" style="display:none">
+        <button role="tab" data-view="calendar" aria-selected="true">Calendar</button>
+        <button role="tab" data-view="list" aria-selected="false">List</button>
+        <button role="tab" data-view="artists" aria-selected="false">Artists</button>
+        <button role="tab" data-view="staff" aria-selected="false">Staff</button>
+        <button role="tab" data-view="people" aria-selected="false">People</button>
+      </div>
+      <div class="monthnav" id="monthnav">
+        <button class="icon-btn" id="prevMonth" aria-label="Previous month">&#8249;</button>
+        <h2 id="monthLabel">&nbsp;</h2>
+        <button class="icon-btn" id="nextMonth" aria-label="Next month">&#8250;</button>
+        <button class="btn" id="todayBtn">Today</button>
+      </div>
+      <div class="spacer"></div>
+      <span class="who" id="whoami"></span>
+      <button class="btn btn-primary" id="bookBtn" style="display:none">+ Book a show</button>
+      <button class="btn" id="logoutBtn">Log out</button>
     </div>
-    <span class="who" id="whoami"></span>
-    <button id="bookBtn" style="display:none">+ Book a show</button>
-    <button id="logoutBtn">Log out</button>
-  </div>
+  </header>
 
-<div id="calendarView">
-  <form id="bookForm">
-    <div class="row">
-      <div class="field">
-        <label for="bookVenue">Venue</label>
-        <select id="bookVenue" required></select>
-      </div>
-      <div class="field">
-        <label for="bookBand">Band</label>
-        <input id="bookBand" list="artistNames" required placeholder="Start typing…">
-        <datalist id="artistNames"></datalist>
-      </div>
-      <div class="field">
-        <label for="bookDate">Date</label>
-        <input id="bookDate" type="date" required>
-      </div>
-      <div class="field">
-        <label for="bookStatus">Status</label>
-        <select id="bookStatus">
-          <option value="hold1">1st hold</option>
-          <option value="hold2">2nd hold</option>
-          <option value="hold3">3rd hold</option>
-          <option value="confirmed">Confirmed</option>
-        </select>
-      </div>
-    </div>
-    <div class="actions">
-      <button type="submit" id="bookSubmit">Book it</button>
-      <button type="button" id="bookCancel">Cancel</button>
-      <span id="bookError"></span>
-    </div>
-  </form>
-
-  <div id="staffPanel" style="display:none">
-    <div id="staffList"></div>
-    <div class="row" style="margin-top:8px">
-      <div class="field">
-        <select id="staffRole"></select>
-      </div>
-      <div class="field">
-        <select id="staffPerson"></select>
-      </div>
-      <div class="field" style="flex:0">
-        <button type="button" id="staffAddBtn">+ Assign</button>
-      </div>
+  <div class="filterbar" id="filterbar" style="display:none">
+    <div class="filterbar-inner">
+      <span class="eyebrow">Venue</span>
+      <div class="chips" id="venueChips"></div>
+      <span class="eyebrow" id="countLabel"></span>
+      <div class="legend" id="legend"></div>
     </div>
   </div>
 
-  <div id="settlementPanel" style="display:none">
-    <div class="row">
-      <div class="field">
-        <label for="setTickets">Tickets sold</label>
-        <input id="setTickets" type="number" min="0">
-      </div>
-      <div class="field">
-        <label for="setGross">Gross</label>
-        <input id="setGross" type="number" step="0.01">
-      </div>
-      <div class="field">
-        <label for="setExpenses">Expenses</label>
-        <input id="setExpenses" type="number" step="0.01">
-      </div>
-      <div class="field">
-        <label for="setPayout">Artist payout</label>
-        <input id="setPayout" type="number" step="0.01">
-      </div>
-    </div>
-    <div class="row" style="align-items:center">
-      <div class="field" style="flex:0;white-space:nowrap">
-        <label style="font-weight:normal;display:flex;align-items:center;gap:6px">
-          <input id="setSettled" type="checkbox" style="width:auto"> Settled and paid
-        </label>
-      </div>
-      <div class="field" id="setNet" style="color:var(--ink-3);font-size:13px;flex:2"></div>
-    </div>
-    <div class="actions">
-      <button type="button" id="setSaveBtn">Save finals</button>
-      <span id="setError"></span>
-    </div>
-  </div>
-
-  <div id="eventsHost"></div>
+  <main>
+    <div id="bannerSlot"></div>
+    <section id="view-calendar">
+      <div class="dow"><div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div></div>
+      <div class="grid" id="grid"></div>
+    </section>
+    <section id="view-list" hidden></section>
+    <section id="view-artists" hidden></section>
+    <section id="view-staff" hidden></section>
+    <section id="view-people" hidden>
+      <button type="button" class="btn btn-primary" id="addPersonBtn" style="margin-bottom:12px">+ Add a person</button>
+      <div id="peopleHost"></div>
+    </section>
+    <p class="notice" id="storeNotice"></p>
+  </main>
 </div>
 
-<div id="peopleView" style="display:none">
-  <button type="button" id="addPersonBtn">+ Add a person</button>
-  <div id="peopleHost"></div>
-
-  <div id="personForm" style="display:none">
-    <div class="row">
-      <div class="field">
-        <label for="pName">Name</label>
-        <input id="pName">
-      </div>
-      <div class="field">
-        <label for="pEmail">Email</label>
-        <input id="pEmail" type="email">
-      </div>
-      <div class="field">
-        <label for="pPhone">Phone</label>
-        <input id="pPhone" type="tel">
-      </div>
-      <div class="field">
-        <label for="pAccess">Access</label>
-        <select id="pAccess">
-          <option value="crew">Crew</option>
-          <option value="booker">Booker</option>
-          <option value="owner">Owner</option>
-        </select>
-      </div>
+<div class="scrim" id="scrim" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-head">
+      <h2 id="sheetTitle">Show</h2>
+      <div class="spacer"></div>
+      <button class="icon-btn" id="sheetClose" aria-label="Close">&#10005;</button>
     </div>
-    <div class="row">
-      <div class="field">
-        <label>Active</label>
-        <label style="font-weight:normal;display:flex;align-items:center;gap:6px;margin-top:6px">
-          <input id="pActive" type="checkbox" style="width:auto" checked> Active
-        </label>
-      </div>
-      <div class="field" style="flex:2">
-        <label>Roles they cover</label>
-        <div id="pRoles" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:6px"></div>
-      </div>
-    </div>
-    <div class="actions">
-      <button type="button" id="pSaveBtn">Save</button>
-      <button type="button" id="pCancelBtn">Cancel</button>
-      <button type="button" id="pResetBtn" style="display:none">Reset password</button>
-      <span id="pError"></span>
-    </div>
-    <div id="pTempPassword" style="display:none"></div>
+    <div class="sheet-body" id="sheetBody"></div>
+    <div class="sheet-foot" id="sheetFoot"></div>
   </div>
 </div>
 
 <script>
+(function(){
+"use strict";
+
+/* ============================== API ================================ */
 async function api(path, opts) {
   const res = await fetch(path, Object.assign(
     {credentials: "same-origin", headers: {"Content-Type": "application/json"}}, opts));
@@ -277,415 +314,1030 @@ async function api(path, opts) {
   return {ok: res.ok, status: res.status, body};
 }
 
-function showApp() { document.getElementById("loginCard").style.display = "none"; document.getElementById("app").style.display = "block"; }
-function showLogin() { document.getElementById("loginCard").style.display = "block"; document.getElementById("app").style.display = "none"; }
+/* ============================== domain ============================= */
+var STATUS = {
+  hold1:    {label:"1st hold",        cls:"s-hold1",     swatch:"var(--hold-1-bg)"},
+  hold2:    {label:"2nd hold",        cls:"s-hold2",     swatch:"var(--hold-2-bg)"},
+  hold3:    {label:"3rd hold",        cls:"s-hold3",     swatch:"var(--hold-3-bg)"},
+  confirmed:{label:"Confirmed",       cls:"s-confirmed", swatch:"var(--confirm-bg)"},
+  complete: {label:"Complete",        cls:"s-complete",  swatch:"var(--done-bg)"},
+  dead:     {label:"Didn't work out", cls:"s-dead",      swatch:"var(--dead-bg)"},
+  unsettled:{label:"Needs settling",  cls:"s-unsettled", swatch:"var(--done-bg)"}
+};
+var STATUS_ORDER = ["hold1","hold2","hold3","confirmed","complete","dead"];
+var NO_DEAL = "Not recorded";
+var DEAL_TYPES = [NO_DEAL,"Guarantee","Guarantee vs %","Door split","Flat rental","Free / promo"];
 
-function fmtDate(iso) {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {weekday: "short", month: "short", day: "numeric"});
+function pad(n){ return n < 10 ? "0" + n : "" + n; }
+function iso(y,m,d){ return y + "-" + pad(m+1) + "-" + pad(d); }
+function todayISO(){ var t = new Date(); return iso(t.getFullYear(), t.getMonth(), t.getDate()); }
+function parts(s){ var a = (s||"").split("-"); return {y:+a[0], m:+a[1]-1, d:+a[2]}; }
+function dow(s){ var p = parts(s); return new Date(p.y, p.m, p.d).getDay(); }
+var MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+var DOW_SHORT = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function shortDate(s){
+  if(!s) return "";
+  var p = parts(s);
+  return DOW_SHORT[new Date(p.y,p.m,p.d).getDay()] + " " + MONTHS[p.m].slice(0,3) + " " + p.d;
 }
-function fmtTime(t) {
-  if (!t) return "";
-  const [h, m] = t.split(":").map(Number);
-  const ap = h >= 12 ? "pm" : "am";
-  const h12 = h % 12 || 12;
-  return m ? `${h12}:${String(m).padStart(2,"0")}${ap}` : `${h12}${ap}`;
+function money(n){
+  if(n === "" || n === null || n === undefined || isNaN(+n)) return "";
+  return "$" + (+n).toLocaleString("en-US", {maximumFractionDigits:2});
+}
+function time12(t){
+  if(!t) return "";
+  var a = t.split(":"), h = +a[0], m = a[1] || "00";
+  var ap = h >= 12 ? "pm" : "am"; h = h % 12; if(h === 0) h = 12;
+  return h + (m === "00" ? "" : ":" + m) + ap;
+}
+function isUnsettled(ev){ return !!ev && ev.status === "confirmed" && ev.show_date < todayISO(); }
+function st(ev){ if(isUnsettled(ev)) return STATUS.unsettled; return (ev && STATUS[ev.status]) || STATUS.hold1; }
+function showName(ev){ return ev.headliner || "Untitled hold"; }
+function dealSummary(ev){
+  var bits = [];
+  if(ev.guarantee !== "" && ev.guarantee != null) bits.push(money(ev.guarantee));
+  if(ev.backend_pct !== "" && ev.backend_pct != null) bits.push(ev.backend_pct + "%");
+  var s = bits.join(" vs ");
+  var type = (ev.deal_type && ev.deal_type !== NO_DEAL) ? ev.deal_type : "";
+  if(!s) return type;
+  return type && type !== "Guarantee" ? type + " · " + s : s;
+}
+function taskProgress(ev){
+  var t = ev.tasks || [];
+  return {done: t.filter(function(x){ return x.done; }).length, total: t.length};
+}
+function staffLabel(s){ return s.person_name || (s.person_id ? "(removed person)" : ""); }
+function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
+
+/* ============================== state =============================== */
+var store = {events:[], venues:[], roles:[], people:[], artists:[]};
+var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
+function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__"};
+var me = {access_level:"crew"};
+function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
+
+function eventById(id){ return store.events.find(function(e){ return e.id === id; }); }
+function visibleEvents(){
+  return store.events.filter(function(ev){ return ui.venue === "__all__" || ev.venue === ui.venue; })
+    .slice().sort(function(a,b){ return a.show_date < b.show_date ? -1 : a.show_date > b.show_date ? 1 : 0; });
+}
+function artistTotals(name){
+  var n = normName(name), paid = 0, played = 0, count = 0, last = "";
+  store.events.forEach(function(ev){
+    if(normName(ev.headliner) !== n) return;
+    count++;
+    var p = ev.settlement && ev.settlement.artist_payout;
+    if(p !== "" && p != null && !isNaN(+p)) paid += +p;
+    if(ev.status === "complete"){ played++; if(ev.show_date > last) last = ev.show_date; }
+  });
+  return {count:count, played:played, paid:paid, last:last};
 }
 
-let lastEvents = [];
-let lastPeople = [];
-let allRoles = [];
-let canBook = false;
-let myAccessLevel = "crew";
-let editingId = null;
-let editingVersion = null;
-let editingPersonId = null;
-let currentView = "calendar";
+/* ============================== loading ============================= */
+function setNotice(text){
+  var el = document.getElementById("storeNotice");
+  el.textContent = text || ""; el.hidden = !text;
+}
 
-async function loadEvents() {
-  const {ok, body} = await api("/api/events");
-  const host = document.getElementById("eventsHost");
-  if (!ok) { host.innerHTML = "<div id='empty'>Could not load events.</div>"; return; }
-  if (!body.events.length) { host.innerHTML = "<div id='empty'>Nothing booked yet.</div>"; return; }
-  lastEvents = body.events;
-  const rows = body.events.map(e => `
-    <tr data-id="${e.id}" style="${canBook ? "cursor:pointer" : ""}">
-      <td>${fmtDate(e.show_date)}</td>
-      <td>${e.venue}</td>
-      <td><strong>${e.headliner}</strong>${e.support ? `<div style="color:var(--ink-3);font-size:12px">${e.support}</div>` : ""}</td>
-      <td>${fmtTime(e.doors)}</td>
-      <td>${e.status ? `<span class="pill">${e.status}</span>` : ""}</td>
-    </tr>`).join("");
-  host.innerHTML = `<table><thead><tr><th>Date</th><th>Venue</th><th>Show</th><th>Doors</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
-  if (canBook) {
-    host.querySelectorAll("tr[data-id]").forEach(tr => {
-      tr.addEventListener("click", () => openEditForm(Number(tr.dataset.id)));
+async function loadEvents(){
+  var r = await api("/api/events");
+  if(r.ok) store.events = r.body.events;
+  else setNotice("Could not load the calendar (" + r.status + ").");
+  renderAll();
+}
+async function loadBookerLookups(){
+  if(!canBook()) return;
+  var [v, ro, pe, ar] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"), api("/api/artists")]);
+  if(v.ok) store.venues = v.body.venues;
+  if(ro.ok) store.roles = ro.body.roles;
+  if(pe.ok) store.people = pe.body.people;
+  if(ar.ok) store.artists = ar.body.artists;
+}
+
+/* ============================== dom helpers ========================== */
+function el(tag, cls, text){
+  var n = document.createElement(tag);
+  if(cls) n.className = cls;
+  if(text != null) n.textContent = text;
+  return n;
+}
+
+/* ============================== top-level render ===================== */
+function renderAll(){
+  renderVenueChips();
+  renderLegend();
+  renderBanner();
+  document.getElementById("monthLabel").textContent = MONTHS[ui.cursor.m] + " " + ui.cursor.y;
+  document.getElementById("monthnav").style.display = (ui.view === "calendar") ? "flex" : "none";
+
+  var all = visibleEvents();
+  var thisMonth = all.filter(function(ev){
+    var p = parts(ev.show_date); return p.y === ui.cursor.y && p.m === ui.cursor.m;
+  }).length;
+  document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + all.length + " total";
+
+  ["calendar","list","artists","staff","people"].forEach(function(v){
+    document.getElementById("view-" + v).hidden = (v !== ui.view);
+  });
+  if(ui.view === "calendar") renderCalendar();
+  if(ui.view === "list") renderListView();
+  if(ui.view === "artists") renderArtistsView();
+  if(ui.view === "staff") renderStaffView();
+  if(ui.view === "people") renderPeopleTable();
+}
+
+function renderVenueChips(){
+  var box = document.getElementById("venueChips");
+  box.innerHTML = "";
+  var opts = [{v:"__all__", label:"All venues"}].concat(store.venues.map(function(v){ return {v:v.name, label:v.name}; }));
+  opts.forEach(function(o){
+    var b = el("button","chip",o.label);
+    b.setAttribute("aria-pressed", ui.venue === o.v ? "true" : "false");
+    b.onclick = function(){ ui.venue = o.v; renderAll(); };
+    box.appendChild(b);
+  });
+}
+function renderLegend(){
+  var box = document.getElementById("legend");
+  box.innerHTML = "";
+  STATUS_ORDER.concat(["unsettled"]).forEach(function(k){
+    var item = el("span","legend-item");
+    var sw = el("span","swatch");
+    sw.style.background = STATUS[k].swatch;
+    if(k === "hold3"){ sw.style.background = "transparent"; sw.style.border = "1px dashed var(--line-strong)"; }
+    if(k === "unsettled") sw.style.border = "1px solid var(--hold-1-bg)";
+    item.appendChild(sw); item.appendChild(document.createTextNode(STATUS[k].label));
+    box.appendChild(item);
+  });
+}
+function renderBanner(){
+  var slot = document.getElementById("bannerSlot");
+  slot.innerHTML = "";
+  var open = visibleEvents().filter(isUnsettled);
+  if(open.length){
+    var w = el("div","banner warn");
+    w.appendChild(el("strong", null, open.length + " show" + (open.length===1?"":"s") + " need" + (open.length===1?"s":"") + " settling"));
+    w.appendChild(document.createTextNode("They're past and still marked confirmed — nobody closed them out."));
+    var go = el("button","btn","Show me");
+    go.onclick = function(){ ui.view = "list"; setActiveTab(); renderAll();
+      requestAnimationFrame(function(){ var r = document.querySelector("#view-list tr.unsettled-row"); if(r) r.scrollIntoView({block:"center"}); }); };
+    w.appendChild(go);
+    slot.appendChild(w);
+  }
+}
+function setActiveTab(){
+  document.querySelectorAll("#navTabs button").forEach(function(b){
+    b.setAttribute("aria-selected", b.dataset.view === ui.view ? "true" : "false");
+  });
+}
+
+/* ============================== calendar ============================= */
+function showChip(ev){
+  var b = el("button","show " + st(ev).cls);
+  b.appendChild(el("span","name", showName(ev)));
+  var bits = [];
+  if(ev.doors) bits.push(time12(ev.doors));
+  if(ui.venue === "__all__") bits.push(ev.venue);
+  b.appendChild(el("span","meta", bits.join(" · ")));
+  b.title = showName(ev) + " — " + st(ev).label + " — " + ev.venue;
+  b.onclick = function(){ openEvent(ev.id); };
+  return b;
+}
+
+function renderCalendar(){
+  var byDate = {};
+  visibleEvents().forEach(function(ev){ (byDate[ev.show_date] = byDate[ev.show_date] || []).push(ev); });
+
+  var y = ui.cursor.y, m = ui.cursor.m;
+  var first = new Date(y, m, 1);
+  var lead = first.getDay();
+  var daysInMonth = new Date(y, m + 1, 0).getDate();
+  var prevDays = new Date(y, m, 0).getDate();
+  var today = todayISO();
+  var grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  var totalCells = Math.ceil((lead + daysInMonth) / 7) * 7;
+  var phone = isPhone();
+
+  for(var i = 0; i < totalCells; i++){
+    var dayNum, cy = y, cm = m, out = false;
+    if(i < lead){ dayNum = prevDays - lead + 1 + i; cm = m - 1; out = true; }
+    else if(i >= lead + daysInMonth){ dayNum = i - lead - daysInMonth + 1; cm = m + 1; out = true; }
+    else dayNum = i - lead + 1;
+    if(cm < 0){ cm = 11; cy = y - 1; }
+    if(cm > 11){ cm = 0; cy = y + 1; }
+    var ds = iso(cy, cm, dayNum);
+    var list = byDate[ds] || [];
+    grid.appendChild(phone ? phoneCell(ds, dayNum, list, out, ds === today) : deskCell(ds, dayNum, list, out, ds === today));
+  }
+}
+function deskCell(ds, dayNum, list, out, isToday){
+  var cell = el("div","cell" + (out ? " out" : "") + (isToday ? " today" : ""));
+  var head = el("div","cell-head");
+  head.appendChild(el("span","daynum", String(dayNum)));
+  if(canBook()){
+    var add = el("button","addday","+");
+    add.setAttribute("aria-label","Book a show on " + shortDate(ds));
+    add.onclick = function(e){ e.stopPropagation(); openEvent(null, ds); };
+    head.appendChild(add);
+  }
+  cell.appendChild(head);
+  list.forEach(function(ev){ cell.appendChild(showChip(ev)); });
+  return cell;
+}
+function phoneCell(ds, dayNum, list, out, isToday){
+  var b = el("button","cell-btn" + (out ? " out" : "") + (isToday ? " today" : "") + (list.length ? "" : " free"));
+  b.appendChild(el("span","daynum", String(dayNum)));
+  var dots = el("div","dots");
+  list.slice(0,4).forEach(function(ev){
+    var d = el("span","dot"); var s = st(ev);
+    if(ev.status === "hold3"){ d.style.border = "1px solid var(--line-strong)"; } else { d.style.background = s.swatch; }
+    if(isUnsettled(ev)) d.style.border = "1px solid var(--hold-1-bg)";
+    dots.appendChild(d);
+  });
+  if(list.length > 4) dots.appendChild(el("span","dot-more","+" + (list.length - 4)));
+  b.appendChild(dots);
+  b.setAttribute("aria-label", shortDate(ds) + " — " + (list.length ? list.length + " booked" : "open"));
+  b.onclick = function(){ openDay(ds, list); };
+  return b;
+}
+function openDay(ds, list){
+  var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
+  document.getElementById("sheetTitle").textContent = shortDate(ds);
+  body.innerHTML = ""; foot.innerHTML = "";
+  if(!list.length){
+    var e = el("div","empty");
+    e.appendChild(el("h3",null,"Open"));
+    e.appendChild(el("p",null,"Nothing on this date" + (ui.venue === "__all__" ? " at any venue." : " at " + ui.venue + ".")));
+    body.appendChild(e);
+  } else {
+    var wrap = el("div","daylist");
+    list.forEach(function(ev){
+      var card = el("button","show " + st(ev).cls);
+      card.style.padding = "9px 10px";
+      card.appendChild(el("span","name", showName(ev)));
+      var bits = [ev.venue, st(ev).label];
+      if(ev.doors) bits.push("doors " + time12(ev.doors));
+      card.appendChild(el("span","meta", bits.join(" · ")));
+      if(ev.support) card.appendChild(el("span","meta", ev.support));
+      card.onclick = function(){ openEvent(ev.id); };
+      wrap.appendChild(card);
     });
+    body.appendChild(wrap);
   }
+  if(canBook()){
+    var add = el("button","btn btn-primary", list.length ? "Add another show" : "Book this date");
+    add.onclick = function(){ openEvent(null, ds); };
+    foot.appendChild(add);
+  }
+  var close = el("button","btn","Close");
+  close.onclick = closeSheet;
+  foot.appendChild(close);
+  openScrim();
 }
 
-async function loadBookingForm() {
-  const [venues, artists, roles, people] = await Promise.all(
-    [api("/api/venues"), api("/api/artists"), api("/api/roles"), api("/api/people")]);
-  if (venues.ok) {
-    document.getElementById("bookVenue").innerHTML =
-      venues.body.venues.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
-  }
-  if (artists.ok) {
-    document.getElementById("artistNames").innerHTML =
-      artists.body.artists.map(a => `<option value="${a.name}">`).join("");
-  }
-  if (roles.ok) {
-    allRoles = roles.body.roles;
-    document.getElementById("staffRole").innerHTML =
-      allRoles.map(r => `<option value="${r.id}">${r.name}</option>`).join("");
-  }
-  if (people.ok) {
-    lastPeople = people.body.people;
-    const active = lastPeople.filter(p => p.active);
-    document.getElementById("staffPerson").innerHTML =
-      active.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
-  }
-}
+/* ============================== list view ============================= */
+function statusPill(ev){ return el("span","pill " + st(ev).cls, st(ev).label); }
 
-function renderPeopleTable() {
-  const host = document.getElementById("peopleHost");
-  if (!lastPeople.length) {
-    host.innerHTML = `<div id="empty">No one on the roster yet.</div>`;
+function renderListView(){
+  var host = document.getElementById("view-list");
+  host.innerHTML = "";
+  var rows = visibleEvents();
+  if(!rows.length){
+    var e = el("div","empty");
+    e.appendChild(el("h3",null,"No shows yet"));
+    e.appendChild(el("p",null, canBook() ? "Book one from the calendar, or hit “Book a show”." : "Nothing confirmed yet."));
+    host.appendChild(e);
     return;
   }
-  const rows = lastPeople.map(p => `
-    <tr data-id="${p.id}" style="cursor:pointer${p.active ? "" : ";opacity:.55"}">
-      <td><strong>${p.name}</strong>${p.active ? "" : " · inactive"}</td>
-      <td>${p.email}</td>
-      <td>${p.phone || ""}</td>
-      <td><span class="pill ${p.access_level === "crew" ? "pill-muted" : ""}">${p.access_level}</span></td>
-      <td>${p.roles.map(r => r.name).join(", ")}</td>
-    </tr>`).join("");
-  host.innerHTML =
-    `<table><thead><tr><th>Name</th><th>Email</th><th>Phone</th><th>Access</th><th>Covers</th></tr></thead>
-     <tbody>${rows}</tbody></table>`;
-  host.querySelectorAll("tr[data-id]").forEach(tr => {
-    tr.addEventListener("click", () => openPersonForm(Number(tr.dataset.id)));
-  });
-}
+  var wrap = el("div","tablewrap");
+  var t = document.createElement("table");
+  var thead = document.createElement("thead"), hr = document.createElement("tr");
+  var cols = ["Date","Venue","Show","Status","Doors"];
+  if(canBook()) cols = cols.concat(["Tickets","Announce","On sale","Deal","Tasks"]);
+  cols.forEach(function(h){ var th = el("th",null,h); if(h === "Deal") th.className = "num"; hr.appendChild(th); });
+  thead.appendChild(hr); t.appendChild(thead);
+  var tb = document.createElement("tbody");
 
-function renderRoleCheckboxes(checkedIds) {
-  const host = document.getElementById("pRoles");
-  host.innerHTML = allRoles.map(r => `
-    <label class="roleChip">
-      <input type="checkbox" value="${r.id}" ${checkedIds.includes(r.id) ? "checked" : ""}>
-      ${r.name}
-    </label>`).join("");
-}
+  rows.forEach(function(ev){
+    var tr = document.createElement("tr");
+    if(isUnsettled(ev)) tr.className = "unsettled-row";
+    tr.onclick = function(){ openEvent(ev.id); };
+    tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
+    tr.appendChild(el("td",null, ev.venue));
+    var td = el("td","title-cell");
+    td.appendChild(document.createTextNode(showName(ev)));
+    if(ev.support) td.appendChild(el("div","sub", ev.support));
+    tr.appendChild(td);
+    var stc = document.createElement("td"); stc.appendChild(statusPill(ev)); tr.appendChild(stc);
+    tr.appendChild(el("td","date-col", time12(ev.doors)));
 
-function openPersonForm(personId) {
-  const p = personId ? lastPeople.find(x => x.id === personId) : null;
-  editingPersonId = personId || null;
-  const outranked = p && myAccessLevel !== "owner" && p.access_level !== "crew";
-
-  document.getElementById("pName").value = p ? p.name : "";
-  document.getElementById("pEmail").value = p ? p.email : "";
-  document.getElementById("pEmail").disabled = !!p;  // email isn't editable once created
-  document.getElementById("pPhone").value = (p && p.phone) || "";
-  document.getElementById("pActive").checked = p ? p.active : true;
-
-  const accessSelect = document.getElementById("pAccess");
-  accessSelect.value = p ? p.access_level : "crew";
-  // A booker may only grant/see 'crew' as an option, never elevate anyone.
-  [...accessSelect.options].forEach(o => {
-    o.disabled = myAccessLevel !== "owner" && o.value !== "crew";
-  });
-  accessSelect.disabled = outranked;
-
-  renderRoleCheckboxes(p ? p.roles.map(r => r.id) : []);
-  document.getElementById("pResetBtn").style.display = p ? "inline-block" : "none";
-  document.getElementById("pTempPassword").style.display = "none";
-  document.getElementById("pError").textContent = outranked
-    ? "You don't have permission to edit this person." : "";
-  document.getElementById("pName").disabled = !!outranked;
-  document.getElementById("pPhone").disabled = !!outranked;
-  document.getElementById("pActive").disabled = !!outranked;
-  document.getElementById("pSaveBtn").style.display = outranked ? "none" : "inline-block";
-
-  document.getElementById("personForm").style.display = "block";
-}
-
-function renderStaffList() {
-  const e = lastEvents.find(x => x.id === editingId);
-  const staff = (e && e.staff) || [];
-  const host = document.getElementById("staffList");
-  host.innerHTML = staff.length
-    ? staff.map(s => `
-        <div class="staffRow">
-          <span class="role">${s.role}</span>
-          <span>${s.person_name || "(removed person)"}</span>
-          <button type="button" data-remove="${s.id}">Remove</button>
-        </div>`).join("")
-    : `<div style="color:var(--ink-3);font-size:13px">Nobody assigned yet.</div>`;
-  host.querySelectorAll("button[data-remove]").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      await api(`/api/assignments/${btn.dataset.remove}`, {method: "DELETE"});
-      await loadEvents();
-      renderStaffList();
-    });
-  });
-}
-
-function openEditForm(eventId) {
-  const e = lastEvents.find(x => x.id === eventId);
-  if (!e || e.version == null) return;  // crew's shape has no version; also just a safety guard
-  editingId = e.id;
-  editingVersion = e.version;
-  document.getElementById("bookVenue").value = e.venue_id;
-  document.getElementById("bookBand").value = e.headliner;
-  document.getElementById("bookDate").value = e.show_date;
-  document.getElementById("bookStatus").innerHTML = `
-    <option value="hold1">1st hold</option>
-    <option value="hold2">2nd hold</option>
-    <option value="hold3">3rd hold</option>
-    <option value="confirmed">Confirmed</option>
-    <option value="complete">Complete</option>
-    <option value="dead">Didn't work out</option>`;
-  document.getElementById("bookStatus").value = e.status;
-  document.getElementById("bookSubmit").textContent = "Save changes";
-  document.getElementById("bookError").textContent = "";
-  document.getElementById("bookForm").style.display = "block";
-  document.getElementById("staffPanel").style.display = "block";
-  renderStaffList();
-
-  const showSettlement = e.status === "complete";
-  document.getElementById("settlementPanel").style.display = showSettlement ? "block" : "none";
-  if (showSettlement) {
-    const s = e.settlement || {};
-    document.getElementById("setTickets").value = s.tickets_sold ?? "";
-    document.getElementById("setGross").value = s.gross ?? "";
-    document.getElementById("setExpenses").value = s.expenses ?? "";
-    document.getElementById("setPayout").value = s.artist_payout ?? "";
-    document.getElementById("setSettled").checked = !!s.settled;
-    document.getElementById("setError").textContent = "";
-    updateNetDisplay();
-  }
-}
-
-function updateNetDisplay() {
-  const num = (id) => {
-    const v = document.getElementById(id).value;
-    return v === "" ? null : Number(v);
-  };
-  const gross = num("setGross"), expenses = num("setExpenses"), payout = num("setPayout");
-  const net = document.getElementById("setNet");
-  if (gross === null && expenses === null && payout === null) {
-    net.textContent = "";
-    return;
-  }
-  const total = (gross || 0) - (expenses || 0) - (payout || 0);
-  net.textContent = `Net to the room: $${total.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (gross − expenses − artist payout)`;
-}
-
-function switchView(view) {
-  currentView = view;
-  document.getElementById("calendarView").style.display = view === "calendar" ? "block" : "none";
-  document.getElementById("peopleView").style.display = view === "people" ? "block" : "none";
-  document.querySelectorAll(".navBtn").forEach(b => {
-    b.setAttribute("aria-selected", b.dataset.view === view ? "true" : "false");
-  });
-  if (view === "people") renderPeopleTable();
-}
-
-async function boot() {
-  const me = await api("/api/me");
-  if (me.ok) {
-    document.getElementById("whoami").textContent = `${me.body.name} · ${me.body.access_level}`;
-    myAccessLevel = me.body.access_level;
-    canBook = myAccessLevel === "booker" || myAccessLevel === "owner";
-    document.getElementById("bookBtn").style.display = canBook ? "inline-block" : "none";
-    document.getElementById("navTabs").style.display = canBook ? "flex" : "none";
-    document.getElementById("addPersonBtn").style.display = canBook ? "inline-block" : "none";
-    if (canBook) loadBookingForm();
-    showApp();
-    switchView("calendar");
-    loadEvents();
-  } else {
-    showLogin();
-  }
-}
-
-document.getElementById("loginForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const email = document.getElementById("email").value;
-  const password = document.getElementById("password").value;
-  const {ok, body} = await api("/api/login", {method: "POST", body: JSON.stringify({email, password})});
-  if (ok) { boot(); }
-  else { document.getElementById("loginError").textContent = "Wrong email or password."; }
-});
-
-document.getElementById("logoutBtn").addEventListener("click", async () => {
-  await api("/api/logout", {method: "POST"});
-  showLogin();
-});
-
-document.getElementById("bookBtn").addEventListener("click", () => {
-  editingId = null;
-  editingVersion = null;
-  document.getElementById("bookForm").reset();
-  document.getElementById("bookStatus").innerHTML = `
-    <option value="hold1">1st hold</option>
-    <option value="hold2">2nd hold</option>
-    <option value="hold3">3rd hold</option>
-    <option value="confirmed">Confirmed</option>`;
-  document.getElementById("bookSubmit").textContent = "Book it";
-  document.getElementById("bookError").textContent = "";
-  document.getElementById("bookForm").style.display = "block";
-  document.getElementById("bookDate").valueAsDate = new Date();
-  document.getElementById("staffPanel").style.display = "none";  // no event_id yet to assign against
-  document.getElementById("settlementPanel").style.display = "none";
-});
-
-document.getElementById("staffAddBtn").addEventListener("click", async () => {
-  if (!editingId) return;
-  const role_id = Number(document.getElementById("staffRole").value);
-  const person_id = Number(document.getElementById("staffPerson").value);
-  if (!role_id || !person_id) return;
-  const {ok, body} = await api(`/api/events/${editingId}/assignments`, {
-    method: "POST", body: JSON.stringify({role_id, person_id}),
-  });
-  if (ok) {
-    await loadEvents();
-    renderStaffList();
-  } else {
-    document.getElementById("bookError").textContent = body.error || "Could not assign that person.";
-  }
-});
-document.getElementById("bookStatus").addEventListener("change", () => {
-  if (!editingId) return;  // a brand-new unsaved show has nothing to settle yet
-  const showSettlement = document.getElementById("bookStatus").value === "complete";
-  document.getElementById("settlementPanel").style.display = showSettlement ? "block" : "none";
-  if (showSettlement) updateNetDisplay();
-});
-
-["setGross", "setExpenses", "setPayout"].forEach(id => {
-  document.getElementById(id).addEventListener("input", updateNetDisplay);
-});
-
-document.getElementById("setSaveBtn").addEventListener("click", async () => {
-  if (!editingId) return;
-  const payload = {
-    tickets_sold: document.getElementById("setTickets").value,
-    gross: document.getElementById("setGross").value,
-    expenses: document.getElementById("setExpenses").value,
-    artist_payout: document.getElementById("setPayout").value,
-    settled: document.getElementById("setSettled").checked,
-  };
-  const {ok, body} = await api(`/api/events/${editingId}/settlement`, {method: "PUT", body: JSON.stringify(payload)});
-  if (ok) {
-    document.getElementById("setError").textContent = "";
-    await loadEvents();
-  } else {
-    document.getElementById("setError").textContent = body.error || "Could not save the finals.";
-  }
-});
-
-document.getElementById("bookCancel").addEventListener("click", () => {
-  document.getElementById("bookForm").style.display = "none";
-  document.getElementById("staffPanel").style.display = "none";
-  document.getElementById("bookError").textContent = "";
-});
-document.getElementById("bookForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const payload = {
-    venue_id: Number(document.getElementById("bookVenue").value),
-    headliner: document.getElementById("bookBand").value,
-    show_date: document.getElementById("bookDate").value,
-    status: document.getElementById("bookStatus").value,
-  };
-  let ok, body;
-  if (editingId) {
-    payload.version = editingVersion;
-    ({ok, body} = await api(`/api/events/${editingId}`, {method: "PATCH", body: JSON.stringify(payload)}));
-  } else {
-    ({ok, body} = await api("/api/events", {method: "POST", body: JSON.stringify(payload)}));
-  }
-  if (ok) {
-    document.getElementById("bookForm").style.display = "none";
-    document.getElementById("staffPanel").style.display = "none";
-    document.getElementById("settlementPanel").style.display = "none";
-    document.getElementById("bookForm").reset();
-    document.getElementById("bookError").textContent = "";
-    editingId = null;
-    editingVersion = null;
-    loadEvents();
-    loadBookingForm();  // a new band should now appear in the artist datalist
-  } else if (body.error === "version_conflict") {
-    document.getElementById("bookError").textContent =
-      "Someone else changed this show while you had it open. Reload and try again.";
-  } else {
-    document.getElementById("bookError").textContent = body.error || "Could not save that show.";
-  }
-});
-
-document.querySelectorAll(".navBtn").forEach(b => {
-  b.addEventListener("click", () => switchView(b.dataset.view));
-});
-
-document.getElementById("addPersonBtn").addEventListener("click", () => openPersonForm(null));
-
-document.getElementById("pCancelBtn").addEventListener("click", () => {
-  document.getElementById("personForm").style.display = "none";
-  editingPersonId = null;
-});
-
-document.getElementById("pSaveBtn").addEventListener("click", async () => {
-  const roleIds = [...document.querySelectorAll("#pRoles input:checked")].map(i => Number(i.value));
-  document.getElementById("pError").textContent = "";
-
-  if (editingPersonId) {
-    const payload = {
-      name: document.getElementById("pName").value,
-      phone: document.getElementById("pPhone").value,
-      active: document.getElementById("pActive").checked,
-      access_level: document.getElementById("pAccess").value,
-    };
-    const {ok, body} = await api(`/api/people/${editingPersonId}`, {method: "PATCH", body: JSON.stringify(payload)});
-    if (!ok) { document.getElementById("pError").textContent = body.error || "Could not save."; return; }
-    await api(`/api/people/${editingPersonId}/roles`, {method: "PUT", body: JSON.stringify({role_ids: roleIds})});
-  } else {
-    const payload = {
-      name: document.getElementById("pName").value,
-      email: document.getElementById("pEmail").value,
-      phone: document.getElementById("pPhone").value,
-      access_level: document.getElementById("pAccess").value,
-    };
-    const {ok, body} = await api("/api/people", {method: "POST", body: JSON.stringify(payload)});
-    if (!ok) { document.getElementById("pError").textContent = body.error || "Could not create."; return; }
-    editingPersonId = body.id;
-    if (roleIds.length) {
-      await api(`/api/people/${editingPersonId}/roles`, {method: "PUT", body: JSON.stringify({role_ids: roleIds})});
+    if(canBook()){
+      var tiers = (ev.ticket_tiers||[]).filter(function(x){ return x.price !== "" && x.price != null; });
+      tr.appendChild(el("td","date-col", tiers.map(function(x){ return money(x.price); }).join(" / ")));
+      tr.appendChild(el("td","date-col", ev.announce_date ? shortDate(ev.announce_date) : "—"));
+      tr.appendChild(el("td","date-col", ev.onsale_date ? shortDate(ev.onsale_date) : "—"));
+      tr.appendChild(el("td","num", dealSummary(ev)));
+      var pr = taskProgress(ev);
+      var ttd = document.createElement("td");
+      var bar = el("div","taskbar"), track = el("div","taskbar-track"), fill = el("div","taskbar-fill");
+      fill.style.width = (pr.total ? Math.round(pr.done/pr.total*100) : 0) + "%";
+      track.appendChild(fill); bar.appendChild(track);
+      bar.appendChild(el("span","taskbar-num", pr.done + "/" + pr.total));
+      ttd.appendChild(bar); tr.appendChild(ttd);
     }
-    const box = document.getElementById("pTempPassword");
-    box.style.display = "block";
-    box.textContent = `Temp password: ${body.temp_password} — give this to them, they should change it after logging in.`;
-  }
-  await loadBookingForm();  // refreshes lastPeople and the staff-assign picker
-  renderPeopleTable();
-  if (!editingPersonId || document.getElementById("pTempPassword").style.display === "none") {
-    document.getElementById("personForm").style.display = "none";
-  }
-});
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
 
-document.getElementById("pResetBtn").addEventListener("click", async () => {
-  if (!editingPersonId) return;
-  const {ok, body} = await api(`/api/people/${editingPersonId}/reset-password`, {method: "POST"});
-  const box = document.getElementById("pTempPassword");
-  if (ok) {
-    box.style.display = "block";
-    box.textContent = `New temp password: ${body.temp_password} — give this to them, they should change it after logging in.`;
-  } else {
-    document.getElementById("pError").textContent = body.error || "Could not reset password.";
+  if(canBook()){
+    var done = rows.filter(function(e){ return e.status === "complete"; });
+    if(done.length){
+      host.appendChild(el("h3","section","Finals & payouts"));
+      var w2 = el("div","tablewrap"), t2 = document.createElement("table");
+      var h2 = document.createElement("thead"), hr2 = document.createElement("tr");
+      ["Date","Venue","Show","Tickets sold","Gross","Expenses","Artist payout","Net","Settled"].forEach(function(h){
+        var th = el("th",null,h);
+        if(["Tickets sold","Gross","Expenses","Artist payout","Net"].indexOf(h) >= 0) th.className = "num";
+        hr2.appendChild(th);
+      });
+      h2.appendChild(hr2); t2.appendChild(h2);
+      var tb2 = document.createElement("tbody");
+      done.forEach(function(ev){
+        var s = ev.settlement || {};
+        var net = (+s.gross||0) - (+s.expenses||0) - (+s.artist_payout||0);
+        var tr = document.createElement("tr");
+        tr.onclick = function(){ openEvent(ev.id); };
+        tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
+        tr.appendChild(el("td",null, ev.venue));
+        tr.appendChild(el("td","title-cell", showName(ev)));
+        tr.appendChild(el("td","num", (s.tickets_sold===""||s.tickets_sold==null) ? "—" : (+s.tickets_sold).toLocaleString("en-US")));
+        tr.appendChild(el("td","num", money(s.gross) || "—"));
+        tr.appendChild(el("td","num", money(s.expenses) || "—"));
+        tr.appendChild(el("td","num", money(s.artist_payout) || "—"));
+        tr.appendChild(el("td","num", (s.gross===""||s.gross==null) ? "—" : money(net)));
+        var stc2 = document.createElement("td");
+        stc2.appendChild(el("span","pill " + (s.settled ? "s-confirmed" : "s-hold2"), s.settled ? "Settled" : "Open"));
+        tr.appendChild(stc2);
+        tb2.appendChild(tr);
+      });
+      t2.appendChild(tb2); w2.appendChild(t2); host.appendChild(w2);
+    }
   }
+}
+
+/* ============================== artists view =========================== */
+function renderArtistsView(){
+  var host = document.getElementById("view-artists");
+  host.innerHTML = "";
+  if(!store.artists.length){
+    var e = el("div","empty");
+    e.appendChild(el("h3",null,"No artists yet"));
+    e.appendChild(el("p",null,"Book a show and the artist is created automatically from the headliner."));
+    host.appendChild(e);
+    return;
+  }
+  var wrap = el("div","tablewrap"), t = document.createElement("table");
+  var thead = document.createElement("thead"), hr = document.createElement("tr");
+  ["Artist","Tier","From","Shows","Played","Total paid","Last played"].forEach(function(h){
+    var th = el("th",null,h);
+    if(["Shows","Played","Total paid"].indexOf(h) >= 0) th.className = "num";
+    hr.appendChild(th);
+  });
+  thead.appendChild(hr); t.appendChild(thead);
+  var tb = document.createElement("tbody");
+  store.artists.slice().sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); }).forEach(function(a){
+    var tot = artistTotals(a.name);
+    var tr = document.createElement("tr");
+    tr.onclick = function(){ var d = new Date(); openEvent(null, iso(d.getFullYear(),d.getMonth(),d.getDate())); document.getElementById("bookBand").value = a.name; };
+    tr.appendChild(el("td","title-cell", a.name));
+    var tierTd = document.createElement("td");
+    if(a.tier) tierTd.appendChild(el("span","pill s-complete", a.tier)); else { tierTd.className="sub"; tierTd.textContent="—"; }
+    tr.appendChild(tierTd);
+    tr.appendChild(el("td", a.location ? null : "sub", a.location || "—"));
+    tr.appendChild(el("td","num", tot.count ? String(tot.count) : "—"));
+    tr.appendChild(el("td","num", tot.played ? String(tot.played) : "—"));
+    tr.appendChild(el("td","num", tot.paid ? money(tot.paid) : "—"));
+    tr.appendChild(el("td","date-col", tot.last ? shortDate(tot.last) : "—"));
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
+  host.appendChild(el("p","notice", store.artists.length + " artists. Click one to start booking them. Full artist profiles (agent, management, socials) aren't built yet."));
+}
+
+/* ============================== staff view ============================= */
+function contactCell(value, scheme, cls){
+  var td = document.createElement("td");
+  if(!value){ td.className = "sub"; td.textContent = "—"; return td; }
+  if(cls) td.className = cls;
+  var a = document.createElement("a");
+  a.href = scheme + value; a.textContent = value; a.style.color = "var(--accent)";
+  a.onclick = function(e){ e.stopPropagation(); };
+  td.appendChild(a);
+  return td;
+}
+function renderStaffView(){
+  var host = document.getElementById("view-staff");
+  host.innerHTML = "";
+  var today = todayISO();
+  var rows = visibleEvents().filter(function(ev){ return ev.show_date >= today && ev.status !== "dead"; });
+
+  host.appendChild(el("h3","section","Who's working — upcoming"));
+  if(!rows.length){
+    var e = el("div","empty");
+    e.appendChild(el("h3",null,"Nothing upcoming"));
+    e.appendChild(el("p",null,"Staff get assigned on each show, under “Who's working”."));
+    host.appendChild(e);
+  } else {
+    var wrap = el("div","tablewrap"), t = document.createElement("table");
+    var thead = document.createElement("thead"), hr = document.createElement("tr");
+    ["Date","Venue","Show","Doors"].concat(store.roles.map(function(r){ return r.name; })).forEach(function(h){ hr.appendChild(el("th",null,h)); });
+    thead.appendChild(hr); t.appendChild(thead);
+    var tb = document.createElement("tbody");
+    var unfilled = 0;
+    rows.forEach(function(ev){
+      var tr = document.createElement("tr");
+      tr.onclick = function(){ openEvent(ev.id); };
+      tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
+      tr.appendChild(el("td",null, ev.venue));
+      tr.appendChild(el("td","title-cell", showName(ev)));
+      tr.appendChild(el("td","date-col", time12(ev.doors)));
+      store.roles.forEach(function(role){
+        var who = (ev.staff||[]).filter(function(s){ return s.role === role.name; }).map(staffLabel).filter(function(n){ return n; });
+        if(!who.length) unfilled++;
+        tr.appendChild(el("td", who.length ? null : "sub", who.join(", ") || "—"));
+      });
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
+    host.appendChild(el("p","notice", unfilled
+      ? unfilled + " role" + (unfilled===1?"":"s") + " unfilled across " + rows.length + " upcoming show" + (rows.length===1?"":"s") + ". Click a row to assign."
+      : "Every role is covered on all " + rows.length + " upcoming shows."));
+  }
+  host.appendChild(el("p","notice","This is assignment — who's covering each show. Hours, availability and time off would be a separate build."));
+
+  if(store.people.length){
+    host.appendChild(el("h3","section","The roster"));
+    var w2 = el("div","tablewrap"), t2 = document.createElement("table");
+    t2.style.minWidth = "760px";
+    var h2 = document.createElement("thead"), hr2 = document.createElement("tr");
+    ["Name","Phone","Email","Covers"].forEach(function(h){ hr2.appendChild(el("th",null,h)); });
+    h2.appendChild(hr2); t2.appendChild(h2);
+    var tb2 = document.createElement("tbody");
+    store.people.filter(function(p){ return p.active; }).forEach(function(p){
+      var tr = document.createElement("tr");
+      tr.onclick = function(){ ui.view = "people"; setActiveTab(); renderAll(); };
+      tr.appendChild(el("td","title-cell", p.name || "Unnamed"));
+      tr.appendChild(contactCell(p.phone, "tel:", "date-col"));
+      tr.appendChild(contactCell(p.email, "mailto:", null));
+      var rolesTd = document.createElement("td");
+      if((p.roles||[]).length){ p.roles.forEach(function(r){ rolesTd.appendChild(el("span","pill s-complete", r.name)); rolesTd.appendChild(document.createTextNode(" ")); }); }
+      else { rolesTd.className = "sub"; rolesTd.textContent = "no roles yet"; }
+      tr.appendChild(rolesTd);
+      tb2.appendChild(tr);
+    });
+    t2.appendChild(tb2); w2.appendChild(t2); host.appendChild(w2);
+  }
+}
+
+/* ============================== the editor ============================= */
+var draft = null, draftIsNew = false;
+
+function field(label, node){
+  var f = el("div","field");
+  var l = el("label", null, label);
+  node.id = node.id || "f_" + label.toLowerCase().replace(/[^a-z0-9]+/g,"_") + "_" + Math.random().toString(36).slice(2,6);
+  l.setAttribute("for", node.id);
+  f.appendChild(l); f.appendChild(node);
+  return f;
+}
+function input(type, value, onInput){
+  var i = document.createElement("input");
+  i.type = type; i.value = (value == null ? "" : value);
+  i.oninput = function(){ onInput(i.value); };
+  return i;
+}
+function selectKV(options, value, onChange){
+  var s = document.createElement("select");
+  options.forEach(function(o){
+    var op = document.createElement("option");
+    op.value = o.value; op.textContent = o.label;
+    if(String(o.value) === String(value)) op.selected = true;
+    s.appendChild(op);
+  });
+  s.onchange = function(){ onChange(s.value); };
+  return s;
+}
+function select(options, value, onChange){ return selectKV(options.map(function(o){ return {value:o,label:o}; }), value, onChange); }
+
+function openEvent(id, dateHint){
+  if(id){
+    var ev = eventById(id);
+    draft = JSON.parse(JSON.stringify(ev));
+    draftIsNew = false;
+  } else {
+    draft = {
+      id:null, venue_id: store.venues[0] ? store.venues[0].id : null, venue: store.venues[0] ? store.venues[0].name : "",
+      headliner:"", support:"", status:"hold1", show_date: dateHint || todayISO(), doors:"19:00", show_time:"20:00",
+      deal_type:NO_DEAL, guarantee:"", backend_pct:"", deal_notes:"",
+      ticket_tiers:[{label:"Advance",price:""},{label:"Day of show",price:""}],
+      announce_date:"", onsale_date:"", notes:"",
+      tasks:[], staff:[], settlement:{tickets_sold:"",gross:"",expenses:"",artist_payout:"",settled:false,notes:""}
+    };
+    draftIsNew = true;
+  }
+  renderSheet();
+  openScrim();
+}
+function openScrim(){ document.getElementById("scrim").hidden = false; document.body.style.overflow = "hidden"; }
+function closeSheet(){ document.getElementById("scrim").hidden = true; document.body.style.overflow = ""; draft = null; }
+
+function renderSheet(){
+  var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
+  body.innerHTML = ""; foot.innerHTML = "";
+  document.getElementById("sheetTitle").textContent = draftIsNew ? "Book a show" : showName(draft);
+
+  var fs1 = document.createElement("fieldset");
+  fs1.appendChild(el("legend",null,"The date"));
+  var r1 = el("div","row-3");
+  r1.appendChild(field("Date", input("date", draft.show_date, function(v){ draft.show_date = v; })));
+  r1.appendChild(field("Doors", input("time", draft.doors, function(v){ draft.doors = v; })));
+  r1.appendChild(field("Show time", input("time", draft.show_time, function(v){ draft.show_time = v; })));
+  fs1.appendChild(r1);
+  var r1b = el("div","row");
+  r1b.appendChild(field("Venue", selectKV(store.venues.map(function(v){ return {value:v.id, label:v.name}; }), draft.venue_id,
+    function(v){ draft.venue_id = Number(v); })));
+  r1b.appendChild(field("Support", input("text", draft.support, function(v){ draft.support = v; })));
+  fs1.appendChild(r1b);
+
+  var dl = document.createElement("datalist");
+  dl.id = "artistNames";
+  store.artists.forEach(function(a){
+    var op = document.createElement("option");
+    op.value = a.name;
+    if(a.location || a.tier) op.label = [a.tier, a.location].filter(function(x){ return x; }).join(" · ");
+    dl.appendChild(op);
+  });
+  body.appendChild(dl);
+
+  var hlInput = input("text", draft.headliner, function(v){ draft.headliner = v; paintArtistLink(); });
+  hlInput.id = "bookBand";
+  hlInput.setAttribute("list","artistNames"); hlInput.setAttribute("autocomplete","off");
+  hlInput.placeholder = "Start typing — known artists will offer themselves";
+  var hl = field("Headliner", hlInput);
+  hl.style.marginTop = "10px";
+  var linkNote = el("p","hint");
+  hl.appendChild(linkNote);
+  fs1.appendChild(hl);
+  function paintArtistLink(){
+    var n = (draft.headliner||"").trim();
+    if(!n){ linkNote.textContent = ""; return; }
+    var match = store.artists.find(function(a){ return normName(a.name) === normName(n); });
+    if(match){
+      var tot = artistTotals(match.name);
+      linkNote.textContent = "✓ " + match.name + (match.tier?" · "+match.tier:"") + (match.location?" · "+match.location:"") +
+        (tot.count ? " · booked " + tot.count + "×" + (tot.paid ? ", " + money(tot.paid) + " paid" : "") : "");
+      linkNote.style.color = "var(--confirm)";
+    } else {
+      linkNote.textContent = "New artist — a record will be created when you save.";
+      linkNote.style.color = "var(--ink-3)";
+    }
+  }
+  paintArtistLink();
+  body.appendChild(fs1);
+
+  var fs2 = document.createElement("fieldset");
+  fs2.appendChild(el("legend",null,"Status"));
+  var sg = el("div","statusgrid");
+  STATUS_ORDER.forEach(function(k){
+    var b = el("button","statusopt " + STATUS[k].cls, STATUS[k].label);
+    b.type = "button";
+    b.setAttribute("aria-pressed", draft.status === k ? "true" : "false");
+    b.onclick = function(){ draft.status = k; renderSheet(); };
+    sg.appendChild(b);
+  });
+  fs2.appendChild(sg);
+  fs2.appendChild(el("p","hint","Holds are a priority ladder — 1st hold gets first refusal on the date."));
+  body.appendChild(fs2);
+
+  var fs3 = document.createElement("fieldset");
+  fs3.appendChild(el("legend",null,"Deal"));
+  var r3 = el("div","row-3");
+  r3.appendChild(field("Deal type", select(DEAL_TYPES, draft.deal_type, function(v){ draft.deal_type = v; })));
+  r3.appendChild(field("Guarantee", input("number", draft.guarantee, function(v){ draft.guarantee = v; })));
+  r3.appendChild(field("Backend %", input("number", draft.backend_pct, function(v){ draft.backend_pct = v; })));
+  fs3.appendChild(r3);
+  var dn = field("Deal notes", (function(){
+    var t = document.createElement("textarea");
+    t.value = draft.deal_notes || "";
+    t.oninput = function(){ draft.deal_notes = t.value; };
+    return t;
+  })());
+  dn.style.marginTop = "10px";
+  fs3.appendChild(dn);
+  body.appendChild(fs3);
+
+  var fs4 = document.createElement("fieldset");
+  fs4.appendChild(el("legend",null,"Tickets"));
+  (draft.ticket_tiers||[]).forEach(function(tier, idx){
+    var row = el("div","tierrow");
+    row.appendChild(input("text", tier.label, function(v){ draft.ticket_tiers[idx].label = v; }));
+    var p = input("number", tier.price, function(v){ draft.ticket_tiers[idx].price = v; });
+    p.placeholder = "Price";
+    row.appendChild(p);
+    var del = el("button","rowdel","✕");
+    del.type = "button";
+    del.onclick = function(){ draft.ticket_tiers.splice(idx,1); renderSheet(); };
+    row.appendChild(del);
+    fs4.appendChild(row);
+  });
+  var addTier = el("button","btn","+ Add a tier");
+  addTier.type = "button";
+  addTier.onclick = function(){ draft.ticket_tiers = draft.ticket_tiers || []; draft.ticket_tiers.push({label:"",price:""}); renderSheet(); };
+  fs4.appendChild(addTier);
+  var r4 = el("div","row"); r4.style.marginTop = "12px";
+  r4.appendChild(field("Announce", input("date", draft.announce_date, function(v){ draft.announce_date = v; })));
+  r4.appendChild(field("On sale", input("date", draft.onsale_date, function(v){ draft.onsale_date = v; })));
+  fs4.appendChild(r4);
+  body.appendChild(fs4);
+
+  if(!draftIsNew){
+    var fs5 = document.createElement("fieldset");
+    var pr = taskProgress(draft);
+    fs5.appendChild(el("legend",null,"Checklist — " + pr.done + " of " + pr.total + " done"));
+    var tl = el("div","tasklist");
+    (draft.tasks||[]).forEach(function(task){
+      var item = el("div","taskitem" + (task.done ? " done" : ""));
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = !!task.done; cb.id = "task_" + task.id;
+      cb.onchange = async function(){
+        await api("/api/tasks/" + task.id, {method:"PATCH", body: JSON.stringify({done: cb.checked})});
+        await refreshDraft();
+      };
+      item.appendChild(cb);
+      var lab = el("label","tlabel", task.label);
+      lab.setAttribute("for", cb.id);
+      item.appendChild(lab);
+      var del = el("button","rowdel","✕");
+      del.type = "button";
+      del.onclick = async function(){
+        await api("/api/tasks/" + task.id, {method:"DELETE"});
+        await refreshDraft();
+      };
+      item.appendChild(del);
+      tl.appendChild(item);
+    });
+    fs5.appendChild(tl);
+    var addTaskBtn = el("button","btn","+ Add a step");
+    addTaskBtn.type = "button";
+    addTaskBtn.onclick = async function(){
+      var label = window.prompt("New checklist step:");
+      if(!label) return;
+      await api("/api/events/" + draft.id + "/tasks", {method:"POST", body: JSON.stringify({label: label})});
+      await refreshDraft();
+    };
+    fs5.appendChild(addTaskBtn);
+    body.appendChild(fs5);
+  }
+
+  var fs6 = document.createElement("fieldset");
+  fs6.appendChild(el("legend",null,"Who's working"));
+  if(draftIsNew){
+    fs6.appendChild(el("p","hint","Book the show first, then assign staff on the next edit."));
+  } else {
+    (draft.staff||[]).forEach(function(s){
+      var row = el("div","stafrow");
+      row.appendChild(el("span",null, s.role));
+      row.appendChild(el("span",null, staffLabel(s) || "—"));
+      var del = el("button","rowdel","✕");
+      del.type = "button";
+      del.onclick = async function(){
+        await api("/api/assignments/" + s.id, {method:"DELETE"});
+        await refreshDraft();
+      };
+      row.appendChild(del);
+      fs6.appendChild(row);
+    });
+    var addRow = el("div","row");
+    var roleSel = selectKV(store.roles.map(function(r){ return {value:r.id, label:r.name}; }), null, function(){});
+    var personSel = selectKV(store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; }), null, function(){});
+    addRow.appendChild(field("Role", roleSel));
+    addRow.appendChild(field("Person", personSel));
+    fs6.appendChild(addRow);
+    var addStaffBtn = el("button","btn","+ Assign");
+    addStaffBtn.type = "button";
+    addStaffBtn.onclick = async function(){
+      var role_id = Number(roleSel.value), person_id = Number(personSel.value);
+      if(!role_id || !person_id) return;
+      await api("/api/events/" + draft.id + "/assignments", {method:"POST", body: JSON.stringify({role_id:role_id, person_id:person_id})});
+      await refreshDraft();
+    };
+    fs6.appendChild(addStaffBtn);
+    if(!store.people.length) fs6.appendChild(el("p","hint","No people on the roster yet — add them under “People”."));
+  }
+  body.appendChild(fs6);
+
+  if(draft.status === "complete" && !draftIsNew){
+    var fs7 = document.createElement("fieldset");
+    fs7.appendChild(el("legend",null,"Finals & payout"));
+    if(!draft.settlement) draft.settlement = {tickets_sold:"",gross:"",expenses:"",artist_payout:"",settled:false,notes:""};
+    var s = draft.settlement;
+    var r7 = el("div","row");
+    r7.appendChild(field("Tickets sold", input("number", s.tickets_sold, function(v){ s.tickets_sold = v; renderSheetNet(); })));
+    r7.appendChild(field("Gross", input("number", s.gross, function(v){ s.gross = v; renderSheetNet(); })));
+    fs7.appendChild(r7);
+    var r7b = el("div","row"); r7b.style.marginTop = "10px";
+    r7b.appendChild(field("Expenses", input("number", s.expenses, function(v){ s.expenses = v; renderSheetNet(); })));
+    r7b.appendChild(field("Artist payout", input("number", s.artist_payout, function(v){ s.artist_payout = v; renderSheetNet(); })));
+    fs7.appendChild(r7b);
+    var netLine = el("p","hint"); netLine.id = "netLine";
+    fs7.appendChild(netLine);
+    var settledWrap = el("div","taskitem");
+    var scb = document.createElement("input");
+    scb.type = "checkbox"; scb.id = "settledBox"; scb.checked = !!s.settled;
+    scb.onchange = function(){ s.settled = scb.checked; };
+    settledWrap.appendChild(scb);
+    var slab = el("label","tlabel","Settled and paid");
+    slab.setAttribute("for","settledBox");
+    settledWrap.appendChild(slab);
+    fs7.appendChild(settledWrap);
+    var saveSettle = el("button","btn","Save finals");
+    saveSettle.type = "button";
+    saveSettle.style.marginTop = "8px";
+    saveSettle.onclick = async function(){
+      var r = await api("/api/events/" + draft.id + "/settlement", {method:"PUT", body: JSON.stringify(s)});
+      if(r.ok){ await refreshDraft(); } else { window.alert(r.body.error || "Could not save finals."); }
+    };
+    fs7.appendChild(saveSettle);
+    body.appendChild(fs7);
+    renderSheetNet();
+  }
+
+  var fs8 = document.createElement("fieldset");
+  fs8.appendChild(el("legend",null,"Notes"));
+  var ta = document.createElement("textarea");
+  ta.value = draft.notes || "";
+  ta.oninput = function(){ draft.notes = ta.value; };
+  fs8.appendChild(ta);
+  body.appendChild(fs8);
+
+  var errLine = el("span","hint"); errLine.id = "sheetError"; errLine.style.color = "var(--dead)";
+  var save = el("button","btn btn-primary", draftIsNew ? "Book it" : "Save changes");
+  save.onclick = async function(){
+    errLine.textContent = "";
+    var payload = {
+      venue_id: draft.venue_id, headliner: draft.headliner, show_date: draft.show_date,
+      status: draft.status, support: draft.support, doors: draft.doors, show_time: draft.show_time,
+      deal_type: draft.deal_type, guarantee: draft.guarantee, backend_pct: draft.backend_pct,
+      deal_notes: draft.deal_notes, announce_date: draft.announce_date, onsale_date: draft.onsale_date,
+      notes: draft.notes,
+    };
+    var r;
+    if(draftIsNew){
+      r = await api("/api/events", {method:"POST", body: JSON.stringify(payload)});
+    } else {
+      payload.version = draft.version;
+      r = await api("/api/events/" + draft.id, {method:"PATCH", body: JSON.stringify(payload)});
+    }
+    if(!r.ok){
+      errLine.textContent = r.body.error === "version_conflict"
+        ? "Someone else changed this show while you had it open. Reload and try again."
+        : (r.body.error || "Could not save.");
+      return;
+    }
+    var eventId = draftIsNew ? r.body.id : draft.id;
+    var tiersToSave = (draft.ticket_tiers||[]).filter(function(t){ return (t.label||"").trim(); });
+    await api("/api/events/" + eventId + "/ticket_tiers", {method:"PUT", body: JSON.stringify({tiers: tiersToSave})});
+    closeSheet();
+    await loadEvents();
+    await loadBookerLookups();
+    renderAll();
+  };
+  foot.appendChild(save);
+  var cancel = el("button","btn","Cancel");
+  cancel.onclick = closeSheet;
+  foot.appendChild(cancel);
+  foot.appendChild(errLine);
+  foot.appendChild(el("div","spacer"));
+  if(!draftIsNew){
+    var del = el("button","btn btn-danger","Delete");
+    del.onclick = function(){
+      window.alert("Deleting a show isn't available yet — mark it “Didn't work out” instead.");
+    };
+    foot.appendChild(del);
+  }
+}
+function renderSheetNet(){
+  var line = document.getElementById("netLine");
+  if(!line || !draft) return;
+  var s = draft.settlement;
+  var net = (+s.gross||0) - (+s.expenses||0) - (+s.artist_payout||0);
+  line.textContent = "Net to the room: " + money(net) + "  (gross − expenses − artist payout)";
+}
+/* after a task/staff/settlement action, reload real data and re-open the
+   same show so the sheet reflects the server, not a locally-guessed state */
+/* Fields the user edits in-place and only persists on the main "Save"
+   click — a task/staff/settlement action must not silently wipe these
+   out from under them while they're mid-edit. */
+var UNSAVED_FIELDS = ["venue_id","headliner","support","show_date","doors","show_time",
+  "status","deal_type","guarantee","backend_pct","deal_notes","ticket_tiers",
+  "announce_date","onsale_date","notes"];
+
+async function refreshDraft(){
+  var id = draft.id;
+  var pending = {};
+  UNSAVED_FIELDS.forEach(function(k){ pending[k] = draft[k]; });
+  await loadEvents();
+  await loadBookerLookups();
+  var fresh = JSON.parse(JSON.stringify(eventById(id)));
+  draft = Object.assign(fresh, pending);  // tasks/staff/settlement/version come from the server; everything still-unsaved survives
+  renderSheet();
+}
+
+/* ============================== people & roles ========================= */
+function renderPeopleTable(){
+  var host = document.getElementById("peopleHost");
+  if(!store.people.length){ host.innerHTML = ""; host.appendChild(el("div","empty","No one on the roster yet.")); return; }
+  host.innerHTML = "";
+  var wrap = el("div","tablewrap"), t = document.createElement("table");
+  var thead = document.createElement("thead"), hr = document.createElement("tr");
+  ["Name","Email","Phone","Access","Covers"].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+  thead.appendChild(hr); t.appendChild(thead);
+  var tb = document.createElement("tbody");
+  store.people.forEach(function(p){
+    var tr = document.createElement("tr");
+    tr.style.opacity = p.active ? "1" : ".55";
+    tr.onclick = function(){ openPersonForm(p.id); };
+    var nameTd = el("td","title-cell", p.name || "Unnamed");
+    if(!p.active) nameTd.appendChild(el("span","sub"," · inactive"));
+    tr.appendChild(nameTd);
+    tr.appendChild(el("td",null, p.email));
+    tr.appendChild(el("td",null, p.phone || ""));
+    var accessTd = document.createElement("td");
+    accessTd.appendChild(el("span","pill " + (p.access_level === "crew" ? "pill-muted" : ""), p.access_level));
+    tr.appendChild(accessTd);
+    tr.appendChild(el("td",null, (p.roles||[]).map(function(r){ return r.name; }).join(", ")));
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
+}
+
+function openPersonForm(personId){
+  var p = personId ? store.people.find(function(x){ return x.id === personId; }) : null;
+  var outranked = p && me.access_level !== "owner" && p.access_level !== "crew";
+  var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
+  document.getElementById("sheetTitle").textContent = p ? p.name : "Add a person";
+  body.innerHTML = ""; foot.innerHTML = "";
+
+  var draftP = p ? {name:p.name, phone:p.phone||"", active:p.active, access_level:p.access_level,
+                     roles:(p.roles||[]).map(function(r){ return r.id; })}
+                 : {name:"", email:"", phone:"", active:true, access_level:"crew", roles:[]};
+
+  var fs = document.createElement("fieldset");
+  fs.appendChild(el("legend",null,"Details"));
+  var r1 = el("div","row-3");
+  r1.appendChild(field("Name", input("text", draftP.name, function(v){ draftP.name = v; })));
+  if(!p){
+    r1.appendChild(field("Email", input("email", draftP.email, function(v){ draftP.email = v; })));
+  }
+  r1.appendChild(field("Phone", input("tel", draftP.phone, function(v){ draftP.phone = v; })));
+  fs.appendChild(r1);
+
+  var r2 = el("div","row");
+  var accessOpts = ["crew","booker","owner"].map(function(a){ return {value:a, label:a}; });
+  var accessSel = selectKV(accessOpts, draftP.access_level, function(v){ draftP.access_level = v; });
+  if(me.access_level !== "owner"){
+    [...accessSel.options].forEach(function(o){ o.disabled = o.value !== "crew"; });
+  }
+  accessSel.disabled = !!outranked;
+  r2.appendChild(field("Access", accessSel));
+  if(p){
+    var activeWrap = el("div","field");
+    activeWrap.appendChild(el("label",null,"Active"));
+    var actLabel = el("label",null); actLabel.style.fontWeight="normal"; actLabel.style.display="flex"; actLabel.style.gap="6px"; actLabel.style.alignItems="center";
+    var actCb = document.createElement("input"); actCb.type="checkbox"; actCb.checked = draftP.active; actCb.style.width="auto";
+    actCb.disabled = !!outranked;
+    actCb.onchange = function(){ draftP.active = actCb.checked; };
+    actLabel.appendChild(actCb); actLabel.appendChild(document.createTextNode(" Active"));
+    activeWrap.appendChild(actLabel);
+    r2.appendChild(activeWrap);
+  }
+  fs.appendChild(r2);
+  body.appendChild(fs);
+
+  var fsRoles = document.createElement("fieldset");
+  fsRoles.appendChild(el("legend",null,"Roles they cover"));
+  var pick = el("div","rolepick");
+  store.roles.forEach(function(r){
+    var b = el("button","chip", r.name);
+    b.type = "button";
+    b.setAttribute("aria-pressed", draftP.roles.indexOf(r.id) >= 0 ? "true" : "false");
+    b.onclick = function(){
+      var i = draftP.roles.indexOf(r.id);
+      if(i >= 0) draftP.roles.splice(i,1); else draftP.roles.push(r.id);
+      b.setAttribute("aria-pressed", draftP.roles.indexOf(r.id) >= 0 ? "true" : "false");
+    };
+    pick.appendChild(b);
+  });
+  fsRoles.appendChild(pick);
+  body.appendChild(fsRoles);
+
+  if(outranked) body.appendChild(el("p","hint","You don't have permission to edit this person."));
+
+  var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
+  if(!outranked){
+    var save = el("button","btn btn-primary","Save");
+    save.onclick = async function(){
+      errLine.textContent = "";
+      if(!p){
+        var r = await api("/api/people", {method:"POST", body: JSON.stringify({
+          name: draftP.name, email: draftP.email, phone: draftP.phone, access_level: draftP.access_level})});
+        if(!r.ok){ errLine.textContent = r.body.error || "Could not create."; return; }
+        if(draftP.roles.length) await api("/api/people/" + r.body.id + "/roles", {method:"PUT", body: JSON.stringify({role_ids: draftP.roles})});
+        await loadBookerLookups();
+        window.alert("Temp password: " + r.body.temp_password + "\n\nGive this to them — they should change it after logging in.");
+        closeSheet();
+        renderAll();
+      } else {
+        var r2b = await api("/api/people/" + p.id, {method:"PATCH", body: JSON.stringify({
+          name: draftP.name, phone: draftP.phone, active: draftP.active, access_level: draftP.access_level})});
+        if(!r2b.ok){ errLine.textContent = r2b.body.error || "Could not save."; return; }
+        await api("/api/people/" + p.id + "/roles", {method:"PUT", body: JSON.stringify({role_ids: draftP.roles})});
+        await loadBookerLookups();
+        closeSheet();
+        renderAll();
+      }
+    };
+    foot.appendChild(save);
+  }
+  var cancel = el("button","btn","Cancel");
+  cancel.onclick = closeSheet;
+  foot.appendChild(cancel);
+  foot.appendChild(errLine);
+  if(p && !outranked){
+    foot.appendChild(el("div","spacer"));
+    var resetBtn = el("button","btn","Reset password");
+    resetBtn.onclick = async function(){
+      var r = await api("/api/people/" + p.id + "/reset-password", {method:"POST"});
+      if(r.ok) window.alert("New temp password: " + r.body.temp_password);
+      else errLine.textContent = r.body.error || "Could not reset password.";
+    };
+    foot.appendChild(resetBtn);
+  }
+  openScrim();
+}
+
+/* ============================== boot =================================== */
+async function boot(){
+  var r = await api("/api/me");
+  if(!r.ok){ document.getElementById("loginCard").style.display = "block"; document.getElementById("app").style.display = "none"; return; }
+  me = r.body;
+  document.getElementById("loginCard").style.display = "none";
+  document.getElementById("app").style.display = "block";
+  document.getElementById("whoami").textContent = me.name + " · " + me.access_level;
+  document.getElementById("navTabs").style.display = canBook() ? "flex" : "none";
+  document.getElementById("bookBtn").style.display = canBook() ? "inline-block" : "none";
+  document.getElementById("filterbar").style.display = "flex";
+  if(!canBook()){
+    document.getElementById("navTabs").innerHTML = "";
+  }
+  await loadBookerLookups();
+  await loadEvents();
+}
+
+document.getElementById("loginForm").addEventListener("submit", async function(e){
+  e.preventDefault();
+  var email = document.getElementById("email").value;
+  var password = document.getElementById("password").value;
+  var r = await api("/api/login", {method:"POST", body: JSON.stringify({email:email, password:password})});
+  if(r.ok) boot();
+  else document.getElementById("loginError").textContent = "Wrong email or password.";
 });
+document.getElementById("logoutBtn").addEventListener("click", async function(){
+  await api("/api/logout", {method:"POST"});
+  document.getElementById("app").style.display = "none";
+  document.getElementById("loginCard").style.display = "block";
+});
+document.getElementById("navTabs").addEventListener("click", function(e){
+  var b = e.target.closest("button[data-view]");
+  if(!b) return;
+  ui.view = b.dataset.view;
+  setActiveTab();
+  renderAll();
+});
+document.getElementById("prevMonth").addEventListener("click", function(){ ui.cursor.m--; if(ui.cursor.m<0){ui.cursor.m=11;ui.cursor.y--;} renderAll(); });
+document.getElementById("nextMonth").addEventListener("click", function(){ ui.cursor.m++; if(ui.cursor.m>11){ui.cursor.m=0;ui.cursor.y++;} renderAll(); });
+document.getElementById("todayBtn").addEventListener("click", function(){ var t=new Date(); ui.cursor={y:t.getFullYear(),m:t.getMonth()}; renderAll(); });
+document.getElementById("bookBtn").addEventListener("click", function(){ openEvent(null, todayISO()); });
+document.getElementById("addPersonBtn").addEventListener("click", function(){ openPersonForm(null); });
+document.getElementById("sheetClose").addEventListener("click", closeSheet);
+document.getElementById("scrim").addEventListener("click", function(e){ if(e.target === document.getElementById("scrim")) closeSheet(); });
+document.addEventListener("keydown", function(e){ if(e.key === "Escape" && !document.getElementById("scrim").hidden) closeSheet(); });
+if(phoneMQ){ if(phoneMQ.addEventListener) phoneMQ.addEventListener("change", renderAll); else if(phoneMQ.addListener) phoneMQ.addListener(renderAll); }
 
 boot();
+})();
 </script>
 </body>
 </html>
