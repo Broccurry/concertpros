@@ -36,6 +36,6 @@ def find_or_create(conn, name: str) -> int:
 
 def list_artists(conn) -> list[dict]:
     cur = conn.cursor()
-    cur.execute("SELECT id, name, tier, location FROM artists ORDER BY name")
+    cur.execute("SELECT id, name, tier, genre, tags, location FROM artists ORDER BY name")
     cols = [c.name for c in cur.description]
     return [dict(zip(cols, row)) for row in cur.fetchall()]

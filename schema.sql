@@ -49,6 +49,7 @@ CREATE TABLE artists (
     name            TEXT NOT NULL,
     tier            TEXT CHECK (tier IN ('Local', 'Regional', 'National') OR tier IS NULL),
     genre           TEXT,
+    tags            TEXT[] NOT NULL DEFAULT '{}',  -- free-text, e.g. style/location — searchable, not a fixed list
     location        TEXT,
     contact_name    TEXT,
     email           TEXT,
@@ -119,6 +120,13 @@ CREATE TABLE event_artists (
     artist_id   INTEGER NOT NULL REFERENCES artists(id),
     confirmed   BOOLEAN NOT NULL DEFAULT FALSE,
     sort_order  INTEGER NOT NULL DEFAULT 0,
+    -- This band's own deal for this show, separate from the event-level
+    -- Deal fieldset (which is the promoter's overall terms for the night).
+    -- guarantee is agreed beforehand; paid and walkups are filled in once
+    -- the show is over and become that band's show history.
+    guarantee   NUMERIC,
+    paid        NUMERIC,
+    walkups     INTEGER,
     UNIQUE (event_id, artist_id)
 );
 

@@ -211,14 +211,23 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
    through the editor, off the exact same two classes. */
 .act-pending{font-weight:400;text-transform:lowercase}
 .act-confirmed{font-weight:700;text-transform:uppercase}
-.actchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
-.actchip{display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 12px;border-radius:999px;
-         background:var(--surface-2);border:1px solid var(--line);cursor:pointer;user-select:none}
-.actchip .x{border:none;background:none;color:var(--ink-3);width:20px;height:20px;border-radius:50%;
-            display:grid;place-items:center;padding:0}
-.actchip .x:hover{color:var(--dead);background:var(--surface)}
+.actlist{display:flex;flex-direction:column;gap:8px;margin:8px 0}
+.actlistrow{border:1px solid var(--line);border-radius:var(--radius);padding:8px;background:var(--surface-2)}
+.actlistrow-top{display:flex;align-items:center;gap:8px}
+.actname{flex:1;cursor:pointer;user-select:none}
+.actlistrow-figs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
+.rowbtn{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);width:28px;height:28px;
+        color:var(--ink-2);display:grid;place-items:center;padding:0;font-size:11px;line-height:1}
+.rowbtn:disabled{opacity:.35;cursor:default}
+.rowbtn:not(:disabled):hover{border-color:var(--accent);color:var(--accent)}
+.actlistrow .x{border:none;background:none;color:var(--ink-3);width:24px;height:24px;border-radius:50%;
+               display:grid;place-items:center;padding:0}
+.actlistrow .x:hover{color:var(--dead);background:var(--surface)}
 .actrow{display:flex;gap:8px;align-items:flex-start}
 .actrow input{flex:1}
+@media (max-width: 480px){
+  .actlistrow-figs{grid-template-columns:1fr}
+}
 
 .tasklist{display:flex;flex-direction:column;gap:2px;margin-bottom:8px}
 .taskitem{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:var(--radius);background:var(--ground);border:1px solid transparent}
@@ -391,7 +400,20 @@ function time12(t){
 function isUnsettled(ev){ return !!ev && ev.status === "confirmed" && ev.show_date < todayISO(); }
 function st(ev){ if(isUnsettled(ev)) return STATUS.unsettled; return (ev && STATUS[ev.status]) || STATUS.hold1; }
 function actLabel(a){ return a.confirmed ? a.name.toUpperCase() : a.name.toLowerCase(); }
+/* Everywhere EXCEPT the show editor itself only shows the top-slot act
+   plus whichever other acts have been individually confirmed — an
+   unconfirmed support act stays off the calendar/list entirely until
+   someone double-clicks it, per Broc's rule. The editor always shows the
+   full bill (fullBillName/the acts editor), since you're editing everything. */
+function visibleActs(ev){
+  var acts = ev.artists || [];
+  return acts.filter(function(a, i){ return i === 0 || a.confirmed; });
+}
 function showName(ev){
+  var acts = visibleActs(ev);
+  return acts.length ? acts.map(actLabel).join(", ") : "Untitled hold";
+}
+function fullBillName(ev){
   var acts = ev.artists || [];
   return acts.length ? acts.map(actLabel).join(", ") : "Untitled hold";
 }
@@ -400,7 +422,7 @@ function showName(ev){
    caps while a support act still on hold stays lowercase next to it. */
 function actsNodes(ev){
   var frag = document.createDocumentFragment();
-  var acts = ev.artists || [];
+  var acts = visibleActs(ev);
   if(!acts.length){ frag.appendChild(document.createTextNode("Untitled hold")); return frag; }
   acts.forEach(function(a, i){
     if(i > 0) frag.appendChild(document.createTextNode(", "));
@@ -745,6 +767,16 @@ function renderListView(){
 }
 
 /* ============================== artists view =========================== */
+var artistFilter = {tier:"", genre:"", tag:""};
+function filteredArtists(){
+  var tier = artistFilter.tier, genre = artistFilter.genre.trim().toLowerCase(), tag = artistFilter.tag.trim().toLowerCase();
+  return store.artists.filter(function(a){
+    if(tier && a.tier !== tier) return false;
+    if(genre && (a.genre||"").toLowerCase().indexOf(genre) < 0) return false;
+    if(tag && !(a.tags||[]).some(function(t){ return t.toLowerCase().indexOf(tag) >= 0; })) return false;
+    return true;
+  });
+}
 function renderArtistsView(){
   var host = document.getElementById("view-artists");
   host.innerHTML = "";
@@ -755,32 +787,156 @@ function renderArtistsView(){
     host.appendChild(e);
     return;
   }
+
+  var bar = el("div","row-3","");
+  var tierSel = selectKV([{value:"",label:"Any tier"},{value:"Local",label:"Local"},
+    {value:"Regional",label:"Regional"},{value:"National",label:"National"}], artistFilter.tier,
+    function(v){ artistFilter.tier = v; renderArtistsView(); });
+  bar.appendChild(field("Tier", tierSel));
+  var genreInput = input("text", artistFilter.genre, function(v){ artistFilter.genre = v; renderArtistsView(); });
+  genreInput.placeholder = "e.g. metal";
+  bar.appendChild(field("Genre", genreInput));
+  var tagInput = input("text", artistFilter.tag, function(v){ artistFilter.tag = v; renderArtistsView(); });
+  tagInput.placeholder = "e.g. local, acoustic";
+  bar.appendChild(field("Tag", tagInput));
+  host.appendChild(bar);
+
+  var rows = filteredArtists();
   var wrap = el("div","tablewrap"), t = document.createElement("table");
   var thead = document.createElement("thead"), hr = document.createElement("tr");
-  ["Artist","Tier","From","Shows","Played","Total paid","Last played"].forEach(function(h){
+  ["Artist","Tier","Genre","Tags","From","Shows","Played","Total paid","Last played",""].forEach(function(h){
     var th = el("th",null,h);
     if(["Shows","Played","Total paid"].indexOf(h) >= 0) th.className = "num";
     hr.appendChild(th);
   });
   thead.appendChild(hr); t.appendChild(thead);
   var tb = document.createElement("tbody");
-  store.artists.slice().sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); }).forEach(function(a){
+  rows.slice().sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); }).forEach(function(a){
     var tot = artistTotals(a.name);
     var tr = document.createElement("tr");
-    tr.onclick = function(){ var d = new Date(); openEvent(null, iso(d.getFullYear(),d.getMonth(),d.getDate())); document.getElementById("bookBand").value = a.name; };
+    tr.onclick = function(){
+      var d = new Date();
+      openEvent(null, iso(d.getFullYear(),d.getMonth(),d.getDate()));
+      draft.artists = [{name: a.name, confirmed:false, guarantee:"", paid:"", walkups:""}];
+      renderSheet();
+    };
     tr.appendChild(el("td","title-cell", a.name));
     var tierTd = document.createElement("td");
     if(a.tier) tierTd.appendChild(el("span","pill s-complete", a.tier)); else { tierTd.className="sub"; tierTd.textContent="—"; }
     tr.appendChild(tierTd);
+    tr.appendChild(el("td", a.genre ? null : "sub", a.genre || "—"));
+    tr.appendChild(el("td", (a.tags||[]).length ? null : "sub", (a.tags||[]).length ? a.tags.join(", ") : "—"));
     tr.appendChild(el("td", a.location ? null : "sub", a.location || "—"));
     tr.appendChild(el("td","num", tot.count ? String(tot.count) : "—"));
     tr.appendChild(el("td","num", tot.played ? String(tot.played) : "—"));
     tr.appendChild(el("td","num", tot.paid ? money(tot.paid) : "—"));
     tr.appendChild(el("td","date-col", tot.last ? shortDate(tot.last) : "—"));
+    var editTd = document.createElement("td");
+    var editBtn = el("button","btn","Edit");
+    editBtn.type = "button";
+    editBtn.onclick = function(e){ e.stopPropagation(); openArtistForm(a.id); };
+    editTd.appendChild(editBtn);
+    tr.appendChild(editTd);
     tb.appendChild(tr);
   });
   t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
-  host.appendChild(el("p","notice", store.artists.length + " artists. Click one to start booking them. Full artist profiles (agent, management, socials) aren't built yet."));
+  host.appendChild(el("p","notice", rows.length + " of " + store.artists.length + " artists. Click a row to start booking them, or Edit to update their card."));
+}
+
+function artistShowHistory(artistId){
+  var rows = [];
+  store.events.forEach(function(ev){
+    (ev.artists||[]).forEach(function(a){
+      if(a.artist_id === artistId) rows.push({
+        show_date: ev.show_date, venue: ev.venue, status: ev.status,
+        confirmed: a.confirmed, guarantee: a.guarantee, paid: a.paid, walkups: a.walkups,
+      });
+    });
+  });
+  return rows.sort(function(a,b){ return a.show_date < b.show_date ? 1 : a.show_date > b.show_date ? -1 : 0; });
+}
+function openArtistForm(artistId){
+  var a = store.artists.find(function(x){ return x.id === artistId; });
+  if(!a) return;
+  var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
+  document.getElementById("sheetTitle").textContent = a.name;
+  body.innerHTML = ""; foot.innerHTML = "";
+
+  var draftA = {tier: a.tier || "", genre: a.genre || "", location: a.location || "",
+                tags: (a.tags||[]).join(", ")};
+
+  var fs = document.createElement("fieldset");
+  fs.appendChild(el("legend",null,"Classification"));
+  var tierGrid = el("div","statusgrid");
+  [["","—"],["Local","Local"],["Regional","Regional"],["National","National"]].forEach(function(opt){
+    var b = el("button","statusopt", opt[1]);
+    b.type = "button";
+    b.setAttribute("aria-pressed", draftA.tier === opt[0] ? "true" : "false");
+    b.onclick = function(){ draftA.tier = opt[0]; tierGrid.querySelectorAll("button").forEach(function(x){
+      x.setAttribute("aria-pressed", x.textContent === (opt[0]||"—") ? "true" : "false"); }); };
+    tierGrid.appendChild(b);
+  });
+  fs.appendChild(tierGrid);
+  var r1 = el("div","row"); r1.style.marginTop = "10px";
+  r1.appendChild(field("Genre", input("text", draftA.genre, function(v){ draftA.genre = v; })));
+  r1.appendChild(field("Location", input("text", draftA.location, function(v){ draftA.location = v; })));
+  fs.appendChild(r1);
+  var tagsInput = input("text", draftA.tags, function(v){ draftA.tags = v; });
+  tagsInput.placeholder = "comma-separated — style, location, whatever helps you search later";
+  var tagsField = field("Tags", tagsInput); tagsField.style.marginTop = "10px";
+  fs.appendChild(tagsField);
+  body.appendChild(fs);
+
+  var history = artistShowHistory(artistId);
+  var fsH = document.createElement("fieldset");
+  fsH.appendChild(el("legend",null,"Show history"));
+  if(!history.length){
+    fsH.appendChild(el("p","hint","No shows booked yet."));
+  } else {
+    var wrap = el("div","tablewrap"), t = document.createElement("table");
+    var thead = document.createElement("thead"), hr = document.createElement("tr");
+    ["Date","Venue","Status","Guarantee","Paid","Walk-ups"].forEach(function(h){
+      var th = el("th",null,h);
+      if(["Guarantee","Paid","Walk-ups"].indexOf(h) >= 0) th.className = "num";
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr); t.appendChild(thead);
+    var tb = document.createElement("tbody");
+    history.forEach(function(h){
+      var tr = document.createElement("tr");
+      tr.appendChild(el("td","date-col", shortDate(h.show_date)));
+      tr.appendChild(el("td",null, h.venue));
+      var stc = document.createElement("td");
+      stc.appendChild(el("span","pill " + (STATUS[h.status]||STATUS.hold1).cls, (STATUS[h.status]||STATUS.hold1).label));
+      tr.appendChild(stc);
+      tr.appendChild(el("td","num", h.guarantee != null ? money(h.guarantee) : "—"));
+      tr.appendChild(el("td","num", h.paid != null ? money(h.paid) : "—"));
+      tr.appendChild(el("td","num", h.walkups != null ? String(h.walkups) : "—"));
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); wrap.appendChild(t); fsH.appendChild(wrap);
+  }
+  body.appendChild(fsH);
+
+  var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
+  var save = el("button","btn btn-primary","Save");
+  save.onclick = async function(){
+    errLine.textContent = "";
+    var tags = draftA.tags.split(",").map(function(t){ return t.trim(); }).filter(function(t){ return t; });
+    var r = await api("/api/artists/" + artistId, {method:"PATCH", body: JSON.stringify({
+      tier: draftA.tier || null, genre: draftA.genre, location: draftA.location, tags: tags,
+    })});
+    if(!r.ok){ errLine.textContent = r.body.error || "Could not save."; return; }
+    await loadBookerLookups();
+    closeSheet();
+    renderAll();
+  };
+  foot.appendChild(save);
+  var cancel = el("button","btn","Cancel");
+  cancel.onclick = closeSheet;
+  foot.appendChild(cancel);
+  foot.appendChild(errLine);
+  openScrim();
 }
 
 /* ============================== staff view ============================= */
@@ -913,7 +1069,7 @@ function closeSheet(){ document.getElementById("scrim").hidden = true; document.
 function renderSheet(){
   var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
   body.innerHTML = ""; foot.innerHTML = "";
-  document.getElementById("sheetTitle").textContent = draftIsNew ? "Book a show" : showName(draft);
+  document.getElementById("sheetTitle").textContent = draftIsNew ? "Book a show" : fullBillName(draft);
 
   var fs1 = document.createElement("fieldset");
   fs1.appendChild(el("legend",null,"The date"));
@@ -938,28 +1094,59 @@ function renderSheet(){
   body.appendChild(dl);
 
   var actsField = el("div","field"); actsField.style.marginTop = "10px";
-  actsField.appendChild(el("label", null, "Acts"));
-  var chips = el("div","actchips");
+  actsField.appendChild(el("label", null, "Acts — top of the list is the headliner"));
+  var actList = el("div","actlist");
   (draft.artists||[]).forEach(function(a, idx){
-    var chip = el("span","actchip " + (a.confirmed ? "act-confirmed" : "act-pending"), a.name);
-    chip.title = "Double-click to " + (a.confirmed ? "un-confirm" : "confirm") + " this act";
-    chip.ondblclick = async function(){
+    var row = el("div","actlistrow");
+    var top = el("div","actlistrow-top");
+
+    var moveUp = el("button","rowbtn","▲");
+    moveUp.type = "button"; moveUp.title = "Move up"; moveUp.disabled = idx === 0;
+    moveUp.onclick = function(){
+      draft.artists[idx] = draft.artists[idx-1]; draft.artists[idx-1] = a; renderSheet();
+    };
+    var moveDown = el("button","rowbtn","▼");
+    moveDown.type = "button"; moveDown.title = "Move down"; moveDown.disabled = idx === (draft.artists.length-1);
+    moveDown.onclick = function(){
+      draft.artists[idx] = draft.artists[idx+1]; draft.artists[idx+1] = a; renderSheet();
+    };
+    top.appendChild(moveUp); top.appendChild(moveDown);
+
+    var name = el("span","actname " + (a.confirmed ? "act-confirmed" : "act-pending"), a.name);
+    name.title = "Double-click to " + (a.confirmed ? "un-confirm" : "confirm") + " this act";
+    name.ondblclick = async function(){
       if(a.id){
-        await api("/api/event_artists/" + a.id, {method:"PATCH", body: JSON.stringify({confirmed: !a.confirmed})});
+        // Flip the local copy first — draft.artists is in UNSAVED_FIELDS so
+        // refreshDraft() re-applies whatever's here over the fresh server
+        // read; leaving the stale pre-toggle value here would silently
+        // undo the very confirm we just asked the server to save.
+        a.confirmed = !a.confirmed;
+        await api("/api/event_artists/" + a.id, {method:"PATCH", body: JSON.stringify({confirmed: a.confirmed})});
         await refreshDraft();
       } else {
         a.confirmed = !a.confirmed;
         renderSheet();
       }
     };
+    top.appendChild(name);
+    if(idx === 0) top.appendChild(el("span","pill pill-muted","Headliner"));
+
     var x = el("button","x","✕");
     x.type = "button";
     x.title = "Remove " + a.name;
-    x.onclick = function(e){ e.stopPropagation(); draft.artists.splice(idx,1); renderSheet(); };
-    chip.appendChild(x);
-    chips.appendChild(chip);
+    x.onclick = function(){ draft.artists.splice(idx,1); renderSheet(); };
+    top.appendChild(x);
+    row.appendChild(top);
+
+    var figs = el("div","actlistrow-figs");
+    figs.appendChild(field("Guarantee", input("number", a.guarantee, function(v){ a.guarantee = v; })));
+    figs.appendChild(field("Paid", input("number", a.paid, function(v){ a.paid = v; })));
+    figs.appendChild(field("Walk-ups", input("number", a.walkups, function(v){ a.walkups = v; })));
+    row.appendChild(figs);
+
+    actList.appendChild(row);
   });
-  actsField.appendChild(chips);
+  actsField.appendChild(actList);
 
   var actRow = el("div","actrow");
   var actInput = input("text", "", function(){});
@@ -986,7 +1173,7 @@ function renderSheet(){
     var name = actInput.value.trim();
     if(!name) return;
     draft.artists = draft.artists || [];
-    draft.artists.push({name: name, confirmed: false});
+    draft.artists.push({name: name, confirmed: false, guarantee:"", paid:"", walkups:""});
     actInput.value = "";
     renderSheet();
   }

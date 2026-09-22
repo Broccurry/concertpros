@@ -110,13 +110,17 @@ def _events_for_crew(conn, viewer: Viewer, date_from, date_to, venue_id) -> list
     return events
 
 
-def _artists_by_event(conn, ids: list[int]) -> dict[int, list[dict]]:
+def _artists_by_event(conn, ids: list[int], include_money: bool = False) -> dict[int, list[dict]]:
     """A show's bill, in running order — see the event_artists table
     comment in schema.sql. Shared by both the crew and booker branches so
-    there's exactly one query deciding what an act on a bill looks like."""
+    there's exactly one query deciding what an act on a bill looks like.
+    guarantee/paid/walkups are money, same boundary as guarantee/settlement
+    on the event itself — crew's call never selects those columns at all,
+    rather than fetching and hiding them."""
+    money_cols = ", ea.guarantee, ea.paid, ea.walkups" if include_money else ""
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT ea.event_id, ea.id, a.name, ea.confirmed FROM event_artists ea "
+            f"SELECT ea.event_id, ea.id, ea.artist_id, a.name, ea.confirmed{money_cols} FROM event_artists ea "
             "JOIN artists a ON a.id = ea.artist_id "
             "WHERE ea.event_id = ANY(%(ids)s) ORDER BY ea.sort_order",
             {"ids": ids},
@@ -160,7 +164,7 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
     if not events:
         return events
     ids = [e["id"] for e in events]
-    artists_by_event = _artists_by_event(conn, ids)
+    artists_by_event = _artists_by_event(conn, ids, include_money=True)
 
     with conn.cursor() as cur:
         cur.execute(

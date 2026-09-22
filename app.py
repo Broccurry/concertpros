@@ -32,11 +32,23 @@ TASK_TEMPLATE = ("Website", "Marketing", "Offer", "Contract")  # spawned on ever
 load_dotenv()  # local dev only — a no-op if .env doesn't exist (Railway sets real env vars directly)
 
 
+def _parse_number(v):
+    """None/""/missing all mean "not set" — a band's guarantee, paid, and
+    walkups are all optional until the show's actually happened."""
+    if v in (None, ""):
+        return None, True
+    try:
+        return float(v), True
+    except (TypeError, ValueError):
+        return None, False
+
+
 def _parse_acts(raw):
-    """Parses an `acts`/`artists` field into [(name, confirmed), ...] — the
-    one place that decides what a valid bill looks like, used by both
-    event creation and PUT .../artists so there's no second, slightly
-    different rule to drift out of sync with this one."""
+    """Parses an `acts`/`artists` field into a list of act dicts — the one
+    place that decides what a valid bill looks like, used by both event
+    creation and PUT .../artists so there's no second, slightly different
+    rule to drift out of sync with this one. Order in `raw` is the bill
+    order; the first act is the headliner by convention (sort_order 0)."""
     if not isinstance(raw, list) or not raw:
         return None, "at_least_one_act_required"
     acts = []
@@ -44,13 +56,26 @@ def _parse_acts(raw):
         if isinstance(item, dict):
             name = (item.get("name") or "").strip()
             confirmed = bool(item.get("confirmed"))
+            guarantee, ok1 = _parse_number(item.get("guarantee"))
+            paid, ok2 = _parse_number(item.get("paid"))
+            walkups = item.get("walkups")
+            if walkups in (None, ""):
+                walkups, ok3 = None, True
+            else:
+                try:
+                    walkups, ok3 = int(walkups), True
+                except (TypeError, ValueError):
+                    walkups, ok3 = None, False
+            if not (ok1 and ok2 and ok3):
+                return None, "invalid_act_figure"
         elif isinstance(item, str):
-            name, confirmed = item.strip(), False
+            name, confirmed, guarantee, paid, walkups = item.strip(), False, None, None, None
         else:
-            name, confirmed = "", False
+            name, confirmed, guarantee, paid, walkups = "", False, None, None, None
         if not name:
             return None, "every_act_needs_a_name"
-        acts.append((name, confirmed))
+        acts.append({"name": name, "confirmed": confirmed, "guarantee": guarantee,
+                     "paid": paid, "walkups": walkups})
     return acts, None
 
 
@@ -63,15 +88,15 @@ def _replace_event_artists(conn, event_id, acts):
     cur.execute("DELETE FROM event_artists WHERE event_id = %s", (event_id,))
     seen_artist_ids = set()
     sort_order = 0
-    for name, confirmed in acts:
-        artist_id = artists_module.find_or_create(conn, name)
+    for act in acts:
+        artist_id = artists_module.find_or_create(conn, act["name"])
         if artist_id in seen_artist_ids:
             continue
         seen_artist_ids.add(artist_id)
         cur.execute(
-            "INSERT INTO event_artists (event_id, artist_id, confirmed, sort_order) "
-            "VALUES (%s, %s, %s, %s)",
-            (event_id, artist_id, confirmed, sort_order),
+            "INSERT INTO event_artists (event_id, artist_id, confirmed, sort_order, guarantee, paid, walkups) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (event_id, artist_id, act["confirmed"], sort_order, act["guarantee"], act["paid"], act["walkups"]),
         )
         sort_order += 1
 
@@ -257,6 +282,54 @@ def create_app():
             return jsonify(error="forbidden"), 403
         return jsonify(artists=artists_module.list_artists(g.db))
 
+    @app.patch("/api/artists/<int:artist_id>")
+    @require_booker
+    def update_artist(artist_id):
+        """The band's card — tier/genre/tags/location. Name is deliberately
+        not editable here: renaming goes through find_or_create when
+        booking, not a direct edit, so it stays subject to the same
+        normalization/dedup rule everywhere."""
+        cur = g.db.cursor()
+        cur.execute("SELECT tier, genre, tags, location FROM artists WHERE id = %s", (artist_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        before = dict(zip(["tier", "genre", "tags", "location"], row))
+
+        body = request.get_json(silent=True) or {}
+        updates = {}
+        if "tier" in body:
+            tier = body["tier"] or None
+            if tier not in ("Local", "Regional", "National", None):
+                return jsonify(error="invalid_tier"), 400
+            updates["tier"] = tier
+        if "genre" in body:
+            updates["genre"] = (body["genre"] or "").strip() or None
+        if "location" in body:
+            updates["location"] = (body["location"] or "").strip() or None
+        if "tags" in body:
+            raw_tags = body["tags"]
+            if not isinstance(raw_tags, list):
+                return jsonify(error="tags_must_be_a_list"), 400
+            seen, tags = set(), []
+            for t in raw_tags:
+                t = (t or "").strip() if isinstance(t, str) else ""
+                if t and t.lower() not in seen:
+                    seen.add(t.lower())
+                    tags.append(t)
+            updates["tags"] = tags
+
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur.execute(f"UPDATE artists SET {set_clause}, updated_at = now() WHERE id = %s",
+                    list(updates.values()) + [artist_id])
+        audit.record(g.db, g.viewer, "artist", artist_id, "update",
+                     {"before": {k: audit.jsonable(before.get(k)) for k in updates},
+                      "after": {k: audit.jsonable(v) for k, v in updates.items()}})
+        return jsonify(ok=True)
+
     @app.post("/api/events")
     @require_booker
     def create_event():
@@ -295,7 +368,7 @@ def create_app():
                 (event_id, label, i),
             )
         audit.record(g.db, g.viewer, "event", event_id, "create",
-                     {"venue_id": venue_id, "acts": [name for name, _ in acts],
+                     {"venue_id": venue_id, "acts": [a["name"] for a in acts],
                       "show_date": show_date_raw, "status": status})
         return jsonify(id=event_id), 201
 
@@ -738,8 +811,7 @@ def create_app():
         if cur.fetchone() is None:
             return jsonify(error="not_found"), 404
         _replace_event_artists(g.db, event_id, acts)
-        audit.record(g.db, g.viewer, "event", event_id, "set_artists",
-                     {"artists": [{"name": n, "confirmed": c} for n, c in acts]})
+        audit.record(g.db, g.viewer, "event", event_id, "set_artists", {"artists": acts})
         return jsonify(ok=True)
 
     @app.patch("/api/event_artists/<int:event_artist_id>")
