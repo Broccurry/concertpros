@@ -133,6 +133,33 @@ class ActDetailsAndContactLog(unittest.TestCase):
         self.assertEqual(act["contacts"][0]["method"], "phone")
         self.assertEqual(act["contacts"][0]["person_name"], "Test Booker")
 
+    def test_a_contact_can_carry_its_own_note(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book(client)
+        events = client.get("/api/events").get_json()["events"]
+        act_id = next(e for e in events if e["id"] == self.event_id)["artists"][0]["id"]
+
+        r = client.post(f"/api/event_artists/{act_id}/contacts",
+                         json={"method": "text", "note": "Kevin — checking with band"})
+        self.assertEqual(r.status_code, 201, r.get_json())
+
+        events = client.get("/api/events").get_json()["events"]
+        act = next(e for e in events if e["id"] == self.event_id)["artists"][0]
+        self.assertEqual(act["contacts"][0]["note"], "Kevin — checking with band")
+
+    def test_a_contact_without_a_note_is_fine(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book(client)
+        events = client.get("/api/events").get_json()["events"]
+        act_id = next(e for e in events if e["id"] == self.event_id)["artists"][0]["id"]
+        r = client.post(f"/api/event_artists/{act_id}/contacts", json={"method": "phone"})
+        self.assertEqual(r.status_code, 201)
+        events = client.get("/api/events").get_json()["events"]
+        act = next(e for e in events if e["id"] == self.event_id)["artists"][0]
+        self.assertIsNone(act["contacts"][0]["note"])
+
     def test_messenger_is_a_valid_contact_method(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)

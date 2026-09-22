@@ -167,6 +167,7 @@ CREATE TABLE event_artist_contacts (
     event_artist_id INTEGER NOT NULL REFERENCES event_artists(id) ON DELETE CASCADE,
     method          TEXT NOT NULL CHECK (method IN ('text', 'email', 'phone', 'messenger')),
     person_id       INTEGER REFERENCES people(id),
+    note            TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

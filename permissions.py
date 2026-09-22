@@ -149,7 +149,7 @@ def _artists_by_event(conn, ids: list[int], include_money: bool = False) -> dict
     if include_money and act_ids:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT c.event_artist_id, c.id, c.method, c.created_at, p.name AS person_name "
+                "SELECT c.event_artist_id, c.id, c.method, c.created_at, c.note, p.name AS person_name "
                 "FROM event_artist_contacts c LEFT JOIN people p ON p.id = c.person_id "
                 "WHERE c.event_artist_id = ANY(%(ids)s) ORDER BY c.created_at",
                 {"ids": act_ids},

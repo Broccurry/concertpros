@@ -521,6 +521,7 @@ def create_app():
         method = body.get("method")
         if method not in ("text", "email", "phone", "messenger"):
             return jsonify(error="invalid_method"), 400
+        note = (body.get("note") or "").strip() or None
         cur = g.db.cursor()
         cur.execute("SELECT event_id FROM event_artists WHERE id = %s", (event_artist_id,))
         row = cur.fetchone()
@@ -528,13 +529,13 @@ def create_app():
             return jsonify(error="not_found"), 404
         event_id = row[0]
         cur.execute(
-            "INSERT INTO event_artist_contacts (event_artist_id, method, person_id) "
-            "VALUES (%s, %s, %s) RETURNING id",
-            (event_artist_id, method, g.viewer.id),
+            "INSERT INTO event_artist_contacts (event_artist_id, method, person_id, note) "
+            "VALUES (%s, %s, %s, %s) RETURNING id",
+            (event_artist_id, method, g.viewer.id, note),
         )
         contact_id = cur.fetchone()[0]
         audit.record(g.db, g.viewer, "event", event_id, "log_contact",
-                     {"event_artist_id": event_artist_id, "method": method})
+                     {"event_artist_id": event_artist_id, "method": method, "note": note})
         return jsonify(id=contact_id), 201
 
     @app.post("/api/events")
@@ -804,6 +805,38 @@ def create_app():
             _migrate_shared_event_data(g.db, event_id, new_anchor_id)
         cur.execute("DELETE FROM events WHERE id = %s", (event_id,))
         audit.record(g.db, g.viewer, "event", event_id, "remove_hold_date", None)
+        return jsonify(ok=True)
+
+    @app.delete("/api/events/<int:event_id>")
+    @require_booker
+    def delete_event(event_id):
+        """A show can be deleted any time before it actually happens — a
+        hold that never went anywhere, a confirmed date that fell
+        through, or a dead one someone wants off the books. Once it's
+        Complete there's real settlement history attached to it, so
+        deletion is refused — mark a mistake some other way, don't erase
+        the record."""
+        cur = g.db.cursor()
+        cur.execute("SELECT status, venue_id, show_date, hold_group_id FROM events WHERE id = %s", (event_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        status, venue_id, show_date, group_id = row
+        if status == "complete":
+            return jsonify(error="cannot_delete_a_completed_show"), 400
+
+        if group_id is not None:
+            anchor_id = _group_anchor_id(g.db, event_id)
+            if anchor_id == event_id:
+                cur.execute("SELECT MIN(id) FROM events WHERE hold_group_id = %s AND id != %s",
+                            (group_id, event_id))
+                new_anchor_row = cur.fetchone()
+                if new_anchor_row and new_anchor_row[0]:
+                    _migrate_shared_event_data(g.db, event_id, new_anchor_row[0])
+
+        cur.execute("DELETE FROM events WHERE id = %s", (event_id,))
+        audit.record(g.db, g.viewer, "event", event_id, "delete",
+                     {"status": status, "venue_id": venue_id, "show_date": audit.jsonable(show_date)})
         return jsonify(ok=True)
 
     @app.get("/api/people")

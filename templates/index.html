@@ -26,6 +26,7 @@
   --confirm:#1c6b45; --confirm-bg:#c9ecd8;
   --done:#4a5262; --done-bg:#dde1e9;
   --dead:#9a3b3b; --dead-bg:#f0dada;
+  --openslot:#6b3fa0; --openslot-bg:#efe4f8;
   --shadow:0 1px 2px rgba(20,24,35,.08), 0 8px 24px rgba(20,24,35,.06);
   --radius:6px;
   --display:"Oswald","Arial Narrow",sans-serif;
@@ -39,6 +40,7 @@
     --hold-1:#2a1e05; --hold-1-bg:#d99a2b; --hold-2-bg:#6b5323; --hold-3-bg:#3a3222;
     --confirm:#b9f0d2; --confirm-bg:#1d4634; --done:#c3cad8; --done-bg:#333948;
     --dead:#f2c2c2; --dead-bg:#4d2b2b;
+    --openslot:#c7a3ec; --openslot-bg:#372a4a;
     --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
   }
 }
@@ -52,6 +54,7 @@
   --hold-1:#2a1e05; --hold-1-bg:#d99a2b; --hold-2-bg:#6b5323; --hold-3-bg:#3a3222;
   --confirm:#b9f0d2; --confirm-bg:#1d4634; --done:#c3cad8; --done-bg:#333948;
   --dead:#f2c2c2; --dead-bg:#4d2b2b;
+  --openslot:#c7a3ec; --openslot-bg:#372a4a;
   --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box}
@@ -266,14 +269,17 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .checkfield{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
 .checkfield input{width:auto}
 
-.openslots{background:var(--hold-1-bg);border:1px solid var(--hold-1);border-radius:var(--radius);
-           padding:10px 12px;margin-bottom:16px}
-.openslots summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--hold-1);list-style:revert}
+.openslots{background:var(--openslot-bg);border:1px solid var(--openslot);border-radius:var(--radius);
+           padding:10px 12px;margin-top:16px}
+.openslots summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--openslot);list-style:revert}
 .openslots-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
-.openslots-row{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;text-align:left;
+.openslots-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;text-align:left;
                background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:7px 10px;
                font-size:12.5px;color:var(--ink)}
-.openslots-row:hover{border-color:var(--accent)}
+.openslots-showlink{border:none;background:none;color:var(--accent);font-size:12.5px;padding:0;
+                     text-decoration:underline;cursor:pointer;flex:1 1 220px;text-align:left}
+.openslots-row select{width:auto;flex:1 1 140px;font-size:12px;padding:4px 6px}
+.openslots-row input[type=time]{flex:0 0 100px;font-size:12px;padding:4px 6px}
 .holddaterow{display:grid;grid-template-columns:110px 1fr 32px;gap:8px;align-items:center;margin-bottom:6px}
 
 .msgthread{display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:10px}
@@ -355,6 +361,8 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .actmidrow select{width:auto;flex:none;font-size:11.5px;padding:3px 5px}
 .actmidrow-fig{display:flex;align-items:center;gap:3px;font-size:11px;color:var(--ink-3)}
 .actmidrow-fig input{width:56px;font-size:11.5px;padding:3px 5px}
+.actcontact-note-input{flex:1 1 110px;min-width:90px;font-size:11.5px;padding:3px 6px;
+                        border:1px solid var(--line);border-radius:var(--radius)}
 .actmidrow textarea{flex:1 1 120px;min-width:80px;resize:vertical;min-height:24px;border:1px solid var(--line);
                      border-radius:var(--radius);padding:3px 6px;font-size:11.5px;font-family:inherit}
 .actmidrow .expandbtn{flex:none;margin-top:0}
@@ -1275,27 +1283,9 @@ function renderStaffView(){
   var openSlots = [];
   allRows.forEach(function(ev){
     (ev.staff||[]).filter(function(s){ return s.person_id === null; }).forEach(function(s){
-      openSlots.push({ev: ev, role: s.role});
+      openSlots.push({ev: ev, role: s.role, assignmentId: s.id, scheduledTime: s.scheduled_time});
     });
   });
-  if(openSlots.length){
-    var openBox = document.createElement("details"); openBox.className = "openslots";
-    var summary = document.createElement("summary");
-    summary.textContent = openSlots.length + " open shift" + (openSlots.length===1?"":"s") + " still need a name";
-    openBox.appendChild(summary);
-    var openList = el("div","openslots-list");
-    openSlots.slice().sort(function(a,b){ return a.ev.show_date < b.ev.show_date ? -1 : a.ev.show_date > b.ev.show_date ? 1 : 0; })
-      .forEach(function(slot){
-        var row = el("button","openslots-row");
-        row.type = "button";
-        row.onclick = function(){ openEvent(slot.ev.id); };
-        row.appendChild(el("span",null, shortDate(slot.ev.show_date) + " · " + slot.ev.venue + " · " + showName(slot.ev)));
-        row.appendChild(el("span","pill s-hold2", slot.role));
-        openList.appendChild(row);
-      });
-    openBox.appendChild(openList);
-    host.appendChild(openBox);
-  }
 
   host.appendChild(el("h3","section","Who's working — upcoming"));
   if(!rows.length){
@@ -1339,6 +1329,49 @@ function renderStaffView(){
       : "Every role has a name on it across all " + rows.length + " upcoming shows."));
   }
   host.appendChild(el("p","notice","This is assignment — who's covering each show. Hours, availability and time off would be a separate build."));
+
+  if(openSlots.length){
+    var openBox = document.createElement("details"); openBox.className = "openslots"; openBox.open = true;
+    var summary = document.createElement("summary");
+    summary.textContent = openSlots.length + " open shift" + (openSlots.length===1?"":"s") + " still need a name";
+    openBox.appendChild(summary);
+    var openList = el("div","openslots-list");
+    openSlots.slice().sort(function(a,b){ return a.ev.show_date < b.ev.show_date ? -1 : a.ev.show_date > b.ev.show_date ? 1 : 0; })
+      .forEach(function(slot){
+        var row = el("div","openslots-row");
+        var showLink = el("button","openslots-showlink",
+          shortDate(slot.ev.show_date) + " · " + slot.ev.venue + " · " + showName(slot.ev));
+        showLink.type = "button";
+        showLink.onclick = function(){ openEvent(slot.ev.id); };
+        row.appendChild(showLink);
+        row.appendChild(el("span","pill s-hold2", slot.role));
+
+        var personSel = selectKV([{value:"",label:"TBA (unfilled)"}].concat(
+          store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; })),
+          "", async function(v){
+            await api("/api/assignments/" + slot.assignmentId, {method:"PATCH",
+              body: JSON.stringify({person_id: v ? Number(v) : null})});
+            await loadEvents();
+            renderStaffView();
+          });
+        row.appendChild(personSel);
+
+        var timeInput = document.createElement("input");
+        timeInput.type = "time";
+        timeInput.value = slot.scheduledTime || "";
+        timeInput.onchange = async function(){
+          await api("/api/assignments/" + slot.assignmentId, {method:"PATCH",
+            body: JSON.stringify({scheduled_time: timeInput.value || null})});
+          await loadEvents();
+          renderStaffView();
+        };
+        row.appendChild(timeInput);
+
+        openList.appendChild(row);
+      });
+    openBox.appendChild(openList);
+    host.appendChild(openBox);
+  }
 
   if(store.people.length){
     host.appendChild(el("h3","section","The roster"));
@@ -1504,10 +1537,19 @@ async function refreshEventMessages(){
   if(r.ok && draft && draft.id === id){ draft.messages = r.body.messages; renderSheet(); }
   await refreshMentions();
 }
-function openScrim(){ document.getElementById("scrim").hidden = false; document.body.style.overflow = "hidden"; }
+// Remembers whichever tab was showing when a sheet opened, so closing it
+// (Done/Close/✕/Esc/after Save or Delete) goes back to THAT tab — opening
+// a show from Staff and landing back on Calendar was several unwanted
+// extra clicks for something that started on Staff.
+var sheetOpenedFromView = null;
+function openScrim(){
+  document.getElementById("scrim").hidden = false; document.body.style.overflow = "hidden";
+  if(sheetOpenedFromView === null) sheetOpenedFromView = ui.view;
+}
 function closeSheet(){
   document.getElementById("scrim").hidden = true; document.body.style.overflow = ""; draft = null;
-  if(ui.view !== "calendar"){ ui.view = "calendar"; setActiveTab(); renderAll(); }
+  if(sheetOpenedFromView && ui.view !== sheetOpenedFromView){ ui.view = sheetOpenedFromView; setActiveTab(); renderAll(); }
+  sheetOpenedFromView = null;
 }
 
 /* Autosave for an existing show being edited: every keystroke/selection
@@ -1779,17 +1821,24 @@ function renderSheet(){
       methodSel = selectKV([{value:"phone",label:"Phone"},{value:"text",label:"Text"},
         {value:"email",label:"Email"},{value:"messenger",label:"Messenger"}], "phone", function(){});
       midRow.appendChild(methodSel);
+      var contactNoteInput = document.createElement("input");
+      contactNoteInput.type = "text";
+      contactNoteInput.placeholder = "e.g. checking with band";
+      contactNoteInput.className = "actcontact-note-input";
+      midRow.appendChild(contactNoteInput);
       var logBtn = el("button","btn btn-sm","Log contact");
       logBtn.type = "button";
       logBtn.onclick = async function(){
-        var r = await api("/api/event_artists/" + a.id + "/contacts", {method:"POST", body: JSON.stringify({method: methodSel.value})});
+        var note = contactNoteInput.value.trim() || null;
+        var r = await api("/api/event_artists/" + a.id + "/contacts", {method:"POST",
+          body: JSON.stringify({method: methodSel.value, note: note})});
         if(r.ok){
           // Append locally and re-render immediately rather than
           // refreshDraft() — "artists" is in UNSAVED_FIELDS so a refresh
           // would re-apply this same stale draft.artists over the fresh
           // server copy and the new contact would never appear.
           a.contacts = a.contacts || [];
-          a.contacts.push({method: methodSel.value, person_name: me.name, created_at: new Date().toISOString()});
+          a.contacts.push({method: methodSel.value, note: note, person_name: me.name, created_at: new Date().toISOString()});
           renderSheet();
         }
       };
@@ -1822,8 +1871,9 @@ function renderSheet(){
         contactWrap.innerHTML = "";
         var toShow = contactsExpanded ? contacts : contacts.slice(0,1);
         toShow.forEach(function(c){
-          contactWrap.appendChild(el("p","actcontact-entry",
-            c.method + " — " + (c.person_name||"someone") + " — " + messageTime(c.created_at)));
+          var line = c.method + " — " + (c.person_name||"someone") + " — " + messageTime(c.created_at);
+          if(c.note) line += " — " + c.note;
+          contactWrap.appendChild(el("p","actcontact-entry", line));
         });
         if(contacts.length > 1){
           var toggle = el("button","link-btn", contactsExpanded ? "Show less" : "Show all " + contacts.length + " contacts");
@@ -2286,10 +2336,18 @@ function renderSheet(){
   }
   foot.appendChild(errLine);
   foot.appendChild(el("div","spacer"));
-  if(!draftIsNew){
+  if(!draftIsNew && draft.status !== "complete"){
     var del = el("button","btn btn-danger","Delete");
-    del.onclick = function(){
-      window.alert("Deleting a show isn't available yet — mark it “Didn't work out” instead.");
+    del.onclick = async function(){
+      if(!window.confirm("Delete " + fullBillName(draft) + " (" + shortDate(draft.show_date) + ")? This can't be undone.")) return;
+      var r = await api("/api/events/" + draft.id, {method:"DELETE"});
+      if(r.ok){
+        closeSheet();
+        await loadEvents();
+      } else {
+        errLine.style.color = "var(--dead)";
+        errLine.textContent = r.body.error || "Could not delete.";
+      }
     };
     foot.appendChild(del);
   }
