@@ -354,6 +354,69 @@ def create_app():
         )
         return jsonify(ok=True, version=result[0])
 
+    @app.get("/api/people")
+    @require_booker
+    def list_people():
+        # Who's working a show is a booking-office concern; crew has no
+        # reason to see the roster (and its own read of a show already
+        # limits them to only their own assignment — see permissions.py).
+        cur = g.db.cursor()
+        cur.execute("SELECT id, name, email, phone, active FROM people WHERE active ORDER BY name")
+        cols = [c.name for c in cur.description]
+        return jsonify(people=[dict(zip(cols, row)) for row in cur.fetchall()])
+
+    @app.get("/api/roles")
+    @require_booker
+    def list_roles():
+        cur = g.db.cursor()
+        cur.execute("SELECT id, name FROM roles ORDER BY name")
+        cols = [c.name for c in cur.description]
+        return jsonify(roles=[dict(zip(cols, row)) for row in cur.fetchall()])
+
+    @app.post("/api/events/<int:event_id>/assignments")
+    @require_booker
+    def create_assignment(event_id):
+        body = request.get_json(silent=True) or {}
+        role_id = body.get("role_id")
+        person_id = body.get("person_id")
+        if not role_id or not person_id:
+            return jsonify(error="role_id and person_id are required"), 400
+
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("SELECT 1 FROM roles WHERE id = %s", (role_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="unknown_role"), 400
+        cur.execute("SELECT name FROM people WHERE id = %s AND active", (person_id,))
+        person_row = cur.fetchone()
+        if person_row is None:
+            return jsonify(error="unknown_person"), 400
+
+        cur.execute(
+            "INSERT INTO assignments (event_id, role_id, person_id) VALUES (%s, %s, %s) RETURNING id",
+            (event_id, role_id, person_id),
+        )
+        assignment_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "event", event_id, "assign",
+                     {"role_id": role_id, "person_id": person_id, "person_name": person_row[0]})
+        return jsonify(id=assignment_id), 201
+
+    @app.delete("/api/assignments/<int:assignment_id>")
+    @require_booker
+    def delete_assignment(assignment_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT event_id, role_id, person_id FROM assignments WHERE id = %s", (assignment_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        event_id, role_id, person_id = row
+        cur.execute("DELETE FROM assignments WHERE id = %s", (assignment_id,))
+        audit.record(g.db, g.viewer, "event", event_id, "unassign",
+                     {"role_id": role_id, "person_id": person_id})
+        return jsonify(ok=True)
+
     return app
 
 

@@ -156,7 +156,7 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT asg.event_id, r.name AS role, p.id AS person_id, p.name AS person_name
+            SELECT asg.id, asg.event_id, r.name AS role, p.id AS person_id, p.name AS person_name
             FROM assignments asg
             JOIN roles r ON r.id = asg.role_id
             LEFT JOIN people p ON p.id = asg.person_id

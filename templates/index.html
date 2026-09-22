@@ -50,6 +50,16 @@
   #bookCancel{background:var(--ground);color:var(--ink-2)}
   #bookError{color:#9a3b3b;font-size:12.5px}
 
+  #staffPanel{background:var(--surface);border:1px solid var(--line);border-radius:8px;
+              padding:14px 16px;margin:-6px 0 16px}
+  #staffPanel .row{margin-bottom:0}
+  #staffPanel select{padding:7px 8px}
+  #staffAddBtn{background:var(--ground);color:var(--ink-2);border:1px solid var(--line);
+               white-space:nowrap;padding:7px 12px}
+  .staffRow{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13.5px}
+  .staffRow .role{color:var(--ink-3);width:110px;flex:none}
+  .staffRow button{border:0;background:none;color:#9a3b3b;cursor:pointer;font-size:13px;margin-left:auto}
+
   table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);
         border-radius:8px;overflow:hidden}
   th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);font-size:13.5px}
@@ -116,6 +126,21 @@
     </div>
   </form>
 
+  <div id="staffPanel" style="display:none">
+    <div id="staffList"></div>
+    <div class="row" style="margin-top:8px">
+      <div class="field">
+        <select id="staffRole"></select>
+      </div>
+      <div class="field">
+        <select id="staffPerson"></select>
+      </div>
+      <div class="field" style="flex:0">
+        <button type="button" id="staffAddBtn">+ Assign</button>
+      </div>
+    </div>
+  </div>
+
   <div id="eventsHost"></div>
 </div>
 
@@ -170,7 +195,8 @@ async function loadEvents() {
 }
 
 async function loadBookingForm() {
-  const [venues, artists] = await Promise.all([api("/api/venues"), api("/api/artists")]);
+  const [venues, artists, roles, people] = await Promise.all(
+    [api("/api/venues"), api("/api/artists"), api("/api/roles"), api("/api/people")]);
   if (venues.ok) {
     document.getElementById("bookVenue").innerHTML =
       venues.body.venues.map(v => `<option value="${v.id}">${v.name}</option>`).join("");
@@ -179,6 +205,35 @@ async function loadBookingForm() {
     document.getElementById("artistNames").innerHTML =
       artists.body.artists.map(a => `<option value="${a.name}">`).join("");
   }
+  if (roles.ok) {
+    document.getElementById("staffRole").innerHTML =
+      roles.body.roles.map(r => `<option value="${r.id}">${r.name}</option>`).join("");
+  }
+  if (people.ok) {
+    document.getElementById("staffPerson").innerHTML =
+      people.body.people.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+  }
+}
+
+function renderStaffList() {
+  const e = lastEvents.find(x => x.id === editingId);
+  const staff = (e && e.staff) || [];
+  const host = document.getElementById("staffList");
+  host.innerHTML = staff.length
+    ? staff.map(s => `
+        <div class="staffRow">
+          <span class="role">${s.role}</span>
+          <span>${s.person_name || "(removed person)"}</span>
+          <button type="button" data-remove="${s.id}">Remove</button>
+        </div>`).join("")
+    : `<div style="color:var(--ink-3);font-size:13px">Nobody assigned yet.</div>`;
+  host.querySelectorAll("button[data-remove]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      await api(`/api/assignments/${btn.dataset.remove}`, {method: "DELETE"});
+      await loadEvents();
+      renderStaffList();
+    });
+  });
 }
 
 function openEditForm(eventId) {
@@ -200,6 +255,8 @@ function openEditForm(eventId) {
   document.getElementById("bookSubmit").textContent = "Save changes";
   document.getElementById("bookError").textContent = "";
   document.getElementById("bookForm").style.display = "block";
+  document.getElementById("staffPanel").style.display = "block";
+  renderStaffList();
 }
 
 async function boot() {
@@ -243,9 +300,27 @@ document.getElementById("bookBtn").addEventListener("click", () => {
   document.getElementById("bookError").textContent = "";
   document.getElementById("bookForm").style.display = "block";
   document.getElementById("bookDate").valueAsDate = new Date();
+  document.getElementById("staffPanel").style.display = "none";  // no event_id yet to assign against
+});
+
+document.getElementById("staffAddBtn").addEventListener("click", async () => {
+  if (!editingId) return;
+  const role_id = Number(document.getElementById("staffRole").value);
+  const person_id = Number(document.getElementById("staffPerson").value);
+  if (!role_id || !person_id) return;
+  const {ok, body} = await api(`/api/events/${editingId}/assignments`, {
+    method: "POST", body: JSON.stringify({role_id, person_id}),
+  });
+  if (ok) {
+    await loadEvents();
+    renderStaffList();
+  } else {
+    document.getElementById("bookError").textContent = body.error || "Could not assign that person.";
+  }
 });
 document.getElementById("bookCancel").addEventListener("click", () => {
   document.getElementById("bookForm").style.display = "none";
+  document.getElementById("staffPanel").style.display = "none";
   document.getElementById("bookError").textContent = "";
 });
 document.getElementById("bookForm").addEventListener("submit", async (e) => {
@@ -265,6 +340,7 @@ document.getElementById("bookForm").addEventListener("submit", async (e) => {
   }
   if (ok) {
     document.getElementById("bookForm").style.display = "none";
+    document.getElementById("staffPanel").style.display = "none";
     document.getElementById("bookForm").reset();
     document.getElementById("bookError").textContent = "";
     editingId = null;
