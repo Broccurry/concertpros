@@ -258,7 +258,30 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .banner .btn{margin-left:auto;background:transparent;border-color:currentColor;color:inherit}
 .banner.warn{background:var(--hold-3-bg);border-color:var(--hold-1-bg);color:var(--hold-1)}
 tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
+tbody tr.ma-due td:first-child{box-shadow:inset 3px 0 0 var(--dead)}
 .notice{font-size:12px;color:var(--ink-3);margin-top:14px;text-align:center}
+
+/* Vision board: quarters run left to right as columns, each one a stack of
+   sticky notes. Colors just rotate for visual variety, no meaning attached. */
+.visionboard{display:flex;gap:16px;overflow-x:auto;padding-bottom:8px;align-items:flex-start}
+.visioncol{flex:0 0 220px;min-width:220px}
+.visioncol-head{font-family:var(--display);text-transform:uppercase;font-size:13px;letter-spacing:.03em;
+                 color:var(--ink-2);margin:0 0 10px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.visioncol-notes{display:flex;flex-direction:column;gap:12px}
+.stickynote{border-radius:2px;padding:14px;cursor:pointer;box-shadow:var(--shadow);
+            transform:rotate(-1deg);transition:transform .1s}
+.stickynote:nth-child(even){transform:rotate(1deg)}
+.stickynote:hover{transform:rotate(0deg) scale(1.02)}
+.stickynote-text{margin:0;font-size:13.5px;line-height:1.4;white-space:pre-wrap;color:#1a1a1a}
+.note-yellow{background:#f6e58d}
+.note-pink{background:#f7c6d9}
+.note-green{background:#c8e6c9}
+.note-blue{background:#bbdefb}
+.note-orange{background:#ffd8a8}
+@media (max-width:660px){
+  .visionboard{flex-direction:column}
+  .visioncol{flex:none;min-width:0}
+}
 
 @media (max-width:860px){.legend{margin-left:0;width:100%}.monthnav h2{min-width:140px;font-size:17px}}
 @media (max-width:660px){
@@ -294,7 +317,8 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
         <button role="tab" data-view="list" aria-selected="false">List</button>
         <button role="tab" data-view="artists" aria-selected="false">Artists</button>
         <button role="tab" data-view="staff" aria-selected="false">Staff</button>
-        <button role="tab" data-view="people" aria-selected="false">People</button>
+        <button role="tab" data-view="vision" aria-selected="false">Vision Board</button>
+        <button role="tab" data-view="ma" aria-selected="false">M/A Offers</button>
         <button role="tab" data-view="settings" aria-selected="false">Settings</button>
       </div>
       <div class="monthnav" id="monthnav">
@@ -332,6 +356,8 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
       <button type="button" class="btn btn-primary" id="addPersonBtn" style="margin-bottom:12px">+ Add a person</button>
       <div id="peopleHost"></div>
     </section>
+    <section id="view-vision" hidden></section>
+    <section id="view-ma" hidden></section>
     <section id="view-settings" hidden></section>
     <p class="notice" id="storeNotice"></p>
   </main>
@@ -447,7 +473,7 @@ function staffLabel(s){ return s.person_name || (s.person_id ? "(removed person)
 function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
 
 /* ============================== state =============================== */
-var store = {events:[], venues:[], roles:[], people:[], artists:[]};
+var store = {events:[], venues:[], roles:[], people:[], artists:[], visionNotes:[], maOffers:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
 var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__"};
@@ -486,11 +512,14 @@ async function loadEvents(){
 }
 async function loadBookerLookups(){
   if(!canBook()) return;
-  var [v, ro, pe, ar] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"), api("/api/artists")]);
+  var [v, ro, pe, ar, vn, ma] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
+    api("/api/artists"), api("/api/vision_notes"), api("/api/ma_offers")]);
   if(v.ok) store.venues = v.body.venues;
   if(ro.ok) store.roles = ro.body.roles;
   if(pe.ok) store.people = pe.body.people;
   if(ar.ok) store.artists = ar.body.artists;
+  if(vn.ok) store.visionNotes = vn.body.notes;
+  if(ma.ok) store.maOffers = ma.body.offers;
 }
 
 /* ============================== dom helpers ========================== */
@@ -515,7 +544,7 @@ function renderAll(){
   }).length;
   document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + all.length + " total";
 
-  ["calendar","list","artists","staff","people","settings"].forEach(function(v){
+  ["calendar","list","artists","staff","people","vision","ma","settings"].forEach(function(v){
     document.getElementById("view-" + v).hidden = (v !== ui.view);
   });
   if(ui.view === "calendar") renderCalendar();
@@ -523,6 +552,8 @@ function renderAll(){
   if(ui.view === "artists") renderArtistsView();
   if(ui.view === "staff") renderStaffView();
   if(ui.view === "people") renderPeopleTable();
+  if(ui.view === "vision") renderVisionBoard();
+  if(ui.view === "ma") renderMAOffers();
   if(ui.view === "settings") renderSettingsView();
 }
 
@@ -1444,6 +1475,250 @@ async function refreshDraft(){
   renderSheet();
 }
 
+/* ============================== vision board ============================ */
+var NOTE_COLORS = ["note-yellow","note-pink","note-green","note-blue","note-orange"];
+function quarterKey(n){ return (n.target_quarter && n.target_year) ? n.target_year + "-" + n.target_quarter : "someday"; }
+function quarterLabel(key){
+  if(key === "someday") return "Someday — no target yet";
+  var parts = key.split("-");
+  return "Q" + parts[1] + " " + parts[0];
+}
+function visionColumns(){
+  var groups = {};
+  (store.visionNotes||[]).forEach(function(n){
+    var key = quarterKey(n);
+    (groups[key] = groups[key] || []).push(n);
+  });
+  var dated = Object.keys(groups).filter(function(k){ return k !== "someday"; }).sort(function(a,b){
+    var pa = a.split("-").map(Number), pb = b.split("-").map(Number);
+    return pa[0] - pb[0] || pa[1] - pb[1];
+  });
+  var keys = dated.concat(groups["someday"] ? ["someday"] : []);
+  return keys.map(function(k){ return {key:k, notes: groups[k]}; });
+}
+function renderVisionBoard(){
+  var host = document.getElementById("view-vision");
+  host.innerHTML = "";
+  var addBtn = el("button","btn btn-primary","+ New idea");
+  addBtn.type = "button";
+  addBtn.style.marginBottom = "14px";
+  addBtn.onclick = function(){ openVisionNoteForm(null); };
+  host.appendChild(addBtn);
+
+  if(!(store.visionNotes||[]).length){
+    var e = el("div","empty");
+    e.appendChild(el("h3",null,"No ideas on the board yet"));
+    e.appendChild(el("p",null,"Post one up — a rough idea, a goal, whatever's worth not forgetting."));
+    host.appendChild(e);
+    return;
+  }
+
+  var board = el("div","visionboard");
+  visionColumns().forEach(function(col, ci){
+    var colEl = el("div","visioncol");
+    colEl.appendChild(el("h3","visioncol-head", quarterLabel(col.key)));
+    var wrap = el("div","visioncol-notes");
+    col.notes.forEach(function(n, ni){
+      var color = NOTE_COLORS[(ci+ni) % NOTE_COLORS.length];
+      var card = el("div","stickynote " + color);
+      card.appendChild(el("p","stickynote-text", n.content));
+      card.onclick = function(){ openVisionNoteForm(n.id); };
+      wrap.appendChild(card);
+    });
+    colEl.appendChild(wrap);
+    board.appendChild(colEl);
+  });
+  host.appendChild(board);
+}
+function openVisionNoteForm(noteId){
+  var n = noteId ? (store.visionNotes||[]).find(function(x){ return x.id === noteId; }) : null;
+  var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
+  document.getElementById("sheetTitle").textContent = n ? "Edit idea" : "New idea";
+  body.innerHTML = ""; foot.innerHTML = "";
+
+  var draftN = n ? {content:n.content, target_quarter:n.target_quarter||"", target_year:n.target_year||""}
+                 : {content:"", target_quarter:"", target_year:""};
+
+  var fs = document.createElement("fieldset");
+  fs.appendChild(el("legend",null,"The idea"));
+  var ta = document.createElement("textarea");
+  ta.value = draftN.content;
+  ta.rows = 4;
+  ta.oninput = function(){ draftN.content = ta.value; };
+  var contentField = field("What's the idea", ta);
+  fs.appendChild(contentField);
+
+  var r = el("div","row"); r.style.marginTop = "10px";
+  var qOpts = [{value:"",label:"No target yet"},{value:"1",label:"Q1"},{value:"2",label:"Q2"},
+    {value:"3",label:"Q3"},{value:"4",label:"Q4"}];
+  r.appendChild(field("Target quarter", selectKV(qOpts, String(draftN.target_quarter), function(v){ draftN.target_quarter = v; })));
+  var thisYear = new Date().getFullYear();
+  var yOpts = [{value:"",label:"—"}];
+  for(var y = thisYear; y <= thisYear + 3; y++) yOpts.push({value:String(y), label:String(y)});
+  r.appendChild(field("Year", selectKV(yOpts, String(draftN.target_year), function(v){ draftN.target_year = v; })));
+  fs.appendChild(r);
+  body.appendChild(fs);
+
+  var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
+  var save = el("button","btn btn-primary","Save");
+  save.onclick = async function(){
+    errLine.textContent = "";
+    var content = draftN.content.trim();
+    if(!content){ errLine.textContent = "Write the idea first."; return; }
+    var payload = {content: content, target_quarter: draftN.target_quarter || null, target_year: draftN.target_year || null};
+    var r2 = n ? await api("/api/vision_notes/" + n.id, {method:"PATCH", body: JSON.stringify(payload)})
+               : await api("/api/vision_notes", {method:"POST", body: JSON.stringify(payload)});
+    if(!r2.ok){ errLine.textContent = r2.body.error || "Could not save."; return; }
+    await loadBookerLookups();
+    closeSheet();
+    renderAll();
+  };
+  foot.appendChild(save);
+  var cancel = el("button","btn","Cancel");
+  cancel.onclick = closeSheet;
+  foot.appendChild(cancel);
+  foot.appendChild(errLine);
+  if(n){
+    foot.appendChild(el("div","spacer"));
+    var del = el("button","btn btn-danger","Delete");
+    del.onclick = async function(){
+      await api("/api/vision_notes/" + n.id, {method:"DELETE"});
+      await loadBookerLookups();
+      closeSheet();
+      renderAll();
+    };
+    foot.appendChild(del);
+  }
+  openScrim();
+}
+
+/* ============================== M/A offers =============================== */
+function maDueClass(o){
+  if(o.status !== "open" || !o.follow_up_date) return "";
+  return o.follow_up_date <= todayISO() ? "ma-due" : "";
+}
+function renderMAOffers(){
+  var host = document.getElementById("view-ma");
+  host.innerHTML = "";
+  var addBtn = el("button","btn btn-primary","+ New M/A offer");
+  addBtn.type = "button";
+  addBtn.style.marginBottom = "14px";
+  addBtn.onclick = function(){ openMAOfferForm(null); };
+  host.appendChild(addBtn);
+
+  var offers = store.maOffers||[];
+  if(!offers.length){
+    var e = el("div","empty");
+    e.appendChild(el("h3",null,"No open offers"));
+    e.appendChild(el("p",null,"A mutually-agreeable offer has no set response deadline — log it here so it doesn't quietly fall through the cracks."));
+    host.appendChild(e);
+    return;
+  }
+  var dueCount = offers.filter(function(o){ return maDueClass(o); }).length;
+  if(dueCount) host.appendChild(el("p","notice", dueCount + " offer" + (dueCount===1?"":"s") + " due for a follow-up."));
+
+  var wrap = el("div","tablewrap"), t = document.createElement("table");
+  var thead = document.createElement("thead"), hr = document.createElement("tr");
+  ["Title","Artist","Submitted","Follow up","Status"].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+  thead.appendChild(hr); t.appendChild(thead);
+  var tb = document.createElement("tbody");
+  offers.forEach(function(o){
+    var tr = document.createElement("tr");
+    tr.className = maDueClass(o);
+    tr.onclick = function(){ openMAOfferForm(o.id); };
+    tr.appendChild(el("td","title-cell", o.title));
+    tr.appendChild(el("td", o.artist_name ? null : "sub", o.artist_name || "—"));
+    tr.appendChild(el("td","date-col", shortDate(o.submitted_date)));
+    tr.appendChild(el("td","date-col", o.follow_up_date ? shortDate(o.follow_up_date) : "—"));
+    var stc = document.createElement("td");
+    stc.appendChild(el("span","pill " + (o.status === "open" ? "s-hold1" : "pill-muted"), o.status === "open" ? "Open" : "Closed"));
+    tr.appendChild(stc);
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
+}
+function openMAOfferForm(offerId){
+  var o = offerId ? (store.maOffers||[]).find(function(x){ return x.id === offerId; }) : null;
+  var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
+  document.getElementById("sheetTitle").textContent = o ? o.title : "New M/A offer";
+  body.innerHTML = ""; foot.innerHTML = "";
+
+  var draftO = o ? {title:o.title, artist_id:o.artist_id||"", notes:o.notes||"", link:o.link||"",
+                    submitted_date:o.submitted_date, follow_up_date:o.follow_up_date||"", status:o.status}
+                 : {title:"", artist_id:"", notes:"", link:"", submitted_date: todayISO(), follow_up_date:"", status:"open"};
+
+  var fs = document.createElement("fieldset");
+  fs.appendChild(el("legend",null,"Offer"));
+  fs.appendChild(field("Title", input("text", draftO.title, function(v){ draftO.title = v; })));
+  var artistOpts = [{value:"",label:"No band linked"}].concat(
+    store.artists.slice().sort(function(a,b){ return a.name.localeCompare(b.name); })
+      .map(function(a){ return {value:a.id, label:a.name}; }));
+  var r0 = el("div","row"); r0.style.marginTop = "10px";
+  r0.appendChild(field("Band (optional)", selectKV(artistOpts, draftO.artist_id, function(v){ draftO.artist_id = v ? Number(v) : ""; })));
+  r0.appendChild(field("Link to the offer", input("text", draftO.link, function(v){ draftO.link = v; })));
+  fs.appendChild(r0);
+  var notesTa = document.createElement("textarea");
+  notesTa.value = draftO.notes; notesTa.rows = 3;
+  notesTa.oninput = function(){ draftO.notes = notesTa.value; };
+  var notesField = field("Notes / terms", notesTa); notesField.style.marginTop = "10px";
+  fs.appendChild(notesField);
+  var r1 = el("div","row"); r1.style.marginTop = "10px";
+  r1.appendChild(field("Submitted", input("date", draftO.submitted_date, function(v){ draftO.submitted_date = v; })));
+  r1.appendChild(field("Follow up on", input("date", draftO.follow_up_date, function(v){ draftO.follow_up_date = v; })));
+  fs.appendChild(r1);
+  body.appendChild(fs);
+
+  if(o){
+    var fs2 = document.createElement("fieldset");
+    fs2.appendChild(el("legend",null,"Status"));
+    var sg = el("div","statusgrid");
+    [["open","Open"],["closed","Closed"]].forEach(function(opt){
+      var b = el("button","statusopt", opt[1]);
+      b.type = "button";
+      b.setAttribute("aria-pressed", draftO.status === opt[0] ? "true" : "false");
+      b.onclick = function(){ draftO.status = opt[0]; sg.querySelectorAll("button").forEach(function(x){
+        x.setAttribute("aria-pressed", x.textContent.toLowerCase() === opt[0] ? "true" : "false"); }); };
+      sg.appendChild(b);
+    });
+    fs2.appendChild(sg);
+    body.appendChild(fs2);
+  }
+
+  var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
+  var save = el("button","btn btn-primary","Save");
+  save.onclick = async function(){
+    errLine.textContent = "";
+    var title = draftO.title.trim();
+    if(!title){ errLine.textContent = "Give it a title."; return; }
+    var payload = {title:title, artist_id: draftO.artist_id || null, notes: draftO.notes, link: draftO.link,
+                    submitted_date: draftO.submitted_date, follow_up_date: draftO.follow_up_date || null};
+    if(o) payload.status = draftO.status;
+    var r2 = o ? await api("/api/ma_offers/" + o.id, {method:"PATCH", body: JSON.stringify(payload)})
+               : await api("/api/ma_offers", {method:"POST", body: JSON.stringify(payload)});
+    if(!r2.ok){ errLine.textContent = r2.body.error || "Could not save."; return; }
+    await loadBookerLookups();
+    closeSheet();
+    renderAll();
+  };
+  foot.appendChild(save);
+  var cancel = el("button","btn","Cancel");
+  cancel.onclick = closeSheet;
+  foot.appendChild(cancel);
+  foot.appendChild(errLine);
+  if(o){
+    foot.appendChild(el("div","spacer"));
+    var del = el("button","btn btn-danger","Delete");
+    del.onclick = async function(){
+      await api("/api/ma_offers/" + o.id, {method:"DELETE"});
+      await loadBookerLookups();
+      closeSheet();
+      renderAll();
+    };
+    foot.appendChild(del);
+  }
+  openScrim();
+}
+
 /* ============================== people & roles ========================= */
 function renderPeopleTable(){
   var host = document.getElementById("peopleHost");
@@ -1611,6 +1886,17 @@ function renderSettingsView(){
   fs.appendChild(grid);
   fs.appendChild(el("p","hint","Dark and Light stay picked on this device regardless of your system setting. Match device follows whatever your phone or computer is set to."));
   host.appendChild(fs);
+
+  if(canBook()){
+    var fsPeople = document.createElement("fieldset");
+    fsPeople.appendChild(el("legend",null,"People"));
+    fsPeople.appendChild(el("p","hint","Create accounts, set access level, and manage who covers which job role."));
+    var goPeople = el("button","btn btn-primary","Manage people");
+    goPeople.type = "button";
+    goPeople.onclick = function(){ ui.view = "people"; setActiveTab(); renderAll(); };
+    fsPeople.appendChild(goPeople);
+    host.appendChild(fsPeople);
+  }
 }
 
 /* ============================== boot =================================== */

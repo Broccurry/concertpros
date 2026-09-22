@@ -204,6 +204,41 @@ CREATE TABLE audit_log (
 CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX idx_audit_created ON audit_log(created_at);
 
+-- The vision board: rough, editable-anytime ideas/goals with a soft target
+-- quarter, not a real commitment like a booking. quarter/year travel
+-- together (both set or both null = "someday, no target yet") so sorting
+-- and grouping by quarter never has to parse a free-text date out of a
+-- string.
+CREATE TABLE vision_notes (
+    id              SERIAL PRIMARY KEY,
+    content         TEXT NOT NULL,
+    target_quarter  INTEGER CHECK (target_quarter BETWEEN 1 AND 4),
+    target_year     INTEGER,
+    created_by      INTEGER REFERENCES people(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Mutually-agreeable offers: sent, no fixed response deadline, but someone
+-- still needs to check back on it. Separate from vision_notes on purpose —
+-- these are live negotiations with a real follow-up date, not brainstorming.
+-- artist_id is optional: a band not yet in the roster can still get an M/A
+-- offer logged under a plain title.
+CREATE TABLE ma_offers (
+    id              SERIAL PRIMARY KEY,
+    title           TEXT NOT NULL,
+    artist_id       INTEGER REFERENCES artists(id),
+    notes           TEXT,
+    link            TEXT,               -- URL to the actual offer doc, if hosted elsewhere
+    submitted_date  DATE NOT NULL DEFAULT CURRENT_DATE,
+    follow_up_date  DATE,
+    status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+    created_by      INTEGER REFERENCES people(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_ma_offers_follow_up ON ma_offers(follow_up_date) WHERE status = 'open';
+
 -- Seed data matching what's already live in the artifact prototype.
 INSERT INTO venues (name) VALUES ('Frankies'), ('Ottawa Tavern'), ('Cla-Zel Theater');
 INSERT INTO roles (name) VALUES

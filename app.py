@@ -116,10 +116,50 @@ class ConcertProsJSONProvider(DefaultJSONProvider):
         return super().default(obj)
 
 
+def _apply_pending_schema_additions():
+    """TEMPORARY: the SSH tunnel used to run schema.sql by hand against
+    production is down (Railway-side, unrelated to this app), so these two
+    new tables get created here instead — idempotent, additive only, safe
+    to run on every boot. Remove this once the tunnel's back and schema.sql
+    has been applied the normal way."""
+    conn = db.get_connection()
+    cur = conn.cursor()
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS vision_notes (
+            id              SERIAL PRIMARY KEY,
+            content         TEXT NOT NULL,
+            target_quarter  INTEGER CHECK (target_quarter BETWEEN 1 AND 4),
+            target_year     INTEGER,
+            created_by      INTEGER REFERENCES people(id),
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ma_offers (
+            id              SERIAL PRIMARY KEY,
+            title           TEXT NOT NULL,
+            artist_id       INTEGER REFERENCES artists(id),
+            notes           TEXT,
+            link            TEXT,
+            submitted_date  DATE NOT NULL DEFAULT CURRENT_DATE,
+            follow_up_date  DATE,
+            status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+            created_by      INTEGER REFERENCES people(id),
+            created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ma_offers_follow_up ON ma_offers(follow_up_date) WHERE status = 'open'")
+    conn.commit()
+    conn.close()
+
+
 def create_app():
     app = Flask(__name__)
     app.json = ConcertProsJSONProvider(app)
     secure_cookies = os.environ.get("SECURE_COOKIES", "1") != "0"
+    _apply_pending_schema_additions()
 
     @app.before_request
     def open_db():
@@ -894,6 +934,204 @@ def create_app():
         event_id = row[0]
         cur.execute("DELETE FROM event_tasks WHERE id = %s", (task_id,))
         audit.record(g.db, g.viewer, "event", event_id, "delete_task", {"task_id": task_id})
+        return jsonify(ok=True)
+
+    @app.get("/api/vision_notes")
+    @require_booker
+    def list_vision_notes():
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT id, content, target_quarter, target_year, created_by, created_at "
+            "FROM vision_notes ORDER BY target_year NULLS LAST, target_quarter NULLS LAST, created_at"
+        )
+        cols = [c.name for c in cur.description]
+        return jsonify(notes=[dict(zip(cols, row)) for row in cur.fetchall()])
+
+    def _parse_quarter_year(body):
+        """quarter and year are a pair — both set (a real target) or both
+        null (someday, no target yet). Returns (quarter, year, error)."""
+        q, y = body.get("target_quarter"), body.get("target_year")
+        if q in (None, ""):
+            q = None
+        else:
+            try:
+                q = int(q)
+            except (TypeError, ValueError):
+                return None, None, "invalid_target_quarter"
+            if q not in (1, 2, 3, 4):
+                return None, None, "invalid_target_quarter"
+        if y in (None, ""):
+            y = None
+        else:
+            try:
+                y = int(y)
+            except (TypeError, ValueError):
+                return None, None, "invalid_target_year"
+        if (q is None) != (y is None):
+            return None, None, "target_quarter_and_year_go_together"
+        return q, y, None
+
+    @app.post("/api/vision_notes")
+    @require_booker
+    def create_vision_note():
+        body = request.get_json(silent=True) or {}
+        content = (body.get("content") or "").strip()
+        if not content:
+            return jsonify(error="content_required"), 400
+        quarter, year, err = _parse_quarter_year(body)
+        if err:
+            return jsonify(error=err), 400
+        cur = g.db.cursor()
+        cur.execute(
+            "INSERT INTO vision_notes (content, target_quarter, target_year, created_by) "
+            "VALUES (%s, %s, %s, %s) RETURNING id",
+            (content, quarter, year, g.viewer.id),
+        )
+        note_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "vision_note", note_id, "create",
+                     {"content": content, "target_quarter": quarter, "target_year": year})
+        return jsonify(id=note_id), 201
+
+    @app.patch("/api/vision_notes/<int:note_id>")
+    @require_booker
+    def update_vision_note(note_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM vision_notes WHERE id = %s", (note_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        body = request.get_json(silent=True) or {}
+        updates = {}
+        if "content" in body:
+            content = (body["content"] or "").strip()
+            if not content:
+                return jsonify(error="content_required"), 400
+            updates["content"] = content
+        if "target_quarter" in body or "target_year" in body:
+            quarter, year, err = _parse_quarter_year(body)
+            if err:
+                return jsonify(error=err), 400
+            updates["target_quarter"] = quarter
+            updates["target_year"] = year
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur.execute(f"UPDATE vision_notes SET {set_clause}, updated_at = now() WHERE id = %s",
+                    list(updates.values()) + [note_id])
+        audit.record(g.db, g.viewer, "vision_note", note_id, "update",
+                     {k: audit.jsonable(v) for k, v in updates.items()})
+        return jsonify(ok=True)
+
+    @app.delete("/api/vision_notes/<int:note_id>")
+    @require_booker
+    def delete_vision_note(note_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM vision_notes WHERE id = %s", (note_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("DELETE FROM vision_notes WHERE id = %s", (note_id,))
+        audit.record(g.db, g.viewer, "vision_note", note_id, "delete", None)
+        return jsonify(ok=True)
+
+    @app.get("/api/ma_offers")
+    @require_booker
+    def list_ma_offers():
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT o.id, o.title, o.artist_id, a.name AS artist_name, o.notes, o.link, "
+            "o.submitted_date, o.follow_up_date, o.status "
+            "FROM ma_offers o LEFT JOIN artists a ON a.id = o.artist_id "
+            "ORDER BY (o.status = 'open') DESC, o.follow_up_date NULLS LAST, o.submitted_date DESC"
+        )
+        cols = [c.name for c in cur.description]
+        return jsonify(offers=[dict(zip(cols, row)) for row in cur.fetchall()])
+
+    @app.post("/api/ma_offers")
+    @require_booker
+    def create_ma_offer():
+        body = request.get_json(silent=True) or {}
+        title = (body.get("title") or "").strip()
+        if not title:
+            return jsonify(error="title_required"), 400
+        submitted_raw = body.get("submitted_date")
+        try:
+            submitted = date.fromisoformat(submitted_raw) if submitted_raw else date.today()
+        except ValueError:
+            return jsonify(error="invalid_submitted_date"), 400
+        follow_up_raw = body.get("follow_up_date")
+        try:
+            follow_up = date.fromisoformat(follow_up_raw) if follow_up_raw else None
+        except ValueError:
+            return jsonify(error="invalid_follow_up_date"), 400
+        cur = g.db.cursor()
+        cur.execute(
+            "INSERT INTO ma_offers (title, artist_id, notes, link, submitted_date, follow_up_date, created_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (title, body.get("artist_id") or None, body.get("notes") or None, body.get("link") or None,
+             submitted, follow_up, g.viewer.id),
+        )
+        offer_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "ma_offer", offer_id, "create", {"title": title})
+        return jsonify(id=offer_id), 201
+
+    @app.patch("/api/ma_offers/<int:offer_id>")
+    @require_booker
+    def update_ma_offer(offer_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM ma_offers WHERE id = %s", (offer_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        body = request.get_json(silent=True) or {}
+        updates = {}
+        if "title" in body:
+            title = (body["title"] or "").strip()
+            if not title:
+                return jsonify(error="title_required"), 400
+            updates["title"] = title
+        if "artist_id" in body:
+            updates["artist_id"] = body["artist_id"] or None
+        if "notes" in body:
+            updates["notes"] = body["notes"] or None
+        if "link" in body:
+            updates["link"] = body["link"] or None
+        if "status" in body:
+            if body["status"] not in ("open", "closed"):
+                return jsonify(error="invalid_status"), 400
+            updates["status"] = body["status"]
+        if "submitted_date" in body:
+            val = body["submitted_date"]
+            if not val:
+                return jsonify(error="submitted_date_required"), 400
+            try:
+                updates["submitted_date"] = date.fromisoformat(val)
+            except ValueError:
+                return jsonify(error="invalid_submitted_date"), 400
+        if "follow_up_date" in body:
+            val = body["follow_up_date"]
+            if val in (None, ""):
+                updates["follow_up_date"] = None
+            else:
+                try:
+                    updates["follow_up_date"] = date.fromisoformat(val)
+                except ValueError:
+                    return jsonify(error="invalid_follow_up_date"), 400
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur.execute(f"UPDATE ma_offers SET {set_clause}, updated_at = now() WHERE id = %s",
+                    list(updates.values()) + [offer_id])
+        audit.record(g.db, g.viewer, "ma_offer", offer_id, "update",
+                     {k: audit.jsonable(v) for k, v in updates.items()})
+        return jsonify(ok=True)
+
+    @app.delete("/api/ma_offers/<int:offer_id>")
+    @require_booker
+    def delete_ma_offer(offer_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM ma_offers WHERE id = %s", (offer_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("DELETE FROM ma_offers WHERE id = %s", (offer_id,))
+        audit.record(g.db, g.viewer, "ma_offer", offer_id, "delete", None)
         return jsonify(ok=True)
 
     return app
