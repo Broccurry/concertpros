@@ -413,7 +413,7 @@ def create_app():
         normalization/dedup rule everywhere."""
         cur = g.db.cursor()
         cur.execute(
-            "SELECT tier, genre, tags, location, instagram, facebook, website, spotify, notes "
+            "SELECT tier, genre, tags, location, instagram, facebook, website, spotify, notes, active "
             "FROM artists WHERE id = %s",
             (artist_id,),
         )
@@ -421,10 +421,12 @@ def create_app():
         if row is None:
             return jsonify(error="not_found"), 404
         before = dict(zip(
-            ["tier", "genre", "tags", "location", "instagram", "facebook", "website", "spotify", "notes"], row))
+            ["tier", "genre", "tags", "location", "instagram", "facebook", "website", "spotify", "notes", "active"], row))
 
         body = request.get_json(silent=True) or {}
         updates = {}
+        if "active" in body:
+            updates["active"] = bool(body["active"])
         if "tier" in body:
             tier = body["tier"] or None
             if tier not in ("Local", "Regional", "National", None):
@@ -460,6 +462,31 @@ def create_app():
         audit.record(g.db, g.viewer, "artist", artist_id, "update",
                      {"before": {k: audit.jsonable(before.get(k)) for k in updates},
                       "after": {k: audit.jsonable(v) for k, v in updates.items()}})
+        return jsonify(ok=True)
+
+    @app.delete("/api/artists/<int:artist_id>")
+    @require_booker
+    def delete_artist(artist_id):
+        """A band with any show or M/A-offer history can't be hard-deleted
+        — that's real booking history, not something to lose because a
+        band stopped touring. Archive it instead (PATCH active=false).
+        Only a band that's never actually been booked is safe to remove
+        outright, e.g. a duplicate created by a typo."""
+        cur = g.db.cursor()
+        cur.execute("SELECT name FROM artists WHERE id = %s", (artist_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("SELECT 1 FROM event_artists WHERE artist_id = %s LIMIT 1", (artist_id,))
+        has_shows = cur.fetchone() is not None
+        cur.execute("SELECT 1 FROM ma_offers WHERE artist_id = %s LIMIT 1", (artist_id,))
+        has_offers = cur.fetchone() is not None
+        if has_shows or has_offers:
+            return jsonify(error="has_history_archive_instead"), 400
+
+        cur.execute("DELETE FROM artist_members WHERE artist_id = %s", (artist_id,))
+        cur.execute("DELETE FROM artists WHERE id = %s", (artist_id,))
+        audit.record(g.db, g.viewer, "artist", artist_id, "delete", {"name": row[0]})
         return jsonify(ok=True)
 
     @app.post("/api/artists")

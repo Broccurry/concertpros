@@ -26,7 +26,6 @@
   --confirm:#1c6b45; --confirm-bg:#c9ecd8;
   --done:#4a5262; --done-bg:#dde1e9;
   --dead:#9a3b3b; --dead-bg:#f0dada;
-  --openslot:#6b3fa0; --openslot-bg:#efe4f8;
   --shadow:0 1px 2px rgba(20,24,35,.08), 0 8px 24px rgba(20,24,35,.06);
   --radius:6px;
   --display:"Oswald","Arial Narrow",sans-serif;
@@ -40,7 +39,6 @@
     --hold-1:#2a1e05; --hold-1-bg:#d99a2b; --hold-2-bg:#6b5323; --hold-3-bg:#3a3222;
     --confirm:#b9f0d2; --confirm-bg:#1d4634; --done:#c3cad8; --done-bg:#333948;
     --dead:#f2c2c2; --dead-bg:#4d2b2b;
-    --openslot:#c7a3ec; --openslot-bg:#372a4a;
     --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
   }
 }
@@ -54,7 +52,6 @@
   --hold-1:#2a1e05; --hold-1-bg:#d99a2b; --hold-2-bg:#6b5323; --hold-3-bg:#3a3222;
   --confirm:#b9f0d2; --confirm-bg:#1d4634; --done:#c3cad8; --done-bg:#333948;
   --dead:#f2c2c2; --dead-bg:#4d2b2b;
-  --openslot:#c7a3ec; --openslot-bg:#372a4a;
   --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
 }
 *{box-sizing:border-box}
@@ -269,17 +266,28 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .checkfield{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer}
 .checkfield input{width:auto}
 
-.openslots{background:var(--openslot-bg);border:1px solid var(--openslot);border-radius:var(--radius);
+.openslots{background:var(--accent-soft);border:1px solid var(--accent);border-radius:var(--radius);
            padding:10px 12px;margin-top:16px}
-.openslots summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--openslot);list-style:revert}
+.openslots summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--accent);list-style:revert}
 .openslots-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
-.openslots-row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;width:100%;text-align:left;
+/* Fixed columns, not flex-wrap — a flexible show-link made every row a
+   different width depending on the show's name length, so nothing lined
+   up. Same fixed-column pattern as .stafrow/.tierrow elsewhere. */
+.openslots-row{display:grid;grid-template-columns:1fr 90px 130px 90px;gap:8px;align-items:center;
                background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:7px 10px;
                font-size:12.5px;color:var(--ink)}
 .openslots-showlink{border:none;background:none;color:var(--accent);font-size:12.5px;padding:0;
-                     text-decoration:underline;cursor:pointer;flex:1 1 220px;text-align:left}
-.openslots-row select{width:auto;flex:1 1 140px;font-size:12px;padding:4px 6px}
-.openslots-row input[type=time]{flex:0 0 100px;font-size:12px;padding:4px 6px}
+                     text-decoration:underline;cursor:pointer;text-align:left;overflow:hidden;
+                     text-overflow:ellipsis;white-space:nowrap}
+.openslots-row select{width:100%;font-size:12px;padding:4px 6px}
+.openslots-row input[type=time]{width:100%;font-size:12px;padding:4px 6px}
+@media (max-width: 620px){
+  .openslots-row{grid-template-columns:1fr 1fr;grid-template-areas:"show show" "role role" "person time"}
+  .openslots-showlink{grid-area:show;white-space:normal}
+  .openslots-row .pill{grid-area:role}
+  .openslots-row select{grid-area:person}
+  .openslots-row input[type=time]{grid-area:time}
+}
 .holddaterow{display:grid;grid-template-columns:1fr 130px 32px;gap:8px;align-items:center;margin-bottom:6px}
 .holddaterow>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
 
@@ -1047,10 +1055,11 @@ function renderListView(){
 }
 
 /* ============================== artists view =========================== */
-var artistFilter = {tier:"", genre:"", tag:""};
+var artistFilter = {tier:"", genre:"", tag:"", showArchived:false};
 function filteredArtists(){
   var tier = artistFilter.tier, genre = artistFilter.genre.trim().toLowerCase(), tag = artistFilter.tag.trim().toLowerCase();
   return store.artists.filter(function(a){
+    if(!artistFilter.showArchived && a.active === false) return false;
     if(tier && a.tier !== tier) return false;
     if(genre && (a.genre||"").toLowerCase().indexOf(genre) < 0) return false;
     if(tag && !(a.tags||[]).some(function(t){ return t.toLowerCase().indexOf(tag) >= 0; })) return false;
@@ -1090,6 +1099,14 @@ function renderArtistsView(){
   bar.appendChild(field("Tag", tagInput));
   host.appendChild(bar);
 
+  var archivedWrap = el("label","checkfield"); archivedWrap.style.marginBottom = "10px";
+  var archivedCb = document.createElement("input");
+  archivedCb.type = "checkbox"; archivedCb.checked = artistFilter.showArchived;
+  archivedCb.onchange = function(){ artistFilter.showArchived = archivedCb.checked; renderArtistsResults(); };
+  archivedWrap.appendChild(archivedCb);
+  archivedWrap.appendChild(document.createTextNode(" Show archived bands"));
+  host.appendChild(archivedWrap);
+
   var resultsHost = el("div");
   host.appendChild(resultsHost);
 
@@ -1109,7 +1126,9 @@ function renderArtistsView(){
       var tot = artistTotals(a.name);
       var tr = document.createElement("tr");
       tr.onclick = function(){ openArtistForm(a.id); };
-      tr.appendChild(el("td","title-cell", a.name));
+      var nameTd = el("td","title-cell", a.name);
+      if(a.active === false) nameTd.appendChild(el("span","pill pill-muted","Archived"));
+      tr.appendChild(nameTd);
       var tierTd = document.createElement("td");
       if(a.tier) tierTd.appendChild(el("span","pill s-complete", a.tier)); else { tierTd.className="sub"; tierTd.textContent="—"; }
       tr.appendChild(tierTd);
@@ -1294,6 +1313,39 @@ function openArtistForm(artistId){
     cancel.onclick = closeSheet;
     foot.appendChild(cancel);
     foot.appendChild(errLine);
+    foot.appendChild(el("div","spacer"));
+
+    if(a){
+      var archiveBtn = el("button","btn", a.active === false ? "Reactivate" : "Archive");
+      archiveBtn.type = "button";
+      archiveBtn.title = a.active === false
+        ? "Bring this band back into the active roster"
+        : "No longer active — hides it from the roster by default, keeps all its history";
+      archiveBtn.onclick = async function(){
+        await api("/api/artists/" + a.id, {method:"PATCH", body: JSON.stringify({active: a.active === false})});
+        await loadBookerLookups();
+        closeSheet();
+        renderAll();
+      };
+      foot.appendChild(archiveBtn);
+
+      var deleteBtn = el("button","btn btn-danger","Delete");
+      deleteBtn.type = "button";
+      deleteBtn.onclick = async function(){
+        if(!window.confirm("Delete " + a.name + "? This can't be undone.")) return;
+        var r = await api("/api/artists/" + a.id, {method:"DELETE"});
+        if(r.ok){
+          await loadBookerLookups();
+          closeSheet();
+          renderAll();
+        } else if(r.body.error === "has_history_archive_instead"){
+          errLine.textContent = a.name + " has real show history — Archive it instead of deleting.";
+        } else {
+          errLine.textContent = r.body.error || "Could not delete.";
+        }
+      };
+      foot.appendChild(deleteBtn);
+    }
   }
 
   renderForm();

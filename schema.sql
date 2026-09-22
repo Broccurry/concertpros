@@ -66,6 +66,7 @@ CREATE TABLE artists (
     website         TEXT,
     spotify         TEXT,
     notes           TEXT,
+    active          BOOLEAN NOT NULL DEFAULT TRUE,   -- archived, not deleted, once a band has show history
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );

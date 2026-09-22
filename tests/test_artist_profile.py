@@ -160,6 +160,62 @@ class ArtistProfile(unittest.TestCase):
         r = client.post("/api/artists", json={"name": "Should Never Exist"})
         self.assertEqual(r.status_code, 403)
 
+    def test_a_band_with_show_history_can_be_archived_not_deleted(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post("/api/events", json={
+            "venue_id": self.venue_id, "acts": [self.artist_name], "show_date": "2027-10-01",
+        })
+        self.assertEqual(r.status_code, 201, r.get_json())
+        self.event_id = r.get_json()["id"]
+
+        delete = client.delete(f"/api/artists/{self.artist_id}")
+        self.assertEqual(delete.status_code, 400)
+        self.assertEqual(delete.get_json()["error"], "has_history_archive_instead")
+
+        archive = client.patch(f"/api/artists/{self.artist_id}", json={"active": False})
+        self.assertEqual(archive.status_code, 200, archive.get_json())
+        artists = client.get("/api/artists").get_json()["artists"]
+        mine = next(a for a in artists if a["id"] == self.artist_id)
+        self.assertFalse(mine["active"])
+
+    def test_a_band_with_no_history_can_be_deleted(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        new_name = f"No History Band {id(self)}"
+        r = client.post("/api/artists", json={"name": new_name})
+        self.assertEqual(r.status_code, 201, r.get_json())
+        new_id = r.get_json()["id"]
+        self.new_artist_id = new_id  # already deleted below, but this clears its audit_log rows too
+
+        delete = client.delete(f"/api/artists/{new_id}")
+        self.assertEqual(delete.status_code, 200, delete.get_json())
+        artists = client.get("/api/artists").get_json()["artists"]
+        self.assertNotIn(new_id, [a["id"] for a in artists])
+
+    def test_booking_an_archived_band_again_reactivates_them(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        client.patch(f"/api/artists/{self.artist_id}", json={"active": False})
+
+        r = client.post("/api/events", json={
+            "venue_id": self.venue_id, "acts": [self.artist_name], "show_date": "2027-10-08",
+        })
+        self.assertEqual(r.status_code, 201, r.get_json())
+        self.event_id = r.get_json()["id"]
+
+        artists = client.get("/api/artists").get_json()["artists"]
+        mine = next(a for a in artists if a["id"] == self.artist_id)
+        self.assertTrue(mine["active"], "booking an archived band again must bring them back")
+
+    def test_crew_cannot_delete_or_archive_a_band(self):
+        client = self.app.test_client()
+        self._login(client, self.crew_email)
+        r1 = client.delete(f"/api/artists/{self.artist_id}")
+        self.assertEqual(r1.status_code, 403)
+        r2 = client.patch(f"/api/artists/{self.artist_id}", json={"active": False})
+        self.assertEqual(r2.status_code, 403)
+
     def test_socials_round_trip(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)

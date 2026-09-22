@@ -28,6 +28,10 @@ def find_or_create(conn, name: str) -> int:
     cur.execute("SELECT id, name FROM artists")
     for artist_id, existing_name in cur.fetchall():
         if _normalize(existing_name) == target:
+            # Booking them is unambiguous evidence they're active again —
+            # an archived band shouldn't stay hidden from the roster once
+            # someone's actually booking them.
+            cur.execute("UPDATE artists SET active = TRUE WHERE id = %s AND active = FALSE", (artist_id,))
             return artist_id
 
     cur.execute("INSERT INTO artists (name) VALUES (%s) RETURNING id", (name,))
@@ -37,7 +41,7 @@ def find_or_create(conn, name: str) -> int:
 def list_artists(conn) -> list[dict]:
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, name, tier, genre, tags, location, instagram, facebook, website, spotify, notes "
+        "SELECT id, name, tier, genre, tags, location, instagram, facebook, website, spotify, notes, active "
         "FROM artists ORDER BY name"
     )
     cols = [c.name for c in cur.description]
