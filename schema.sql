@@ -272,6 +272,7 @@ CREATE TABLE vision_cards (
     notes             TEXT,
     link              TEXT,
     follow_up_date    DATE,
+    follow_up_person_id INTEGER REFERENCES people(id),  -- who the follow-up bell notifies
     created_by        INTEGER REFERENCES people(id),
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()

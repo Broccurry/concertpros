@@ -372,8 +372,17 @@ def create_app():
             (g.viewer.id,),
         )
         mention_count = cur.fetchone()[0]
+        # Follow-ups have no separate read/unread flag like a message mention
+        # does — "due" IS the notification, and it clears itself the moment
+        # the date moves out or the card's reassigned/cleared, same as a
+        # todo's due date rather than an inbox item to dismiss.
+        cur.execute(
+            "SELECT count(*) FROM vision_cards WHERE follow_up_person_id = %s AND follow_up_date <= CURRENT_DATE",
+            (g.viewer.id,),
+        )
+        followup_count = cur.fetchone()[0]
         return jsonify(id=g.viewer.id, name=name, email=email, access_level=access_level,
-                       mention_count=mention_count)
+                       mention_count=mention_count, followup_count=followup_count)
 
     @app.get("/api/events")
     @require_auth
@@ -1421,16 +1430,28 @@ def create_app():
     @app.get("/api/files")
     @require_booker
     def list_files():
+        # ?event_id=X scopes to one show's folder (the show editor's Files
+        # section); no filter returns everything, which is what the Files
+        # tab needs to build its folder-per-show view without a second
+        # round trip per folder.
         event_id = request.args.get("event_id", type=int)
         cur = g.db.cursor()
-        cur.execute(
-            """SELECT f.id, f.event_id, f.filename, f.content_type, f.size_bytes,
-                      f.uploaded_by, p.name, f.created_at
-               FROM event_files f LEFT JOIN people p ON p.id = f.uploaded_by
-               WHERE f.event_id IS NOT DISTINCT FROM %s
-               ORDER BY f.created_at DESC""",
-            (event_id,),
-        )
+        if "event_id" in request.args:
+            cur.execute(
+                """SELECT f.id, f.event_id, f.filename, f.content_type, f.size_bytes,
+                          f.uploaded_by, p.name, f.created_at
+                   FROM event_files f LEFT JOIN people p ON p.id = f.uploaded_by
+                   WHERE f.event_id IS NOT DISTINCT FROM %s
+                   ORDER BY f.created_at DESC""",
+                (event_id,),
+            )
+        else:
+            cur.execute(
+                """SELECT f.id, f.event_id, f.filename, f.content_type, f.size_bytes,
+                          f.uploaded_by, p.name, f.created_at
+                   FROM event_files f LEFT JOIN people p ON p.id = f.uploaded_by
+                   ORDER BY f.created_at DESC"""
+            )
         return jsonify(files=[_file_row(r) for r in cur.fetchall()])
 
     @app.post("/api/files/upload-url")
@@ -1641,6 +1662,23 @@ def create_app():
         cols = [c.name for c in cur.description]
         return jsonify(mentions=[dict(zip(cols, row)) for row in cur.fetchall()])
 
+    @app.get("/api/my_followups")
+    @require_booker
+    def list_my_followups():
+        """Vision-board follow-ups assigned to me that are due or overdue —
+        the other half of what the notification bell counts, alongside
+        message mentions."""
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT c.id, c.title, c.column_key, c.follow_up_date, a.name AS artist_name "
+            "FROM vision_cards c LEFT JOIN artists a ON a.id = c.artist_id "
+            "WHERE c.follow_up_person_id = %s AND c.follow_up_date <= CURRENT_DATE "
+            "ORDER BY c.follow_up_date",
+            (g.viewer.id,),
+        )
+        cols = [c.name for c in cur.description]
+        return jsonify(followups=[dict(zip(cols, row)) for row in cur.fetchall()])
+
     @app.delete("/api/messages/<int:message_id>")
     @require_booker
     def delete_event_message(message_id):
@@ -1668,11 +1706,13 @@ def create_app():
         cur.execute(
             "SELECT c.id, c.title, c.column_key, c.sort_order, c.artist_id, a.name AS artist_name, "
             "c.trigger_event_id, e.show_date AS trigger_show_date, v.name AS trigger_venue, "
-            "c.notes, c.link, c.follow_up_date, c.created_by, c.created_at "
+            "c.notes, c.link, c.follow_up_date, c.follow_up_person_id, fp.name AS follow_up_person_name, "
+            "c.created_by, c.created_at "
             "FROM vision_cards c "
             "LEFT JOIN artists a ON a.id = c.artist_id "
             "LEFT JOIN events e ON e.id = c.trigger_event_id "
             "LEFT JOIN venues v ON v.id = e.venue_id "
+            "LEFT JOIN people fp ON fp.id = c.follow_up_person_id "
             "ORDER BY c.column_key, c.sort_order"
         )
         cols = [c.name for c in cur.description]
@@ -1720,6 +1760,20 @@ def create_app():
                     updates["follow_up_date"] = date.fromisoformat(val)
                 except ValueError:
                     return None, "invalid_follow_up_date"
+        if "follow_up_person_id" in body:
+            person_id = body["follow_up_person_id"] or None
+            if person_id is not None:
+                # Crew never sees the Vision Board at all (require_booker on
+                # every route here), so assigning one a follow-up would be a
+                # notification nobody could ever act on.
+                cur = g.db.cursor()
+                cur.execute(
+                    "SELECT 1 FROM people WHERE id = %s AND active AND access_level != 'crew'",
+                    (person_id,),
+                )
+                if cur.fetchone() is None:
+                    return None, "unknown_person"
+            updates["follow_up_person_id"] = person_id
         return updates, None
 
     @app.post("/api/vision_cards")

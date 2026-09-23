@@ -438,6 +438,12 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
 .filerow-name{flex:1;min-width:0;color:var(--ink);font-size:13.5px;text-decoration:none;overflow:hidden;
               text-overflow:ellipsis;white-space:nowrap}
 .filerow-name:hover{text-decoration:underline}
+.folder{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+        padding:10px 14px;margin-bottom:10px}
+.folder summary{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;
+                 list-style:none;font-family:var(--display);font-size:13.5px}
+.folder summary::-webkit-details-marker{display:none}
+.folder-name{color:var(--ink)}
 
 /* Vision board: a Trello-style pipeline, stage columns running left to
    right. The board itself keeps the aspirational "Vision Board" name;
@@ -703,7 +709,7 @@ function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace
 var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], todos:[], files:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:""};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
@@ -750,11 +756,6 @@ async function loadBookerLookups(){
   if(ar.ok) store.artists = ar.body.artists;
   if(vc.ok) store.visionCards = vc.body.cards;
   if(fl.ok) store.files = fl.body.files;
-}
-async function refreshLibraryFiles(){
-  var r = await api("/api/files");
-  if(r.ok) store.files = r.body.files;
-  renderAll();
 }
 async function loadTodos(){
   // Unlike vision/artists/etc., crew needs this too — the endpoint itself
@@ -2308,10 +2309,7 @@ function renderSheet(){
     var fileListHost = el("div","filelist");
     renderFileList(fileListHost, draft.files || [], refreshEventFiles);
     fs8b.appendChild(fileListHost);
-    fs8b.appendChild(fileUploadInput(async function(chosen){
-      for(var i = 0; i < chosen.length; i++) await uploadFile(chosen[i], draft.id);
-      await refreshEventFiles();
-    }));
+    fs8b.appendChild(fileUploadInput(draft.id, refreshEventFiles));
     body.appendChild(fs8b);
   }
 
@@ -2707,10 +2705,16 @@ async function uploadFile(file, eventId){
     size_bytes: file.size, event_id: eventId || null,
   })});
   if(!r.ok) return false;
-  var put = await fetch(r.body.upload_url, {
-    method: "PUT", body: file, headers: {"Content-Type": file.type || "application/octet-stream"},
-  });
-  return put.ok;
+  try {
+    var put = await fetch(r.body.upload_url, {
+      method: "PUT", body: file, headers: {"Content-Type": file.type || "application/octet-stream"},
+    });
+    if(put.ok) return true;
+  } catch(err){ /* network/CORS failure — fall through to cleanup below */ }
+  // The DB row was already created so the file would show up with nothing
+  // actually in B2 behind it — clean that up rather than leaving a dead link.
+  await api("/api/files/" + r.body.id, {method:"DELETE"});
+  return false;
 }
 function humanFileSize(bytes){
   if(bytes == null) return "";
@@ -2744,29 +2748,67 @@ function renderFileList(host, files, onChanged){
     host.appendChild(row);
   });
 }
-function fileUploadInput(onFilesChosen){
+// One upload control, used both here and in a show's own Files section —
+// the failure handling (a failed upload gets alerted, not silently
+// dropped) lives here once instead of being copied at each call site.
+function fileUploadInput(eventId, onDone){
   var inp = document.createElement("input");
   inp.type = "file"; inp.multiple = true; inp.className = "btn";
   inp.onchange = async function(){
     var chosen = Array.prototype.slice.call(inp.files || []);
     inp.disabled = true;
-    await onFilesChosen(chosen);
+    var failed = 0;
+    for(var i = 0; i < chosen.length; i++){ if(!(await uploadFile(chosen[i], eventId))) failed++; }
     inp.disabled = false;
     inp.value = "";
+    if(failed){
+      window.alert(failed + " of " + chosen.length + " file" + (chosen.length === 1 ? "" : "s") +
+        " failed to upload. Check your connection and try again.");
+    }
+    await onDone();
   };
   return inp;
+}
+async function refreshFiles(){
+  var r = await api("/api/files");
+  if(r.ok) store.files = r.body.files;
+  renderAll();
+}
+// A folder is just "this confirmed-or-later show's files" — derived from
+// the event's own status, not a separate thing to create/track, so a show
+// getting a folder the moment it's confirmed falls out for free instead
+// of needing its own trigger to keep in sync.
+function foldersEvents(){
+  return (store.events||[]).filter(function(e){ return e.status === "confirmed" || e.status === "complete"; })
+    .slice().sort(function(a,b){ return a.show_date < b.show_date ? -1 : a.show_date > b.show_date ? 1 : 0; });
+}
+function renderFolder(host, key, label, eventId){
+  var files = (store.files||[]).filter(function(f){ return f.event_id === eventId; });
+  var det = document.createElement("details");
+  det.className = "folder";
+  det.open = !!ui.openFolders[key];
+  det.addEventListener("toggle", function(){ ui.openFolders[key] = det.open; });
+  var sum = document.createElement("summary");
+  sum.appendChild(el("span","folder-name", label));
+  sum.appendChild(el("span","hint", files.length + (files.length === 1 ? " file" : " files")));
+  det.appendChild(sum);
+
+  var listHost = el("div","filelist"); listHost.style.marginTop = "10px";
+  det.appendChild(listHost);
+  det.appendChild(fileUploadInput(eventId, refreshFiles));
+  host.appendChild(det);
+  renderFileList(listHost, files, refreshFiles);
 }
 function renderFilesView(){
   var host = document.getElementById("view-files");
   host.innerHTML = "";
-  host.appendChild(el("p","hint","General library — offers, W-9s, anything not tied to one specific show. A show's own files live on its editor."));
-  host.appendChild(fileUploadInput(async function(chosen){
-    for(var i = 0; i < chosen.length; i++) await uploadFile(chosen[i], null);
-    await refreshLibraryFiles();
-  }));
-  var listHost = el("div","filelist"); listHost.style.marginTop = "14px";
-  host.appendChild(listHost);
-  renderFileList(listHost, store.files || [], refreshLibraryFiles);
+  host.appendChild(el("p","hint",
+    "One folder per confirmed show, plus a general one for anything not tied to a specific show. " +
+    "A show's folder here is the exact same thing as the Files section on its own editor."));
+  renderFolder(host, "general", "General", null);
+  foldersEvents().forEach(function(ev){
+    renderFolder(host, "event-" + ev.id, fullBillName(ev) + " — " + shortDate(ev.show_date), ev.id);
+  });
 }
 
 /* ============================== vision board ============================ */
@@ -2790,7 +2832,7 @@ function visionCardsByColumn(key){
 // be speculative complexity for what is, in practice, a couple of boards
 // Broc and his bookers decide on together every few months.
 var BOARDS = [
-  {key:"vision", label:"Vision Board", columns: VISION_COLUMNS,
+  {key:"vision", label:"Ideas", columns: VISION_COLUMNS,
    emptyHint:"Post an idea below — a band to chase, whatever's worth not forgetting."},
   {key:"mao", label:"MAO", columns: MAO_COLUMNS,
    emptyHint:"Log an outreach below once you've actually reached out to someone."},
@@ -2824,7 +2866,10 @@ function renderCardBoard(host, columns, emptyHint){
   columns.forEach(function(col){
     var colEl = el("div","visioncol");
     colEl.dataset.columnKey = col.key;
-    colEl.appendChild(el("h3","visioncol-head", col.label));
+    // A single-column board's name already says what the column is — a
+    // repeated label under it (e.g. "MAO" board showing an "Offer Sent"
+    // header on its only column) is the exact redundancy Broc flagged.
+    if(columns.length > 1) colEl.appendChild(el("h3","visioncol-head", col.label));
 
     var quickAdd = document.createElement("input");
     quickAdd.type = "text";
@@ -2897,7 +2942,8 @@ function renderCardBoard(host, columns, emptyHint){
       }
       if(c.follow_up_date){
         var due = c.follow_up_date <= todayISO();
-        body.appendChild(el("p", due ? "hint vision-followup-due" : "hint", "Follow up " + shortDate(c.follow_up_date)));
+        var fuText = "Follow up " + shortDate(c.follow_up_date) + (c.follow_up_person_name ? " · " + c.follow_up_person_name : "");
+        body.appendChild(el("p", due ? "hint vision-followup-due" : "hint", fuText));
       }
       card.appendChild(body);
       wrap.appendChild(card);
@@ -2922,27 +2968,24 @@ function openVisionCardForm(cardId){
 
   var draftC = c
     ? {title:c.title, column_key:c.column_key, artist_id:c.artist_id||"", trigger_event_id:c.trigger_event_id||"",
-       notes:c.notes||"", link:c.link||"", follow_up_date:c.follow_up_date||""}
-    : {title:"", column_key:"idea", artist_id:"", trigger_event_id:"", notes:"", link:"", follow_up_date:""};
+       notes:c.notes||"", link:c.link||"", follow_up_date:c.follow_up_date||"", follow_up_person_id:c.follow_up_person_id||""}
+    : {title:"", column_key:"idea", artist_id:"", trigger_event_id:"", notes:"", link:"", follow_up_date:"", follow_up_person_id:""};
 
   var fs = document.createElement("fieldset");
   fs.appendChild(el("legend",null,"The idea"));
-  fs.appendChild(field("Title", input("text", draftC.title, function(v){ draftC.title = v; })));
 
   // Which board a card lives on is just whichever stage it's in — moving
   // it to a MAO stage here is how a plain idea gets promoted onto the
   // MAO board, no separate "board" concept to keep in sync with this.
   var colOpts = [{value:"idea", label:"Idea (Vision Board)"}, {value:"offer_sent", label:"Offer Sent (MAO)"}];
-  var colSel = selectKV(colOpts, draftC.column_key, function(v){ draftC.column_key = v; });
-  var colField = field("Stage", colSel); colField.style.marginTop = "10px";
-  fs.appendChild(colField);
-
   var artistOpts = [{value:"",label:"No band linked"}].concat(
     store.artists.slice().sort(function(a,b){ return a.name.localeCompare(b.name); })
       .map(function(a){ return {value:a.id, label:a.name}; }));
-  var r0 = el("div","row"); r0.style.marginTop = "10px";
+
+  var r0 = el("div","row-3");
+  r0.appendChild(field("Title", input("text", draftC.title, function(v){ draftC.title = v; })));
+  r0.appendChild(field("Stage", selectKV(colOpts, draftC.column_key, function(v){ draftC.column_key = v; })));
   r0.appendChild(field("Band (optional)", selectKV(artistOpts, draftC.artist_id, function(v){ draftC.artist_id = v ? Number(v) : ""; })));
-  r0.appendChild(field("Link (offer doc, etc.)", input("text", draftC.link, function(v){ draftC.link = v; })));
   fs.appendChild(r0);
 
   // The "strike while it's hot" case: a local band who just got real
@@ -2951,20 +2994,28 @@ function openVisionCardForm(cardId){
   var eventOpts = [{value:"",label:"Not tied to a specific show"}].concat(
     store.events.slice().sort(function(a,b){ return a.show_date < b.show_date ? 1 : -1; })
       .map(function(ev){ return {value:ev.id, label: shortDate(ev.show_date) + " · " + ev.venue + " · " + showName(ev)}; }));
-  var trigField = field("Came from this show (optional)",
-    selectKV(eventOpts, draftC.trigger_event_id, function(v){ draftC.trigger_event_id = v ? Number(v) : ""; }));
-  trigField.style.marginTop = "10px";
-  fs.appendChild(trigField);
+  // Whoever's on the hook for the follow-up gets counted in their own
+  // notification bell (see /api/my_followups) — same shape as a todo's
+  // assignee, not a message someone has to remember to re-check.
+  var followupPersonOpts = [{value:"",label:"Unassigned"}].concat(
+    store.people.filter(function(p){ return p.active && p.access_level !== "crew"; })
+      .map(function(p){ return {value:p.id, label:p.name}; }));
+
+  var r1 = el("div","row-3"); r1.style.marginTop = "10px";
+  r1.appendChild(field("Link (offer doc, etc.)", input("text", draftC.link, function(v){ draftC.link = v; })));
+  r1.appendChild(field("Came from this show (optional)",
+    selectKV(eventOpts, draftC.trigger_event_id, function(v){ draftC.trigger_event_id = v ? Number(v) : ""; })));
+  var fuWrap = el("div","row");
+  fuWrap.appendChild(input("date", draftC.follow_up_date, function(v){ draftC.follow_up_date = v; }));
+  fuWrap.appendChild(selectKV(followupPersonOpts, draftC.follow_up_person_id, function(v){ draftC.follow_up_person_id = v ? Number(v) : ""; }));
+  r1.appendChild(field("Follow up on / assign to (optional)", fuWrap));
+  fs.appendChild(r1);
 
   var notesTa = document.createElement("textarea");
   notesTa.value = draftC.notes; notesTa.rows = 3;
   notesTa.oninput = function(){ draftC.notes = notesTa.value; };
   var notesField = field("Notes", notesTa); notesField.style.marginTop = "10px";
   fs.appendChild(notesField);
-
-  var fuField = field("Follow up on (optional)", input("date", draftC.follow_up_date, function(v){ draftC.follow_up_date = v; }));
-  fuField.style.marginTop = "10px";
-  fs.appendChild(fuField);
   body.appendChild(fs);
 
   var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
@@ -2975,7 +3026,8 @@ function openVisionCardForm(cardId){
     if(!title){ errLine.textContent = "Give it a title."; return; }
     var payload = {title:title, column_key: draftC.column_key, artist_id: draftC.artist_id || null,
                     trigger_event_id: draftC.trigger_event_id || null, notes: draftC.notes,
-                    link: draftC.link, follow_up_date: draftC.follow_up_date || null};
+                    link: draftC.link, follow_up_date: draftC.follow_up_date || null,
+                    follow_up_person_id: draftC.follow_up_person_id || null};
     var r2 = c ? await api("/api/vision_cards/" + c.id, {method:"PATCH", body: JSON.stringify(payload)})
                : await api("/api/vision_cards", {method:"POST", body: JSON.stringify(payload)});
     if(!r2.ok){ errLine.textContent = r2.body.error || "Could not save."; return; }
@@ -3187,23 +3239,26 @@ function renderMentionsBadge(){
   var wrap = document.getElementById("mentionsWrap");
   if(!canBook()){ wrap.style.display = "none"; return; }
   wrap.style.display = "inline-flex";
-  document.getElementById("mentionsCount").textContent = me.mention_count ? String(me.mention_count) : "";
-  document.getElementById("mentionsBtn").classList.toggle("has-mentions", !!me.mention_count);
+  var total = (me.mention_count||0) + (me.followup_count||0);
+  document.getElementById("mentionsCount").textContent = total ? String(total) : "";
+  document.getElementById("mentionsBtn").classList.toggle("has-mentions", !!total);
 }
 async function refreshMentions(){
   var r = await api("/api/me");
-  if(r.ok) me.mention_count = r.body.mention_count;
+  if(r.ok){ me.mention_count = r.body.mention_count; me.followup_count = r.body.followup_count; }
   renderMentionsBadge();
 }
 async function toggleMentionsPop(){
   var pop = document.getElementById("mentionsPop");
   if(!pop.hidden){ pop.hidden = true; return; }
-  var r = await api("/api/my_mentions");
+  var [rm, rf] = await Promise.all([api("/api/my_mentions"), api("/api/my_followups")]);
   pop.innerHTML = "";
-  if(!r.ok || !r.body.mentions.length){
-    pop.appendChild(el("p","hint","No new mentions."));
+  var mentions = rm.ok ? rm.body.mentions : [];
+  var followups = rf.ok ? rf.body.followups : [];
+  if(!mentions.length && !followups.length){
+    pop.appendChild(el("p","hint","Nothing new."));
   } else {
-    r.body.mentions.forEach(function(m){
+    mentions.forEach(function(m){
       var item = el("button","mentionitem");
       item.type = "button";
       item.appendChild(el("div","mentionitem-head", (m.from_name||"Someone") + " on " + shortDate(m.show_date) + " · " + m.venue));
@@ -3212,6 +3267,19 @@ async function toggleMentionsPop(){
         pop.hidden = true;
         await openEvent(m.event_id);
         await refreshMentions();
+      };
+      pop.appendChild(item);
+    });
+    followups.forEach(function(f){
+      var item = el("button","mentionitem");
+      item.type = "button";
+      var when = f.follow_up_date < todayISO() ? "Overdue since " + shortDate(f.follow_up_date) : "Due " + shortDate(f.follow_up_date);
+      item.appendChild(el("div","mentionitem-head", "Follow up · " + when));
+      item.appendChild(el("p","mentionitem-body", f.title + (f.artist_name ? " · " + f.artist_name : "")));
+      item.onclick = function(){
+        pop.hidden = true;
+        ui.view = "vision"; setActiveTab(); renderAll();
+        openVisionCardForm(f.id);
       };
       pop.appendChild(item);
     });

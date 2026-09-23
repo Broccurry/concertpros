@@ -29,12 +29,19 @@ class VisionBoard(unittest.TestCase):
             (f"visioncard-test-crew-{id(self)}@example.invalid", auth.hash_password(self.password)),
         )
         self.crew_id = cur.fetchone()[0]
+        cur.execute(
+            """INSERT INTO people (name, email, password_hash, access_level)
+               VALUES ('Other Booker', %s, %s, 'booker') RETURNING id""",
+            (f"visioncard-test-otherbooker-{id(self)}@example.invalid", auth.hash_password(self.password)),
+        )
+        self.other_booker_id = cur.fetchone()[0]
         cur.execute("SELECT id FROM venues WHERE name = 'Frankies'")
         self.venue_id = cur.fetchone()[0]
         self.conn.commit()
 
         self.booker_email = self._email(self.booker_id)
         self.crew_email = self._email(self.crew_id)
+        self.other_booker_email = self._email(self.other_booker_id)
         self.app = app_module.create_app()
         self.app.config["TESTING"] = True
         self.card_ids = []  # every card created this test, cleaned up in tearDown
@@ -64,8 +71,10 @@ class VisionBoard(unittest.TestCase):
             # those, so they'd otherwise leak into the real roster forever.
             cur.execute("DELETE FROM audit_log WHERE entity_type = 'artist' AND entity_id = ANY(%s)", (self.artist_ids,))
             cur.execute("DELETE FROM artists WHERE id = ANY(%s)", (self.artist_ids,))
-        cur.execute("DELETE FROM sessions WHERE person_id IN (%s, %s)", (self.booker_id, self.crew_id))
-        cur.execute("DELETE FROM people WHERE id IN (%s, %s)", (self.booker_id, self.crew_id))
+        cur.execute("DELETE FROM sessions WHERE person_id IN (%s, %s, %s)",
+                    (self.booker_id, self.crew_id, self.other_booker_id))
+        cur.execute("DELETE FROM people WHERE id IN (%s, %s, %s)",
+                    (self.booker_id, self.crew_id, self.other_booker_id))
         self.conn.commit()
         self.conn.close()
 
@@ -190,6 +199,48 @@ class VisionBoard(unittest.TestCase):
         self._login(client, self.crew_email)
         self.assertEqual(client.get("/api/vision_cards").status_code, 403)
         self.assertEqual(client.post("/api/vision_cards", json={"title": "x"}).status_code, 403)
+
+    def test_a_follow_up_can_be_assigned_to_a_booker(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        card_id = self._create(client, follow_up_date="2027-01-05", follow_up_person_id=self.other_booker_id)
+        cards = client.get("/api/vision_cards").get_json()["cards"]
+        mine = next(c for c in cards if c["id"] == card_id)
+        self.assertEqual(mine["follow_up_person_id"], self.other_booker_id)
+        self.assertEqual(mine["follow_up_person_name"], "Other Booker")
+
+    def test_assigning_a_follow_up_to_an_unknown_person_is_rejected(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post("/api/vision_cards", json={"title": "x", "follow_up_person_id": 999999})
+        self.assertEqual(r.status_code, 400)
+
+    def test_assigning_a_follow_up_to_crew_is_rejected(self):
+        """Crew can't see the vision board at all, so assigning one a
+        follow-up would be a notification nobody could act on."""
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post("/api/vision_cards", json={"title": "x", "follow_up_person_id": self.crew_id})
+        self.assertEqual(r.status_code, 400)
+
+    def test_my_followups_only_shows_due_or_overdue_cards_assigned_to_me(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        overdue_id = self._create(client, title="Overdue one", follow_up_date="2020-01-01",
+                                   follow_up_person_id=self.other_booker_id)
+        self._create(client, title="Not due yet", follow_up_date="2099-01-01",
+                     follow_up_person_id=self.other_booker_id)
+        self._create(client, title="Someone else's", follow_up_date="2020-01-01",
+                     follow_up_person_id=self.booker_id)
+
+        other_client = self.app.test_client()
+        self._login(other_client, self.other_booker_email)
+        r = other_client.get("/api/my_followups")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual([f["id"] for f in r.get_json()["followups"]], [overdue_id])
+
+        me = other_client.get("/api/me").get_json()
+        self.assertEqual(me["followup_count"], 1)
 
 
 if __name__ == "__main__":

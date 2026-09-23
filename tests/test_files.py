@@ -114,7 +114,7 @@ class Files(unittest.TestCase):
         self.assertIn(body["id"], [f["id"] for f in files])
         self.assertIsNone(next(f for f in files if f["id"] == body["id"])["event_id"])
 
-    def test_listing_filters_by_event(self):
+    def test_listing_with_event_id_filters_to_that_show(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)
         for_show = self._upload(client, filename="flyer.png", event_id=self.event_id)
@@ -123,10 +123,12 @@ class Files(unittest.TestCase):
         show_files = client.get(f"/api/files?event_id={self.event_id}").get_json()["files"]
         self.assertEqual([f["id"] for f in show_files], [for_show["id"]])
 
-        library_files = client.get("/api/files").get_json()["files"]
-        library_ids = [f["id"] for f in library_files]
-        self.assertIn(general["id"], library_ids)
-        self.assertNotIn(for_show["id"], library_ids)
+        # No filter is the Files tab's "everything, for building folders"
+        # view — it should see both the show's file and the general one.
+        all_files = client.get("/api/files").get_json()["files"]
+        all_ids = [f["id"] for f in all_files]
+        self.assertIn(general["id"], all_ids)
+        self.assertIn(for_show["id"], all_ids)
 
     def test_crew_cannot_list_or_upload_files(self):
         crew_client = self.app.test_client()
