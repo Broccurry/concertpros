@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upcoming Shows</title>
+<style>
+  :root{--ink:#16181d;--ink-2:#6b7382;--ground:#f2f3f6;--surface:#fff;--line:#e2e4ea;--accent:#c6122a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:"Helvetica Neue",Arial,sans-serif;line-height:1.4}
+  header{background:var(--ink);color:#fff;padding:28px 16px;text-align:center}
+  header h1{margin:0;font-size:22px;text-transform:uppercase;letter-spacing:.08em}
+  main{max-width:720px;margin:0 auto;padding:20px 16px 60px}
+  .card{display:block;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+        margin-bottom:18px;text-decoration:none;color:inherit;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .card img{width:100%;display:block;aspect-ratio:16/9;object-fit:cover;background:var(--line)}
+  .card-body{padding:16px}
+  .card-date{font-size:12px;color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+  .card-title{margin:4px 0 6px;font-size:20px;font-weight:700}
+  .card-meta{font-size:13.5px;color:var(--ink-2)}
+  .empty{text-align:center;color:var(--ink-2);padding:60px 16px}
+</style>
+</head>
+<body>
+<header><h1>Upcoming Shows</h1></header>
+<main>
+  {% if not shows %}
+    <p class="empty">Nothing on sale right now — check back soon.</p>
+  {% endif %}
+  {% for s in shows %}
+    <a class="card" href="/site/{{ s.id }}">
+      {% if s.hero_url %}<img src="{{ s.hero_url }}" alt="{{ s.headliner or 'Show flyer' }}">{% endif %}
+      <div class="card-body">
+        <div class="card-date">{{ s.date_display }}</div>
+        <div class="card-title">{{ s.headliner or "TBA" }}</div>
+        <div class="card-meta">{{ s.venue }}{% if s.doors_display %} &middot; Doors {{ s.doors_display }}{% endif %}</div>
+      </div>
+    </a>
+  {% endfor %}
+</main>
+</body>
+</html>

@@ -276,6 +276,14 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
             d = dict(zip(cols, row))
             staff_by_event.setdefault(d["event_id"], []).append(d)
 
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT event_id, hero_file_id, blurb, published FROM event_website WHERE event_id = ANY(%(ids)s)",
+            {"ids": ids},
+        )
+        cols = [c.name for c in cur.description]
+        website_by_event = {row[0]: dict(zip(cols, row)) for row in cur.fetchall()}
+
     for e in events:
         eid = effective_id(e)
         e["artists"] = artists_by_event.get(eid, [])
@@ -283,6 +291,7 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         e["ticket_tiers"] = tiers_by_event.get(eid, [])
         e["staff"] = staff_by_event.get(eid, [])
         e["tasks"] = tasks_by_event.get(eid, [])
+        e["website"] = website_by_event.get(eid) or {"hero_file_id": None, "blurb": None, "published": False}
         e["group_members"] = members_by_group.get(e["hold_group_id"], []) if e["hold_group_id"] else []
     return events
 

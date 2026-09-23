@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ show.headliner or "Show" }} — {{ show.venue }}</title>
+<style>
+  :root{--ink:#16181d;--ink-2:#6b7382;--ground:#f2f3f6;--surface:#fff;--line:#e2e4ea;--accent:#c6122a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:"Helvetica Neue",Arial,sans-serif;line-height:1.5}
+  .back{display:block;padding:14px 16px;color:var(--ink-2);text-decoration:none;font-size:13.5px}
+  main{max-width:640px;margin:0 auto;padding:0 16px 60px}
+  .hero{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:10px;background:var(--line);display:block}
+  .date{margin-top:20px;font-size:13px;color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+  h1{margin:6px 0 4px;font-size:30px;font-weight:800;line-height:1.1}
+  .venue-line{color:var(--ink-2);font-size:15px;margin-bottom:18px}
+  .ticket-btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;font-weight:700;
+              padding:13px 28px;border-radius:8px;font-size:16px;margin-bottom:24px}
+  .ticket-btn.disabled{background:var(--ink-2);pointer-events:none}
+  .prices{font-size:13.5px;color:var(--ink-2);margin:-14px 0 24px}
+  section{margin-bottom:26px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:.09em;color:var(--ink-2);margin:0 0 10px}
+  .blurb{font-size:16px}
+  .lineup-row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .lineup-row:last-child{border-bottom:none}
+  .lineup-name{font-weight:600}
+  .lineup-time{color:var(--ink-2);font-size:13.5px;white-space:nowrap}
+</style>
+</head>
+<body>
+<a class="back" href="/site">&larr; All shows</a>
+<main>
+  {% if show.hero_url %}<img class="hero" src="{{ show.hero_url }}" alt="{{ show.headliner or 'Show flyer' }}">{% endif %}
+  <div class="date">{{ show.date_display }}</div>
+  <h1>{{ show.headliner or "TBA" }}</h1>
+  <div class="venue-line">{{ show.venue }}{% if show.doors_display %} &middot; Doors {{ show.doors_display }}{% endif %}</div>
+
+  {% if show.ticket_link %}
+    <a class="ticket-btn" href="{{ show.ticket_link }}">Get Tickets</a>
+  {% else %}
+    <span class="ticket-btn disabled">Tickets Coming Soon</span>
+  {% endif %}
+  {% if show.ticket_tiers %}
+    <div class="prices">
+      {% for t in show.ticket_tiers %}{{ t.label }}{% if t.price_display %} {{ t.price_display }}{% endif %}{% if not loop.last %} &middot; {% endif %}{% endfor %}
+    </div>
+  {% endif %}
+
+  {% if show.blurb %}
+    <section><p class="blurb">{{ show.blurb }}</p></section>
+  {% endif %}
+
+  {% if show.artists %}
+    <section>
+      <h2>Lineup</h2>
+      {% for a in show.artists %}
+        <div class="lineup-row">
+          <span class="lineup-name">{{ a.name }}</span>
+          {% if a.time_display %}<span class="lineup-time">{{ a.time_display }}</span>{% endif %}
+        </div>
+      {% endfor %}
+    </section>
+  {% endif %}
+</main>
+</body>
+</html>

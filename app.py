@@ -8,7 +8,9 @@ permissions.py and only there.
 No self-signup (CLAUDE.md): accounts are created with scripts/create_person.py,
 run by whoever has database access, not through an HTTP endpoint.
 """
+import json
 import os
+import urllib.request
 from datetime import date, datetime, time, timezone, timedelta
 from decimal import Decimal
 from functools import wraps
@@ -31,6 +33,23 @@ ALL_STATUSES = ("hold1", "hold2", "hold3", "confirmed", "complete", "dead")  # w
 TASK_TEMPLATE = ("Website", "Marketing", "Offer", "Contract")  # spawned on every new booking
 
 load_dotenv()  # local dev only — a no-op if .env doesn't exist (Railway sets real env vars directly)
+
+
+def _anthropic_complete(api_key, prompt):
+    """One plain HTTPS call to the Messages API — not worth a whole SDK
+    dependency for the single request this app makes."""
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        method="POST",
+        headers={"x-api-key": api_key, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+        data=json.dumps({
+            "model": "claude-sonnet-5", "max_tokens": 300,
+            "messages": [{"role": "user", "content": prompt}],
+        }).encode("utf-8"),
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        data = json.loads(resp.read())
+    return data["content"][0]["text"].strip()
 
 
 def _parse_number(v):
@@ -322,6 +341,98 @@ def create_app():
     @app.get("/")
     def index():
         return render_template("index.html")
+
+    def _time12(t):
+        if t is None:
+            return None
+        hour, minute = t.hour, t.minute
+        ap = "pm" if hour >= 12 else "am"
+        h = hour % 12 or 12
+        return f"{h}{ap}" if minute == 0 else f"{h}:{minute:02d}{ap}"
+
+    def _public_shows(conn, event_ids=None):
+        """The public site's own query — deliberately never permissions.
+        events_for(), which is written for an authenticated Viewer and
+        would need to be told, correctly, every single time, not to leak
+        deal/hold/settlement columns to an anonymous visitor. A published
+        show is the most restrictive tier there is, so it gets its own
+        query that structurally cannot select those columns at all."""
+        cur = conn.cursor()
+        where = "ew.published = TRUE" + (" AND e.id = ANY(%(ids)s)" if event_ids is not None else "")
+        cur.execute(
+            f"""SELECT e.id, e.show_date, e.doors, e.ticket_link, v.name AS venue,
+                       ew.blurb, ew.hero_file_id
+                FROM events e
+                JOIN event_website ew ON ew.event_id = e.id
+                JOIN venues v ON v.id = e.venue_id
+                WHERE {where}
+                ORDER BY e.show_date""",
+            {"ids": event_ids},
+        )
+        cols = [c.name for c in cur.description]
+        shows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        if not shows:
+            return shows
+        ids = [s["id"] for s in shows]
+
+        cur.execute(
+            "SELECT ea.event_id, a.name, ea.declined, ea.set_time, ea.set_time_end "
+            "FROM event_artists ea JOIN artists a ON a.id = ea.artist_id "
+            "WHERE ea.event_id = ANY(%s) ORDER BY ea.event_id, ea.sort_order",
+            (ids,),
+        )
+        acts_by_event: dict[int, list[dict]] = {}
+        for event_id, name, declined, set_time, set_time_end in cur.fetchall():
+            if declined:
+                continue
+            acts_by_event.setdefault(event_id, []).append(
+                {"name": name, "set_time": set_time, "set_time_end": set_time_end})
+
+        cur.execute(
+            "SELECT event_id, label, price FROM ticket_tiers WHERE event_id = ANY(%s) ORDER BY sort_order",
+            (ids,),
+        )
+        tiers_by_event: dict[int, list[dict]] = {}
+        for event_id, label, price in cur.fetchall():
+            tiers_by_event.setdefault(event_id, []).append({"label": label, "price": price})
+
+        hero_ids = [s["hero_file_id"] for s in shows if s["hero_file_id"]]
+        files_by_id = {}
+        if hero_ids:
+            cur.execute("SELECT id, storage_key, filename FROM event_files WHERE id = ANY(%s)", (hero_ids,))
+            files_by_id = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+
+        for s in shows:
+            acts = acts_by_event.get(s["id"], [])
+            for a in acts:
+                if a["set_time"]:
+                    a["time_display"] = _time12(a["set_time"]) + " - " + (_time12(a["set_time_end"]) or "?")
+                else:
+                    a["time_display"] = None
+            s["artists"] = acts
+            s["ticket_tiers"] = tiers_by_event.get(s["id"], [])
+            for tier in s["ticket_tiers"]:
+                tier["price_display"] = f"${tier['price']:.0f}" if tier["price"] is not None else None
+            s["headliner"] = acts[0]["name"] if acts else None
+            s["date_display"] = s["show_date"].strftime("%A, %B %-d, %Y") if os.name != "nt" \
+                else s["show_date"].strftime("%A, %B ") + str(s["show_date"].day) + s["show_date"].strftime(", %Y")
+            s["doors_display"] = _time12(s["doors"])
+            s["hero_url"] = None
+            if s["hero_file_id"] and s["hero_file_id"] in files_by_id:
+                key, filename = files_by_id[s["hero_file_id"]]
+                s["hero_url"] = storage.presign_download(key, filename)
+        return shows
+
+    @app.get("/site")
+    def public_site_list():
+        return render_template("site_list.html", shows=_public_shows(g.db))
+
+    @app.get("/site/<int:event_id>")
+    def public_site_show(event_id):
+        shows = _public_shows(g.db, event_ids=[event_id])
+        if not shows:
+            return render_template("site_404.html"), 404
+        return render_template("site_show.html", show=shows[0])
 
     @app.post("/api/login")
     def login():
@@ -1526,6 +1637,74 @@ def create_app():
         audit.record(g.db, g.viewer, "event" if event_id else "file", event_id or file_id,
                      "delete_file", {"filename": filename, "file_id": file_id})
         return jsonify(ok=True)
+
+    @app.get("/api/events/<int:event_id>/website")
+    @require_booker
+    def get_event_website(event_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("SELECT hero_file_id, blurb, published FROM event_website WHERE event_id = %s", (event_id,))
+        row = cur.fetchone()
+        hero_file_id, blurb, published = row if row else (None, None, False)
+        return jsonify(hero_file_id=hero_file_id, blurb=blurb, published=published)
+
+    @app.put("/api/events/<int:event_id>/website")
+    @require_booker
+    def set_event_website(event_id):
+        body = request.get_json(silent=True) or {}
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        hero_file_id = body.get("hero_file_id") or None
+        if hero_file_id is not None:
+            cur.execute("SELECT 1 FROM event_files WHERE id = %s AND event_id = %s", (hero_file_id, event_id))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_file"), 400
+        blurb = (body.get("blurb") or "").strip() or None
+        published = bool(body.get("published"))
+        cur.execute(
+            "INSERT INTO event_website (event_id, hero_file_id, blurb, published, updated_at) "
+            "VALUES (%s, %s, %s, %s, now()) "
+            "ON CONFLICT (event_id) DO UPDATE SET hero_file_id = %s, blurb = %s, published = %s, updated_at = now()",
+            (event_id, hero_file_id, blurb, published, hero_file_id, blurb, published),
+        )
+        audit.record(g.db, g.viewer, "event", event_id, "set_website", {"published": published})
+        return jsonify(ok=True)
+
+    @app.post("/api/events/<int:event_id>/website/blurb")
+    @require_booker
+    def generate_event_blurb(event_id):
+        """A starting draft, not a final copy — always returned for the
+        booker to read and edit before it's saved, never written directly
+        to event_website.blurb by this endpoint itself."""
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return jsonify(error="anthropic_not_configured"), 400
+        cur = g.db.cursor()
+        cur.execute("SELECT show_date FROM events WHERE id = %s", (event_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        events = permissions.events_for(g.db, g.viewer, date_from=row[0], date_to=row[0])
+        ev = next((e for e in events if e["id"] == event_id), None)
+        acts = [a for a in (ev["artists"] if ev else []) if not a.get("declined")]
+        if not acts:
+            return jsonify(error="no_headliner"), 400
+        headliner, support = acts[0]["name"], [a["name"] for a in acts[1:]]
+        prompt = f"Write a short, exciting 2-3 sentence promotional blurb for a concert headlined by {headliner}"
+        if support:
+            prompt += f", with support from {', '.join(support)}"
+        prompt += (f" at {ev['venue']} on {ev['show_date']}. "
+                   "No hashtags, no emoji, no marketing clichés like 'don't miss out' — just compelling, "
+                   "specific copy suitable for a venue's website.")
+        try:
+            blurb = _anthropic_complete(api_key, prompt)
+        except Exception as e:
+            return jsonify(error="blurb_generation_failed", detail=str(e)), 502
+        return jsonify(blurb=blurb)
 
     @app.get("/api/events/<int:event_id>/messages")
     @require_booker

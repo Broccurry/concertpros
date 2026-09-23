@@ -370,6 +370,21 @@ CREATE TABLE event_files (
 );
 CREATE INDEX idx_event_files_event ON event_files(event_id);
 
+-- The public site's per-show extras. Deliberately NOT a copy of venue/
+-- date/doors/lineup/ticket_link/price — those already live on events/
+-- event_artists/ticket_tiers and the site reads them from there, so
+-- there's no second place they could disagree with the booking data.
+-- Only what's genuinely site-only lives here: which uploaded file is the
+-- hero image, the headliner blurb, and whether the show is live on the
+-- public site at all.
+CREATE TABLE event_website (
+    event_id        INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    hero_file_id    INTEGER REFERENCES event_files(id) ON DELETE SET NULL,
+    blurb           TEXT,
+    published       BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Seed data matching what's already live in the artifact prototype.
 INSERT INTO venues (name) VALUES ('Frankies'), ('Ottawa Tavern'), ('Cla-Zel Theater');
 INSERT INTO roles (name) VALUES

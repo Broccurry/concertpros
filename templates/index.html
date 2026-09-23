@@ -460,6 +460,11 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .yearfolder > summary::-webkit-details-marker{display:none}
 .yearfolder-body{margin-top:12px}
 
+.websitecard{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+             padding:14px 16px;margin-bottom:14px}
+.websitecard-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.websitecard-actions{display:flex;gap:8px;align-items:center;margin-top:10px}
+
 /* Vision board: a Trello-style pipeline, stage columns running left to
    right. The board itself keeps the aspirational "Vision Board" name;
    the columns are deliberately plain/functional (Idea/Reaching Out/Offer
@@ -524,6 +529,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         <button role="tab" data-view="todo" aria-selected="false">To Do</button>
         <button role="tab" data-view="vision" aria-selected="false">Vision Board</button>
         <button role="tab" data-view="files" aria-selected="false">Files</button>
+        <button role="tab" data-view="website" aria-selected="false">Website</button>
         <button role="tab" data-view="settings" aria-selected="false">Settings</button>
       </div>
       <div class="monthnav" id="monthnav">
@@ -571,6 +577,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
     </section>
     <section id="view-vision" hidden></section>
     <section id="view-files" hidden></section>
+    <section id="view-website" hidden></section>
     <section id="view-settings" hidden></section>
     <p class="notice" id="storeNotice"></p>
   </main>
@@ -842,7 +849,7 @@ function renderAll(){
   }).length;
   document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + all.length + " total";
 
-  ["calendar","todo","list","artists","staff","people","vision","files","settings"].forEach(function(v){
+  ["calendar","todo","list","artists","staff","people","vision","files","website","settings"].forEach(function(v){
     document.getElementById("view-" + v).hidden = (v !== ui.view);
   });
   if(ui.view === "calendar") renderCalendar();
@@ -853,6 +860,7 @@ function renderAll(){
   if(ui.view === "people") renderPeopleTable();
   if(ui.view === "vision") renderVisionBoard();
   if(ui.view === "files") renderFilesView();
+  if(ui.view === "website") renderWebsiteView();
   if(ui.view === "settings") renderSettingsView();
 }
 
@@ -3058,6 +3066,91 @@ function renderFilesView(){
     byYear[year].forEach(function(ev){
       renderFolder(yearBody, "event-" + ev.id, folderLabel(ev), ev.id);
     });
+  });
+}
+
+/* ============================== website ================================ */
+// A show's site fields are already embedded on the event object (see
+// permissions._events_for_booker) rather than fetched per-show here, same
+// reasoning as staff/tasks/tickets already being there — one list load
+// instead of one request per show on this tab.
+function renderWebsiteView(){
+  var host = document.getElementById("view-website");
+  host.innerHTML = "";
+  host.appendChild(el("p","hint",
+    "Getting the basics working first — pick a hero image from the show's files, write or generate a blurb, then publish. Everything's editable."));
+  var linkP = document.createElement("p");
+  var siteLink = document.createElement("a");
+  siteLink.href = "/site"; siteLink.target = "_blank"; siteLink.textContent = "View the public site →";
+  linkP.appendChild(siteLink);
+  host.appendChild(linkP);
+
+  foldersEvents().forEach(function(ev){
+    var w = ev.website || {hero_file_id:null, blurb:null, published:false};
+
+    async function saveWebsite(){
+      await api("/api/events/" + ev.id + "/website", {method:"PUT", body: JSON.stringify({
+        hero_file_id: w.hero_file_id, blurb: w.blurb, published: w.published,
+      })});
+      await loadEvents();
+    }
+
+    var card = el("div","websitecard");
+    var head = el("div","websitecard-head");
+    head.appendChild(el("strong",null, fullBillName(ev)));
+    head.appendChild(el("span","hint", shortDate(ev.show_date) + " · " + ev.venue));
+    card.appendChild(head);
+
+    var pubWrap = el("label","checkfield");
+    var pubCb = document.createElement("input");
+    pubCb.type = "checkbox"; pubCb.checked = w.published;
+    pubCb.onchange = function(){ w.published = pubCb.checked; saveWebsite(); };
+    pubWrap.appendChild(pubCb);
+    pubWrap.appendChild(document.createTextNode(" Published"));
+    card.appendChild(pubWrap);
+
+    var images = (store.files||[]).filter(function(f){
+      return f.event_id === ev.id && (f.content_type||"").indexOf("image/") === 0;
+    });
+    var imgOpts = [{value:"", label: images.length ? "No hero image" : "No images uploaded for this show yet"}]
+      .concat(images.map(function(f){ return {value:f.id, label:f.filename}; }));
+    var imgField = field("Hero image", selectKV(imgOpts, w.hero_file_id || "", function(v){
+      w.hero_file_id = v ? Number(v) : null; saveWebsite();
+    }));
+    imgField.style.marginTop = "10px";
+    card.appendChild(imgField);
+
+    var blurbTa = document.createElement("textarea");
+    blurbTa.rows = 3;
+    blurbTa.value = w.blurb || "";
+    blurbTa.placeholder = "A couple sentences about the headliner for the show page";
+    blurbTa.onblur = function(){
+      if(blurbTa.value === (w.blurb || "")) return;
+      w.blurb = blurbTa.value; saveWebsite();
+    };
+    var blurbField = field("Blurb", blurbTa); blurbField.style.marginTop = "10px";
+    card.appendChild(blurbField);
+
+    var actionsRow = el("div","websitecard-actions");
+    var genBtn = el("button","btn btn-sm","Generate with Claude");
+    genBtn.type = "button";
+    genBtn.onclick = async function(){
+      genBtn.disabled = true; genBtn.textContent = "Writing…";
+      var r = await api("/api/events/" + ev.id + "/website/blurb", {method:"POST"});
+      genBtn.disabled = false; genBtn.textContent = "Generate with Claude";
+      if(r.ok){ blurbTa.value = r.body.blurb; w.blurb = r.body.blurb; await saveWebsite(); }
+      else window.alert(r.body.error === "anthropic_not_configured"
+        ? "AI blurb generation isn't set up yet." : (r.body.error || "Could not generate a blurb."));
+    };
+    actionsRow.appendChild(genBtn);
+    if(w.published){
+      var viewLink = el("a","btn btn-sm","View live →");
+      viewLink.href = "/site/" + ev.id; viewLink.target = "_blank";
+      actionsRow.appendChild(viewLink);
+    }
+    card.appendChild(actionsRow);
+
+    host.appendChild(card);
   });
 }
 
