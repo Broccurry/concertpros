@@ -1888,10 +1888,11 @@ def create_app():
     @app.patch("/api/todos/<int:todo_id>")
     @require_auth
     def update_todo(todo_id):
-        """Crew can toggle only `done`, only on a todo assigned to them —
-        the one write a crew viewer can make here, same shape as the
-        assignment clock-in boundary. Booker/owner can edit any field on
-        any todo."""
+        """Crew can toggle `done` and edit `notes` (a status update on
+        their own progress), only on a todo assigned to them — everything
+        else (title, assignment, due date) stays booker/owner-only, same
+        shape as the assignment clock-in boundary. Booker/owner can edit
+        any field on any todo."""
         cur = g.db.cursor()
         cur.execute("SELECT assigned_to FROM todos WHERE id = %s", (todo_id,))
         row = cur.fetchone()
@@ -1903,9 +1904,20 @@ def create_app():
         if g.viewer.access_level not in ("booker", "owner"):
             if g.viewer.id != assigned_to:
                 return jsonify(error="forbidden"), 403
-            if set(body.keys()) - {"done"}:
+            if set(body.keys()) - {"done", "notes"}:
                 return jsonify(error="forbidden"), 403
-            cur.execute("UPDATE todos SET done = %s, updated_at = now() WHERE id = %s", (bool(body.get("done")), todo_id))
+            crew_updates = {}
+            if "done" in body:
+                crew_updates["done"] = bool(body["done"])
+            if "notes" in body:
+                crew_updates["notes"] = (body["notes"] or "").strip() or None
+            if not crew_updates:
+                return jsonify(error="no_fields_to_update"), 400
+            set_clause = ", ".join(f"{k} = %s" for k in crew_updates)
+            cur.execute(f"UPDATE todos SET {set_clause}, updated_at = now() WHERE id = %s",
+                        list(crew_updates.values()) + [todo_id])
+            audit.record(g.db, g.viewer, "todo", todo_id, "update",
+                         {k: audit.jsonable(v) for k, v in crew_updates.items()})
             return jsonify(ok=True)
 
         updates = {}

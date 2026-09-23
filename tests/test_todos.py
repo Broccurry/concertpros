@@ -149,6 +149,29 @@ class Todos(unittest.TestCase):
         r = crew_client.patch(f"/api/todos/{todo_id}", json={"title": "hijacked"})
         self.assertEqual(r.status_code, 403)
 
+    def test_crew_can_edit_notes_on_their_own_task(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        todo_id = self._create(client, assigned_to=self.crew_id)
+
+        crew_client = self.app.test_client()
+        self._login(crew_client, self.crew_email)
+        r = crew_client.patch(f"/api/todos/{todo_id}", json={"notes": "checked with distributor, waiting on callback"})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        todos = client.get("/api/todos").get_json()["todos"]
+        mine = next(t for t in todos if t["id"] == todo_id)
+        self.assertEqual(mine["notes"], "checked with distributor, waiting on callback")
+
+    def test_crew_cannot_edit_notes_on_someone_elses_task(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        todo_id = self._create(client, assigned_to=self.other_crew_id)
+
+        crew_client = self.app.test_client()
+        self._login(crew_client, self.crew_email)
+        r = crew_client.patch(f"/api/todos/{todo_id}", json={"notes": "hijacked"})
+        self.assertEqual(r.status_code, 403)
+
     def test_crew_cannot_create_a_task(self):
         client = self.app.test_client()
         self._login(client, self.crew_email)

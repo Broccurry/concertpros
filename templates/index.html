@@ -430,6 +430,13 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
 .todorow-main{flex:1;min-width:0}
 .todorow-title{margin:0;font-size:13.5px;color:var(--ink)}
 .todorow-done .todorow-title{color:var(--ink-3);text-decoration:line-through}
+.todorow-notes{width:100%;margin-top:6px;font-size:12.5px;resize:vertical;min-height:22px;
+               border:1px solid transparent;background:transparent;border-radius:var(--radius);padding:4px 6px}
+.todorow-notes:hover,.todorow-notes:focus{border-color:var(--line);background:var(--surface)}
+.tododone{margin-top:14px;border:1px solid var(--line-strong);border-radius:var(--radius);padding:10px 14px}
+.tododone summary{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;
+                   list-style:none;font-family:var(--body);font-size:14.5px;color:var(--ink)}
+.tododone summary::-webkit-details-marker{display:none}
 
 /* Files: offers/contracts/flyers, either in a show's own folder (event_id
    set) or the general library (event_id null) — same row markup, same
@@ -2642,6 +2649,10 @@ function renderTodoView(){
     addRow.appendChild(field("Assign to", assigneeSel));
     addRow.appendChild(field("Due (optional)", dueInput));
     host.appendChild(addRow);
+    var notesInput = document.createElement("textarea");
+    notesInput.rows = 2; notesInput.placeholder = "What needs to happen (optional)";
+    var notesField = field("Notes", notesInput); notesField.style.marginTop = "10px";
+    host.appendChild(notesField);
     var addBtn = el("button","btn btn-primary","+ Add task");
     addBtn.type = "button";
     addBtn.style.marginTop = "8px"; addBtn.style.marginBottom = "18px";
@@ -2650,7 +2661,7 @@ function renderTodoView(){
       if(!title) return;
       await api("/api/todos", {method:"POST", body: JSON.stringify({
         title: title, assigned_to: assigneeSel.value ? Number(assigneeSel.value) : null,
-        due_date: dueInput.value || null,
+        due_date: dueInput.value || null, notes: notesInput.value.trim() || null,
       })});
       await loadTodos();
       renderAll();
@@ -2667,8 +2678,7 @@ function renderTodoView(){
     return;
   }
 
-  var list = el("div","todolist");
-  todos.forEach(function(t){
+  function renderTodoRow(list, t){
     var row = el("div","todorow" + (t.done ? " todorow-done" : ""));
     var cb = document.createElement("input");
     cb.type = "checkbox"; cb.checked = t.done;
@@ -2684,6 +2694,19 @@ function renderTodoView(){
     if(canBook()) bits.push(t.assigned_to_name || "Unassigned");
     if(t.due_date) bits.push("Due " + shortDate(t.due_date));
     if(bits.length) mainCol.appendChild(el("p","hint", bits.join(" · ")));
+    // Both booker/owner (any task) and crew (their own, which is every
+    // task they can even see) are allowed to write this — it's the
+    // lightweight "leave a status update" the checkbox alone can't say.
+    var notesTa = document.createElement("textarea");
+    notesTa.rows = 2; notesTa.className = "todorow-notes";
+    notesTa.placeholder = "Notes / progress...";
+    notesTa.value = t.notes || "";
+    notesTa.onblur = async function(){
+      if(notesTa.value === (t.notes || "")) return;
+      await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify({notes: notesTa.value.trim() || null})});
+      await loadTodos();
+    };
+    mainCol.appendChild(notesTa);
     row.appendChild(mainCol);
     if(canBook()){
       var del = el("button","x","✕");
@@ -2697,8 +2720,30 @@ function renderTodoView(){
       row.appendChild(del);
     }
     list.appendChild(row);
-  });
+  }
+
+  var active = todos.filter(function(t){ return !t.done; });
+  var done = todos.filter(function(t){ return t.done; });
+
+  var list = el("div","todolist");
+  active.forEach(function(t){ renderTodoRow(list, t); });
   host.appendChild(list);
+  if(!active.length) host.appendChild(el("p","hint", canBook() ? "Nothing outstanding." : "You're all caught up."));
+
+  if(done.length){
+    var det = document.createElement("details");
+    det.className = "tododone";
+    det.open = !!ui.openFolders["todo-done"];
+    det.addEventListener("toggle", function(){ ui.openFolders["todo-done"] = det.open; });
+    var sum = document.createElement("summary");
+    sum.appendChild(el("span",null, "Done"));
+    sum.appendChild(el("span","hint", String(done.length)));
+    det.appendChild(sum);
+    var doneList = el("div","todolist"); doneList.style.marginTop = "10px";
+    det.appendChild(doneList);
+    done.forEach(function(t){ renderTodoRow(doneList, t); });
+    host.appendChild(det);
+  }
 }
 
 /* ============================== files ================================ */
