@@ -441,9 +441,15 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
 .folder{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
         padding:10px 14px;margin-bottom:10px}
 .folder summary{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;
-                 list-style:none;font-family:var(--display);font-size:13.5px}
+                 list-style:none;font-family:var(--body);font-size:14.5px}
 .folder summary::-webkit-details-marker{display:none}
 .folder-name{color:var(--ink)}
+.yearfolder{background:transparent;border:1px solid var(--line-strong);border-radius:var(--radius);
+        padding:10px 14px;margin-bottom:14px}
+.yearfolder > summary{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;
+                 list-style:none;font-family:var(--body);font-size:16px;font-weight:600;color:var(--ink)}
+.yearfolder > summary::-webkit-details-marker{display:none}
+.yearfolder-body{margin-top:12px}
 
 /* Vision board: a Trello-style pipeline, stage columns running left to
    right. The board itself keeps the aspirational "Vision Board" name;
@@ -2782,6 +2788,19 @@ function foldersEvents(){
   return (store.events||[]).filter(function(e){ return e.status === "confirmed" || e.status === "complete"; })
     .slice().sort(function(a,b){ return a.show_date < b.show_date ? -1 : a.show_date > b.show_date ? 1 : 0; });
 }
+// M-D-YY, date first so folders already read in date order at a glance —
+// same idea as naming a file "2026-05-01" instead of "May 1st file".
+function folderDateLabel(s){
+  var p = parts(s);
+  return (p.m + 1) + "-" + p.d + "-" + String(p.y).slice(-2);
+}
+function headlinerName(ev){
+  var acts = ev.artists || [];
+  return acts.length ? acts[0].name : "Untitled hold";
+}
+function folderLabel(ev){
+  return folderDateLabel(ev.show_date) + " " + headlinerName(ev) + " " + ev.venue;
+}
 function renderFolder(host, key, label, eventId){
   var files = (store.files||[]).filter(function(f){ return f.event_id === eventId; });
   var det = document.createElement("details");
@@ -2803,11 +2822,30 @@ function renderFilesView(){
   var host = document.getElementById("view-files");
   host.innerHTML = "";
   host.appendChild(el("p","hint",
-    "One folder per confirmed show, plus a general one for anything not tied to a specific show. " +
+    "One folder per confirmed show, grouped by year, plus a general one for anything not tied to a specific show. " +
     "A show's folder here is the exact same thing as the Files section on its own editor."));
   renderFolder(host, "general", "General", null);
+
+  var byYear = {};
   foldersEvents().forEach(function(ev){
-    renderFolder(host, "event-" + ev.id, fullBillName(ev) + " — " + shortDate(ev.show_date), ev.id);
+    var year = parts(ev.show_date).y;
+    (byYear[year] = byYear[year] || []).push(ev);
+  });
+  Object.keys(byYear).sort(function(a,b){ return a - b; }).forEach(function(year){
+    var det = document.createElement("details");
+    det.className = "yearfolder";
+    det.open = !!ui.openFolders["year-" + year];
+    det.addEventListener("toggle", function(){ ui.openFolders["year-" + year] = det.open; });
+    var sum = document.createElement("summary");
+    sum.appendChild(el("span",null, year));
+    sum.appendChild(el("span","hint", byYear[year].length + " show" + (byYear[year].length === 1 ? "" : "s")));
+    det.appendChild(sum);
+    var yearBody = el("div","yearfolder-body");
+    det.appendChild(yearBody);
+    host.appendChild(det);
+    byYear[year].forEach(function(ev){
+      renderFolder(yearBody, "event-" + ev.id, folderLabel(ev), ev.id);
+    });
   });
 }
 
