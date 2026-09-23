@@ -154,7 +154,7 @@ main{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:16px 48px}
 
 .show{position:relative;text-align:left;border:1px solid transparent;border-radius:4px;padding:3px 5px;display:block;width:100%;
       font-size:12px;line-height:1.25;overflow:hidden}
-.show .name{font-weight:600;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.show .name{font-weight:600;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .show .meta{display:block;font-size:10.5px;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-variant-numeric:tabular-nums}
 /* All three hold tiers are one shade — the priority order is shown as a
    number badge (holdnum), not by fading the color, so 1st/2nd/3rd stay
@@ -708,15 +708,26 @@ function actsNodes(ev){
 // rap show) would otherwise turn a calendar cell or a day-sheet card
 // into a wall of text. List view and the editor keep the uncapped
 // actsNodes/fullBillName since a table row/the editor has room for it.
-function shortBillNodes(ev, maxActs){
+function shortBillNodes(ev, maxChars){
   var acts = visibleActs(ev);
   var frag = document.createDocumentFragment();
   if(!acts.length){ frag.appendChild(document.createTextNode("Untitled hold")); return frag; }
-  acts.slice(0, maxActs).forEach(function(a, i){
+  // Budget by character count, not act count — a bill wraps across a few
+  // lines now (see .show .name's line-clamp), so what actually runs out
+  // of room is space, not "too many names."  Always keep at least the
+  // headliner even if their name alone blows the budget.
+  var shown = [acts[0]], len = acts[0].name.length;
+  for(var i = 1; i < acts.length; i++){
+    len += 2 + acts[i].name.length;
+    if(len > maxChars) break;
+    shown.push(acts[i]);
+  }
+  shown.forEach(function(a, i){
     if(i > 0) frag.appendChild(document.createTextNode(", "));
     frag.appendChild(el("span", a.confirmed ? "act-confirmed" : "act-pending", a.name));
   });
-  if(acts.length > maxActs) frag.appendChild(el("span","hint", " +" + (acts.length - maxActs) + " more"));
+  var remaining = acts.length - shown.length;
+  if(remaining > 0) frag.appendChild(el("span","hint", " +" + remaining + " more"));
   return frag;
 }
 function dealSummary(ev){
@@ -884,7 +895,7 @@ function showChip(ev){
   var b = el("button","show " + st(ev).cls);
   var holdNum = HOLD_NUMBER[ev.status];
   if(holdNum) b.appendChild(el("span","holdnum", String(holdNum)));
-  var name = el("span","name"); name.appendChild(shortBillNodes(ev, 2));
+  var name = el("span","name"); name.appendChild(shortBillNodes(ev, 60));
   b.appendChild(name);
   var bits = [];
   if(ev.doors) bits.push(time12(ev.doors));
@@ -966,7 +977,7 @@ function openDay(ds, list){
     list.forEach(function(ev){
       var card = el("button","show " + st(ev).cls);
       card.style.padding = "9px 10px";
-      var name = el("span","name"); name.appendChild(shortBillNodes(ev, 3));
+      var name = el("span","name"); name.appendChild(shortBillNodes(ev, 90));
       card.appendChild(name);
       var bits = [ev.venue, st(ev).label];
       if(ev.doors) bits.push("doors " + time12(ev.doors));
