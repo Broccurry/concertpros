@@ -190,6 +190,10 @@ td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
 tbody tr:last-child td{border-bottom:0}
 tbody tr{cursor:pointer}
 tbody tr:hover td{background:var(--surface-2)}
+tr.month-divider{cursor:default}
+tr.month-divider:hover td{background:var(--surface-2)}
+tr.month-divider td{background:var(--surface-2);font-family:var(--display);font-size:11px;font-weight:600;
+                     letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);padding:7px 12px}
 .num{text-align:right;font-variant-numeric:tabular-nums}
 .date-col{font-variant-numeric:tabular-nums;white-space:nowrap;color:var(--ink-2)}
 .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap;border:1px solid transparent}
@@ -623,6 +627,19 @@ function shortDate(s){
   var p = parts(s);
   return DOW_SHORT[new Date(p.y,p.m,p.d).getDay()] + " " + MONTHS[p.m].slice(0,3) + " " + p.d;
 }
+// A full-width divider row, dropped into a table body wherever the month
+// changes — shared by List and the Staff schedule so a run of many shows
+// doesn't read as one undifferentiated block.
+function monthDividerRow(dateStr, colspan){
+  var tr = document.createElement("tr");
+  tr.className = "month-divider";
+  var td = document.createElement("td");
+  td.colSpan = colspan;
+  var p = parts(dateStr);
+  td.textContent = MONTHS[p.m] + " " + p.y;
+  tr.appendChild(td);
+  return tr;
+}
 function money(n){
   if(n === "" || n === null || n === undefined || isNaN(+n)) return "";
   return "$" + (+n).toLocaleString("en-US", {maximumFractionDigits:2});
@@ -1047,7 +1064,10 @@ function renderListView(){
   thead.appendChild(hr); t.appendChild(thead);
   var tb = document.createElement("tbody");
 
+  var listLastMonth = null;
   rows.forEach(function(ev){
+    var monthKey = ev.show_date.slice(0,7);
+    if(monthKey !== listLastMonth){ tb.appendChild(monthDividerRow(ev.show_date, cols.length)); listLastMonth = monthKey; }
     var tr = document.createElement("tr");
     tr.onclick = function(){ openEvent(ev.id); };
     tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
@@ -1551,7 +1571,11 @@ function renderStaffView(){
     thead.appendChild(hr); t.appendChild(thead);
     var tb = document.createElement("tbody");
     var unfilled = 0;
+    var staffLastMonth = null;
+    var staffCols = 4 + usedRoles.length;
     rows.forEach(function(ev){
+      var monthKey = ev.show_date.slice(0,7);
+      if(monthKey !== staffLastMonth){ tb.appendChild(monthDividerRow(ev.show_date, staffCols)); staffLastMonth = monthKey; }
       var tr = document.createElement("tr");
       tr.onclick = function(){ openEvent(ev.id); };
       tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
