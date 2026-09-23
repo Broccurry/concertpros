@@ -704,6 +704,21 @@ function actsNodes(ev){
   });
   return frag;
 }
+// Same acts, but capped — a big bill (8 support acts is real, e.g. a
+// rap show) would otherwise turn a calendar cell or a day-sheet card
+// into a wall of text. List view and the editor keep the uncapped
+// actsNodes/fullBillName since a table row/the editor has room for it.
+function shortBillNodes(ev, maxActs){
+  var acts = visibleActs(ev);
+  var frag = document.createDocumentFragment();
+  if(!acts.length){ frag.appendChild(document.createTextNode("Untitled hold")); return frag; }
+  acts.slice(0, maxActs).forEach(function(a, i){
+    if(i > 0) frag.appendChild(document.createTextNode(", "));
+    frag.appendChild(el("span", a.confirmed ? "act-confirmed" : "act-pending", a.name));
+  });
+  if(acts.length > maxActs) frag.appendChild(el("span","hint", " +" + (acts.length - maxActs) + " more"));
+  return frag;
+}
 function dealSummary(ev){
   var bits = [];
   if(ev.guarantee !== "" && ev.guarantee != null) bits.push(money(ev.guarantee));
@@ -869,7 +884,7 @@ function showChip(ev){
   var b = el("button","show " + st(ev).cls);
   var holdNum = HOLD_NUMBER[ev.status];
   if(holdNum) b.appendChild(el("span","holdnum", String(holdNum)));
-  var name = el("span","name"); name.appendChild(actsNodes(ev));
+  var name = el("span","name"); name.appendChild(shortBillNodes(ev, 2));
   b.appendChild(name);
   var bits = [];
   if(ev.doors) bits.push(time12(ev.doors));
@@ -951,7 +966,7 @@ function openDay(ds, list){
     list.forEach(function(ev){
       var card = el("button","show " + st(ev).cls);
       card.style.padding = "9px 10px";
-      var name = el("span","name"); name.appendChild(actsNodes(ev));
+      var name = el("span","name"); name.appendChild(shortBillNodes(ev, 3));
       card.appendChild(name);
       var bits = [ev.venue, st(ev).label];
       if(ev.doors) bits.push("doors " + time12(ev.doors));
