@@ -252,6 +252,9 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 2px var(--accent-soft)}
 .hint{font-size:11.5px;color:var(--ink-3)}
 
+.ticketsaleslist{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+.ticketsalerow{display:flex;align-items:center;gap:10px;font-size:13.5px;padding:4px 0}
+.ticketsalerow .x{margin-left:auto}
 .tierrow,.stafrow{display:grid;grid-template-columns:minmax(120px,200px) 110px 32px;gap:8px;margin-bottom:6px;align-items:center}
 .stafrow{grid-template-columns:140px 1fr 32px}
 .stafrow-edit{grid-template-columns:110px 1fr 110px auto 32px}
@@ -1067,7 +1070,7 @@ function renderListView(){
   var t = document.createElement("table");
   var thead = document.createElement("thead"), hr = document.createElement("tr");
   var cols = ["Date","Venue","Show","Status","Doors"];
-  if(canBook()) cols = cols.concat(["Tickets","Announce","On sale","Deal","Tasks"]);
+  if(canBook()) cols = cols.concat(["Tickets","Sold","Announce","On sale","Deal","Tasks"]);
   cols.forEach(function(h){ var th = el("th",null,h); if(h === "Deal") th.className = "num"; hr.appendChild(th); });
   thead.appendChild(hr); t.appendChild(thead);
   var tb = document.createElement("tbody");
@@ -1089,6 +1092,7 @@ function renderListView(){
     if(canBook()){
       var tiers = (ev.ticket_tiers||[]).filter(function(x){ return x.price !== "" && x.price != null; });
       tr.appendChild(el("td","date-col", tiers.map(function(x){ return money(x.price); }).join(" / ")));
+      tr.appendChild(el("td","num", ev.latest_ticket_count != null ? String(ev.latest_ticket_count) : "—"));
       tr.appendChild(el("td","date-col", ev.announce_date ? shortDate(ev.announce_date) : "—"));
       tr.appendChild(el("td","date-col", ev.onsale_date ? shortDate(ev.onsale_date) : "—"));
       tr.appendChild(el("td","num", dealSummary(ev)));
@@ -2305,6 +2309,55 @@ function renderSheet(){
   body.appendChild(fs4);
 
   if(!draftIsNew){
+    // A day-by-day log, not the one final number -- that's Finals &
+    // payout's own Tickets sold field, entered once after the show. This
+    // is for watching whether marketing is working while tickets are
+    // still on sale. Manual for now; source:'etix' rows (an hourly pull)
+    // will show up in the same list once that access exists.
+    var fsTix = document.createElement("fieldset");
+    var sales = (draft.ticket_sales || []).slice().sort(function(a,b){ return a.sale_date < b.sale_date ? -1 : 1; });
+    var latest = sales.length ? sales[sales.length - 1] : null;
+    fsTix.appendChild(el("legend", null, "Ticket sales" +
+      (latest ? " — " + latest.tickets_sold + " as of " + shortDate(latest.sale_date) : "")));
+    var tixList = el("div","ticketsaleslist");
+    sales.forEach(function(s){
+      var row = el("div","ticketsalerow");
+      row.appendChild(el("span","date-col", shortDate(s.sale_date)));
+      row.appendChild(el("span",null, String(s.tickets_sold)));
+      if(s.source === "etix") row.appendChild(el("span","pill pill-muted","Etix"));
+      var del = el("button","x","✕");
+      del.type = "button";
+      del.title = "Remove this entry";
+      del.onclick = async function(){
+        await api("/api/events/" + draft.id + "/ticket_sales/" + s.sale_date, {method:"DELETE"});
+        await refreshDraft();
+      };
+      row.appendChild(del);
+      tixList.appendChild(row);
+    });
+    fsTix.appendChild(tixList);
+    var tixAddRow = el("div","row-3"); tixAddRow.style.marginTop = "8px";
+    var tixDateInput = input("date", todayISO(), function(){});
+    var tixCountInput = input("number", "", function(){});
+    tixCountInput.placeholder = "Count";
+    tixAddRow.appendChild(field("Date", tixDateInput));
+    tixAddRow.appendChild(field("Tickets sold", tixCountInput));
+    var tixLogBtn = el("button","btn","Log");
+    tixLogBtn.type = "button";
+    tixLogBtn.style.alignSelf = "end";
+    tixLogBtn.onclick = async function(){
+      if(tixCountInput.value === "") return;
+      await api("/api/events/" + draft.id + "/ticket_sales", {method:"POST", body: JSON.stringify({
+        sale_date: tixDateInput.value, tickets_sold: Number(tixCountInput.value),
+      })});
+      await refreshDraft();
+    };
+    tixAddRow.appendChild(tixLogBtn);
+    fsTix.appendChild(tixAddRow);
+    body.appendChild(fsTix);
+  }
+
+  if(!draftIsNew){
     var fs5 = document.createElement("fieldset");
     var pr = taskProgress(draft);
     fs5.appendChild(el("legend",null,"Checklist — " + pr.done + " of " + pr.total + " done"));
@@ -2718,16 +2771,15 @@ function openSetTimeSheet(ev){
     "h1{text-transform:uppercase;letter-spacing:.04em;margin:0;font-size:40px}" +
     "h2{font-weight:normal;margin:10px 0 2px;font-size:20px}" +
     ".acts{margin-top:34px}" +
-    ".act{padding:16px 0;border-bottom:1px solid #ccc}" +
+    ".act{padding:16px 0}" +
     ".sname{font-size:30px}" +
     ".stime{font-size:20px;margin-top:4px}" +
     ".printbtn{display:block;margin:34px auto 0;padding:10px 24px;font-size:15px;cursor:pointer;font-family:Arial,Helvetica,sans-serif}" +
     "@media print{.printbtn{display:none}}" +
     "</style></head><body>" +
     "<h1>" + escHtml(ev.venue) + "</h1>" +
-    "<h2>" + escHtml(shortDate(ev.show_date)) + "</h2>" +
-    (ev.doors ? "<h2>Doors " + escHtml(time12(ev.doors)) + "</h2>" : "") +
-    (dayOfTier && dayOfTier.price != null ? "<h2>Day of " + escHtml(money(dayOfTier.price)) + "</h2>" : "") +
+    "<h2>" + escHtml(shortDate(ev.show_date)) + (ev.doors ? " &middot; Doors " + escHtml(time12(ev.doors)) : "") + "</h2>" +
+    (dayOfTier && dayOfTier.price != null ? "<h2>" + escHtml(money(dayOfTier.price)) + "</h2>" : "") +
     "<h2>($5 upcharge under 21)</h2>" +
     "<div class=\"acts\">" + (blocks || "<div class=\"act\">No acts on the bill yet.</div>") + "</div>" +
     "<button class=\"printbtn\" onclick=\"window.print()\">Print</button>" +
@@ -3279,6 +3331,7 @@ function renderCardBoard(host, columns, emptyHint){
       body.onclick = function(){ openVisionCardForm(c.id); };
       body.appendChild(el("p","visioncard-title", c.title));
       if(c.artist_name) body.appendChild(el("span","pill s-complete", c.artist_name));
+      if(c.venue_name) body.appendChild(el("span","pill pill-muted", c.venue_name));
       if(c.trigger_event_id){
         body.appendChild(el("p","hint",
           "From " + shortDate(c.trigger_show_date) + " · " + c.trigger_venue));
@@ -3310,9 +3363,9 @@ function openVisionCardForm(cardId){
   body.innerHTML = ""; foot.innerHTML = "";
 
   var draftC = c
-    ? {title:c.title, column_key:c.column_key, artist_id:c.artist_id||"", trigger_event_id:c.trigger_event_id||"",
+    ? {title:c.title, column_key:c.column_key, artist_id:c.artist_id||"", venue_id:c.venue_id||"", trigger_event_id:c.trigger_event_id||"",
        notes:c.notes||"", link:c.link||"", follow_up_date:c.follow_up_date||"", follow_up_person_id:c.follow_up_person_id||""}
-    : {title:"", column_key:"idea", artist_id:"", trigger_event_id:"", notes:"", link:"", follow_up_date:"", follow_up_person_id:""};
+    : {title:"", column_key:"idea", artist_id:"", venue_id:"", trigger_event_id:"", notes:"", link:"", follow_up_date:"", follow_up_person_id:""};
 
   var fs = document.createElement("fieldset");
   fs.appendChild(el("legend",null,"The idea"));
@@ -3324,11 +3377,14 @@ function openVisionCardForm(cardId){
   var artistOpts = [{value:"",label:"No band linked"}].concat(
     store.artists.slice().sort(function(a,b){ return a.name.localeCompare(b.name); })
       .map(function(a){ return {value:a.id, label:a.name}; }));
+  var venueOpts = [{value:"",label:"No venue"}].concat(
+    store.venues.map(function(v){ return {value:v.id, label:v.name}; }));
 
-  var r0 = el("div","row-3");
+  var r0 = el("div","row-4");
   r0.appendChild(field("Title", input("text", draftC.title, function(v){ draftC.title = v; })));
   r0.appendChild(field("Stage", selectKV(colOpts, draftC.column_key, function(v){ draftC.column_key = v; })));
   r0.appendChild(field("Band (optional)", selectKV(artistOpts, draftC.artist_id, function(v){ draftC.artist_id = v ? Number(v) : ""; })));
+  r0.appendChild(field("Venue (optional)", selectKV(venueOpts, draftC.venue_id, function(v){ draftC.venue_id = v ? Number(v) : ""; })));
   fs.appendChild(r0);
 
   // The "strike while it's hot" case: a local band who just got real
@@ -3368,6 +3424,7 @@ function openVisionCardForm(cardId){
     var title = draftC.title.trim();
     if(!title){ errLine.textContent = "Give it a title."; return; }
     var payload = {title:title, column_key: draftC.column_key, artist_id: draftC.artist_id || null,
+                    venue_id: draftC.venue_id || null,
                     trigger_event_id: draftC.trigger_event_id || null, notes: draftC.notes,
                     link: draftC.link, follow_up_date: draftC.follow_up_date || null,
                     follow_up_person_id: draftC.follow_up_person_id || null};

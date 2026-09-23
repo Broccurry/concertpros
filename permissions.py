@@ -284,6 +284,18 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         cols = [c.name for c in cur.description]
         website_by_event = {row[0]: dict(zip(cols, row)) for row in cur.fetchall()}
 
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT event_id, sale_date, tickets_sold, source FROM ticket_sales "
+            "WHERE event_id = ANY(%(ids)s) ORDER BY sale_date",
+            {"ids": ids},
+        )
+        sales_by_event: dict[int, list[dict]] = {}
+        cols = [c.name for c in cur.description]
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            sales_by_event.setdefault(d.pop("event_id"), []).append(d)
+
     for e in events:
         eid = effective_id(e)
         e["artists"] = artists_by_event.get(eid, [])
@@ -292,6 +304,8 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         e["staff"] = staff_by_event.get(eid, [])
         e["tasks"] = tasks_by_event.get(eid, [])
         e["website"] = website_by_event.get(eid) or {"hero_file_id": None, "blurb": None, "published": False}
+        e["ticket_sales"] = sales_by_event.get(eid, [])
+        e["latest_ticket_count"] = e["ticket_sales"][-1]["tickets_sold"] if e["ticket_sales"] else None
         e["group_members"] = members_by_group.get(e["hold_group_id"], []) if e["hold_group_id"] else []
     return events
 

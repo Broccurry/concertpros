@@ -1453,6 +1453,48 @@ def create_app():
                      {"tiers": [{"label": l, "price": p} for l, p in cleaned]})
         return jsonify(ok=True)
 
+    @app.post("/api/events/<int:event_id>/ticket_sales")
+    @require_booker
+    def log_ticket_sale(event_id):
+        """One day's snapshot, upserted -- re-logging the same date just
+        corrects that day's count rather than creating a duplicate."""
+        body = request.get_json(silent=True) or {}
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        try:
+            sale_date = date.fromisoformat(body.get("sale_date") or "")
+        except ValueError:
+            return jsonify(error="invalid_sale_date"), 400
+        try:
+            tickets_sold = int(body.get("tickets_sold"))
+            if tickets_sold < 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_tickets_sold"), 400
+        cur.execute(
+            "INSERT INTO ticket_sales (event_id, sale_date, tickets_sold, source) "
+            "VALUES (%s, %s, %s, 'manual') "
+            "ON CONFLICT (event_id, sale_date) DO UPDATE SET tickets_sold = %s, source = 'manual'",
+            (event_id, sale_date, tickets_sold, tickets_sold),
+        )
+        audit.record(g.db, g.viewer, "event", event_id, "log_ticket_sale",
+                     {"sale_date": str(sale_date), "tickets_sold": tickets_sold})
+        return jsonify(ok=True), 201
+
+    @app.delete("/api/events/<int:event_id>/ticket_sales/<sale_date>")
+    @require_booker
+    def delete_ticket_sale(event_id, sale_date):
+        try:
+            parsed_date = date.fromisoformat(sale_date)
+        except ValueError:
+            return jsonify(error="invalid_sale_date"), 400
+        cur = g.db.cursor()
+        cur.execute("DELETE FROM ticket_sales WHERE event_id = %s AND sale_date = %s", (event_id, parsed_date))
+        audit.record(g.db, g.viewer, "event", event_id, "delete_ticket_sale", {"sale_date": sale_date})
+        return jsonify(ok=True)
+
     @app.put("/api/events/<int:event_id>/artists")
     @require_booker
     def set_event_artists(event_id):
@@ -1907,11 +1949,13 @@ def create_app():
         cur = g.db.cursor()
         cur.execute(
             "SELECT c.id, c.title, c.column_key, c.sort_order, c.artist_id, a.name AS artist_name, "
+            "c.venue_id, cv.name AS venue_name, "
             "c.trigger_event_id, e.show_date AS trigger_show_date, v.name AS trigger_venue, "
             "c.notes, c.link, c.follow_up_date, c.follow_up_person_id, fp.name AS follow_up_person_name, "
             "c.created_by, c.created_at "
             "FROM vision_cards c "
             "LEFT JOIN artists a ON a.id = c.artist_id "
+            "LEFT JOIN venues cv ON cv.id = c.venue_id "
             "LEFT JOIN events e ON e.id = c.trigger_event_id "
             "LEFT JOIN venues v ON v.id = e.venue_id "
             "LEFT JOIN people fp ON fp.id = c.follow_up_person_id "
@@ -1947,6 +1991,14 @@ def create_app():
             updates["column_key"] = body["column_key"]
         if "artist_id" in body:
             updates["artist_id"] = body["artist_id"] or None
+        if "venue_id" in body:
+            venue_id = body["venue_id"] or None
+            if venue_id is not None:
+                cur = g.db.cursor()
+                cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
+                if cur.fetchone() is None:
+                    return None, "unknown_venue"
+            updates["venue_id"] = venue_id
         if "trigger_event_id" in body:
             updates["trigger_event_id"] = body["trigger_event_id"] or None
         if "notes" in body:

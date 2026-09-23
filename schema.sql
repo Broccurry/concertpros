@@ -211,6 +211,22 @@ CREATE TABLE assignments (
 -- Deliberately its own table, 1:1 with events, so a crew-level query can
 -- simply never JOIN here rather than trust a column allowlist. See the note
 -- at the top of this file.
+-- A running day-by-day count, not the final number -- that's
+-- settlements.tickets_sold, entered once after the show for real
+-- accounting. This is for watching sales velocity WHILE tickets are on
+-- sale (is marketing working?), so it's a log of snapshots, not a single
+-- value. source distinguishes a manual entry from a future automated
+-- Etix pull (not built yet -- no working API access) without needing a
+-- second table once that exists.
+CREATE TABLE ticket_sales (
+    event_id        INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    sale_date       DATE NOT NULL,
+    tickets_sold    INTEGER NOT NULL,
+    source          TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'etix')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (event_id, sale_date)
+);
+
 CREATE TABLE settlements (
     event_id        INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
     tickets_sold    INTEGER,
@@ -270,6 +286,7 @@ CREATE TABLE vision_cards (
                       CHECK (column_key IN ('idea', 'offer_sent')),
     sort_order        INTEGER NOT NULL DEFAULT 0,
     artist_id         INTEGER REFERENCES artists(id),
+    venue_id          INTEGER REFERENCES venues(id),  -- optional: file the idea under a specific room
     trigger_event_id  INTEGER REFERENCES events(id) ON DELETE SET NULL,
     notes             TEXT,
     link              TEXT,

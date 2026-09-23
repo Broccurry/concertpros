@@ -200,6 +200,21 @@ class VisionBoard(unittest.TestCase):
         self.assertEqual(client.get("/api/vision_cards").status_code, 403)
         self.assertEqual(client.post("/api/vision_cards", json={"title": "x"}).status_code, 403)
 
+    def test_a_card_can_be_filed_under_a_venue(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        card_id = self._create(client, venue_id=self.venue_id)
+        cards = client.get("/api/vision_cards").get_json()["cards"]
+        mine = next(c for c in cards if c["id"] == card_id)
+        self.assertEqual(mine["venue_id"], self.venue_id)
+        self.assertTrue(mine["venue_name"])
+
+    def test_unknown_venue_on_a_card_is_rejected(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post("/api/vision_cards", json={"title": "x", "venue_id": 999999})
+        self.assertEqual(r.status_code, 400)
+
     def test_a_follow_up_can_be_assigned_to_a_booker(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)
