@@ -3,12 +3,44 @@ Anthropic call is mocked out -- these tests check the DB bookkeeping,
 the permission gate, and that the public routes never leak an
 unpublished show, not that Anthropic's API is reachable.
 """
+import io
+import json
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import app as app_module
 import auth
 import db
+from app import _anthropic_complete
+
+
+class AnthropicCompleteParsing(unittest.TestCase):
+    """A real response can put a "thinking" block before the text block
+    (hit live while building the September example site -- content[0]
+    isn't reliably the text)."""
+
+    def _mock_response(self, payload):
+        body = json.dumps(payload).encode("utf-8")
+        cm = MagicMock()
+        cm.__enter__.return_value = io.BytesIO(body)
+        cm.__exit__.return_value = False
+        return cm
+
+    def test_finds_the_text_block_after_a_leading_thinking_block(self):
+        payload = {"content": [{"type": "thinking", "thinking": "..."}, {"type": "text", "text": "Come on out."}]}
+        with patch("urllib.request.urlopen", return_value=self._mock_response(payload)):
+            self.assertEqual(_anthropic_complete("fake-key", "prompt"), "Come on out.")
+
+    def test_works_when_text_is_already_first(self):
+        payload = {"content": [{"type": "text", "text": "Come on out."}]}
+        with patch("urllib.request.urlopen", return_value=self._mock_response(payload)):
+            self.assertEqual(_anthropic_complete("fake-key", "prompt"), "Come on out.")
+
+    def test_raises_a_clear_error_when_no_text_block_exists(self):
+        payload = {"content": [{"type": "thinking", "thinking": "..."}]}
+        with patch("urllib.request.urlopen", return_value=self._mock_response(payload)):
+            with self.assertRaises(ValueError):
+                _anthropic_complete("fake-key", "prompt")
 
 
 class Website(unittest.TestCase):

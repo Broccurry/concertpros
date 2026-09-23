@@ -49,7 +49,12 @@ def _anthropic_complete(api_key, prompt):
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         data = json.loads(resp.read())
-    return data["content"][0]["text"].strip()
+    # content[0] isn't reliably the text block -- a "thinking" block can
+    # come first, so find the actual text block instead of assuming position.
+    text_block = next((b for b in data["content"] if b.get("type") == "text"), None)
+    if text_block is None:
+        raise ValueError(f"no text block in Anthropic response: {data}")
+    return text_block["text"].strip()
 
 
 def _parse_number(v):
