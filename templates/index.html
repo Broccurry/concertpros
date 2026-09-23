@@ -167,7 +167,6 @@ main{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:16px 48px}
 .s-complete{background:var(--done-bg);color:var(--done);border-color:var(--done-bg)}
 .s-dead{background:var(--dead-bg);color:var(--dead);border-color:var(--dead-bg)}
 .s-dead .name{text-decoration:line-through}
-.s-unsettled{background:var(--done-bg);color:var(--done);border-color:var(--hold-1-bg);box-shadow:inset 0 0 0 1px var(--hold-1-bg)}
 
 .cell-btn{border:1px solid var(--line);background:var(--surface);border-radius:var(--radius);min-height:58px;
           padding:4px 3px 5px;display:flex;flex-direction:column;align-items:center;gap:3px;width:100%;color:inherit;text-align:center}
@@ -414,12 +413,6 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
   .statusopt-sm{font-size:8.5px;padding:5px 1px;letter-spacing:-.01em}
 }
 
-.banner{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--accent-soft);border:1px solid var(--accent);
-        color:var(--accent);border-radius:var(--radius);padding:8px 12px;margin-bottom:14px;font-size:12.5px}
-.banner strong{font-weight:600}
-.banner .btn{margin-left:auto;background:transparent;border-color:currentColor;color:inherit}
-.banner.warn{background:var(--hold-3-bg);border-color:var(--hold-1-bg);color:var(--hold-1)}
-tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
 .notice{font-size:12px;color:var(--ink-3);margin-top:14px;text-align:center}
 
 /* To Do: general ops tasks, phone-first for crew checking off their own. */
@@ -557,7 +550,6 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
   </div>
 
   <main>
-    <div id="bannerSlot"></div>
     <section id="view-calendar">
       <div class="dow"><div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div></div>
       <div class="grid" id="grid"></div>
@@ -608,8 +600,7 @@ var STATUS = {
   hold3:    {label:"3rd hold",        cls:"s-hold3",     swatch:"var(--hold-1-bg)"},
   confirmed:{label:"Confirmed",       cls:"s-confirmed", swatch:"var(--confirm-bg)"},
   complete: {label:"Complete",        cls:"s-complete",  swatch:"var(--done-bg)"},
-  dead:     {label:"Didn't work out", cls:"s-dead",      swatch:"var(--dead-bg)"},
-  unsettled:{label:"Needs settling",  cls:"s-unsettled", swatch:"var(--done-bg)"}
+  dead:     {label:"Didn't work out", cls:"s-dead",      swatch:"var(--dead-bg)"}
 };
 var STATUS_ORDER = ["hold1","hold2","hold3","confirmed","complete","dead"];
 var HOLD_NUMBER = {hold1:1, hold2:2, hold3:3};
@@ -671,8 +662,12 @@ function messageBodyNodes(text){
   }
   return frag;
 }
+// A past-but-still-confirmed show isn't given its own color anywhere —
+// it renders as plain Confirmed everywhere except the List view, which
+// is the one place that calls it out (see the "Needs settling" section),
+// same "one place decides" reasoning as everything else in this app.
 function isUnsettled(ev){ return !!ev && ev.status === "confirmed" && ev.show_date < todayISO(); }
-function st(ev){ if(isUnsettled(ev)) return STATUS.unsettled; return (ev && STATUS[ev.status]) || STATUS.hold1; }
+function st(ev){ return (ev && STATUS[ev.status]) || STATUS.hold1; }
 function actLabel(a){ return a.confirmed ? a.name.toUpperCase() : a.name.toLowerCase(); }
 /* Everywhere EXCEPT the show editor itself only shows the top-slot act
    plus whichever other acts have been individually confirmed — an
@@ -818,7 +813,6 @@ function el(tag, cls, text){
 function renderAll(){
   renderVenueChips();
   renderLegend();
-  renderBanner();
   document.getElementById("monthLabel").textContent = MONTHS[ui.cursor.m] + " " + ui.cursor.y;
   document.getElementById("monthnav").style.display = (ui.view === "calendar") ? "flex" : "none";
 
@@ -859,30 +853,14 @@ function renderLegend(){
   // hold1/2/3 are one shade now (the number badge on the card carries the
   // distinction), so the legend shows one "Hold" swatch instead of three
   // identical-looking ones.
-  ["hold1","confirmed","complete","dead","unsettled"].forEach(function(k){
+  ["hold1","confirmed","complete","dead"].forEach(function(k){
     var item = el("span","legend-item");
     var sw = el("span","swatch");
     sw.style.background = STATUS[k].swatch;
-    if(k === "unsettled") sw.style.border = "1px solid var(--hold-1-bg)";
     item.appendChild(sw);
     item.appendChild(document.createTextNode(k === "hold1" ? "Hold (1/2/3)" : STATUS[k].label));
     box.appendChild(item);
   });
-}
-function renderBanner(){
-  var slot = document.getElementById("bannerSlot");
-  slot.innerHTML = "";
-  var open = visibleEvents().filter(isUnsettled);
-  if(open.length){
-    var w = el("div","banner warn");
-    w.appendChild(el("strong", null, open.length + " show" + (open.length===1?"":"s") + " need" + (open.length===1?"s":"") + " settling"));
-    w.appendChild(document.createTextNode("They're past and still marked confirmed — nobody closed them out."));
-    var go = el("button","btn","Show me");
-    go.onclick = function(){ ui.view = "list"; setActiveTab(); renderAll();
-      requestAnimationFrame(function(){ var r = document.querySelector("#view-list tr.unsettled-row"); if(r) r.scrollIntoView({block:"center"}); }); };
-    w.appendChild(go);
-    slot.appendChild(w);
-  }
 }
 function setActiveTab(){
   document.querySelectorAll("#navTabs button").forEach(function(b){
@@ -954,7 +932,6 @@ function phoneCell(ds, dayNum, list, out, isToday){
   list.slice(0,4).forEach(function(ev){
     var d = el("span","dot"); var s = st(ev);
     d.style.background = s.swatch;
-    if(isUnsettled(ev)) d.style.border = "1px solid var(--hold-1-bg)";
     dots.appendChild(d);
   });
   if(list.length > 4) dots.appendChild(el("span","dot-more","+" + (list.length - 4)));
@@ -1051,14 +1028,13 @@ function renderListView(){
     return;
   }
 
-  var rows = visibleEvents().filter(function(ev){ return ev.status !== "complete"; });
+  var rows = visibleEvents().filter(function(ev){ return ev.status !== "complete" && !isUnsettled(ev); });
   if(!rows.length){
     var e = el("div","empty");
     e.appendChild(el("h3",null,"No shows yet"));
     e.appendChild(el("p",null, canBook() ? "Book one from the calendar, or hit “Book a show”." : "Nothing confirmed yet."));
     host.appendChild(e);
-    return;
-  }
+  } else {
   var wrap = el("div","tablewrap");
   var t = document.createElement("table");
   var thead = document.createElement("thead"), hr = document.createElement("tr");
@@ -1070,7 +1046,6 @@ function renderListView(){
 
   rows.forEach(function(ev){
     var tr = document.createElement("tr");
-    if(isUnsettled(ev)) tr.className = "unsettled-row";
     tr.onclick = function(){ openEvent(ev.id); };
     tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
     tr.appendChild(el("td",null, ev.venue));
@@ -1097,8 +1072,33 @@ function renderListView(){
     tb.appendChild(tr);
   });
   t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
+  }
 
   if(canBook()){
+    // Past its date but still sitting at "confirmed" — nobody closed it
+    // out. Pulled into its own section instead of a special color on the
+    // calendar/main table, which is the one thing this app is trying not
+    // to do (one fact, one place, not a color you have to remember the
+    // meaning of).
+    var needsSettling = visibleEvents().filter(isUnsettled);
+    if(needsSettling.length){
+      host.appendChild(el("h3","section","Needs settling (" + needsSettling.length + ")"));
+      var w0 = el("div","tablewrap"), t0 = document.createElement("table");
+      var h0 = document.createElement("thead"), hr0 = document.createElement("tr");
+      ["Date","Venue","Show"].forEach(function(h){ hr0.appendChild(el("th",null,h)); });
+      h0.appendChild(hr0); t0.appendChild(h0);
+      var tb0 = document.createElement("tbody");
+      needsSettling.forEach(function(ev){
+        var tr = document.createElement("tr");
+        tr.onclick = function(){ openEvent(ev.id); };
+        tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
+        tr.appendChild(el("td",null, ev.venue));
+        var td = el("td","title-cell"); td.appendChild(actsNodes(ev)); tr.appendChild(td);
+        tb0.appendChild(tr);
+      });
+      t0.appendChild(tb0); w0.appendChild(t0); host.appendChild(w0);
+    }
+
     // Complete-but-unsettled only — once the finals are filled in and
     // marked settled, a show is done needing attention here and just
     // lives on the calendar as history from then on.
@@ -1128,7 +1128,7 @@ function renderListView(){
         tr.appendChild(el("td","num", money(s.artist_payout) || "—"));
         tr.appendChild(el("td","num", (s.gross===""||s.gross==null) ? "—" : money(net)));
         var stc2 = document.createElement("td");
-        stc2.appendChild(el("span","pill " + (s.settled ? "s-confirmed" : "s-hold2"), s.settled ? "Settled" : "Open"));
+        stc2.appendChild(el("span","pill " + (s.settled ? "s-confirmed" : "pill-muted"), s.settled ? "Settled" : "Open"));
         tr.appendChild(stc2);
         tb2.appendChild(tr);
       });
