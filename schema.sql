@@ -158,7 +158,8 @@ CREATE TABLE event_artists (
     -- overall tier (Local/Regional/National), which describes the band
     -- everywhere, not just tonight's lineup.
     bill_role   TEXT CHECK (bill_role IN ('Touring', 'Direct Support', 'Support', 'Local') OR bill_role IS NULL),
-    set_time    TIME,               -- when this act actually plays, for the printed set time sheet
+    set_time      TIME,             -- when this act actually plays, for the printed set time sheet
+    set_time_end  TIME,             -- NULL = open-ended ("10:30-?"), true for every headliner
     UNIQUE (event_id, artist_id)
 );
 

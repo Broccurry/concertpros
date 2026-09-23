@@ -47,6 +47,17 @@ def _parse_number(v):
 _BILL_ROLES = ("Touring", "Direct Support", "Support", "Local")
 
 
+def _parse_optional_time(raw):
+    """None/"" both mean "not set" (a headliner's set_time_end is
+    routinely left open — "10:30-?" on the printed sheet)."""
+    if raw in (None, ""):
+        return None, True
+    try:
+        return time.fromisoformat(raw), True
+    except (TypeError, ValueError):
+        return None, False
+
+
 def _parse_acts(raw):
     """Parses an `acts`/`artists` field into a list of act dicts — the one
     place that decides what a valid bill looks like, used by both event
@@ -77,26 +88,22 @@ def _parse_acts(raw):
                     walkups, ok3 = None, False
             if not (ok1 and ok2 and ok3):
                 return None, "invalid_act_figure"
-            set_time_raw = item.get("set_time")
-            if set_time_raw in (None, ""):
-                set_time = None
-            else:
-                try:
-                    set_time = time.fromisoformat(set_time_raw)
-                except ValueError:
-                    return None, "invalid_set_time"
+            set_time, ok4 = _parse_optional_time(item.get("set_time"))
+            set_time_end, ok5 = _parse_optional_time(item.get("set_time_end"))
+            if not (ok4 and ok5):
+                return None, "invalid_set_time"
         elif isinstance(item, str):
             name = item.strip()
             confirmed = declined = False
-            notes = bill_role = guarantee = paid = walkups = set_time = None
+            notes = bill_role = guarantee = paid = walkups = set_time = set_time_end = None
         else:
             name = ""
             confirmed = declined = False
-            notes = bill_role = guarantee = paid = walkups = set_time = None
+            notes = bill_role = guarantee = paid = walkups = set_time = set_time_end = None
         if not name:
             return None, "every_act_needs_a_name"
         acts.append({"name": name, "confirmed": confirmed, "declined": declined,
-                     "notes": notes, "bill_role": bill_role, "set_time": set_time,
+                     "notes": notes, "bill_role": bill_role, "set_time": set_time, "set_time_end": set_time_end,
                      "guarantee": guarantee, "paid": paid, "walkups": walkups})
     return acts, None
 
@@ -127,16 +134,19 @@ def _replace_event_artists(conn, event_id, acts):
         if artist_id in existing_by_artist:
             cur.execute(
                 "UPDATE event_artists SET confirmed=%s, declined=%s, sort_order=%s, guarantee=%s, "
-                "paid=%s, walkups=%s, notes=%s, bill_role=%s, set_time=%s WHERE id = %s",
+                "paid=%s, walkups=%s, notes=%s, bill_role=%s, set_time=%s, set_time_end=%s WHERE id = %s",
                 (act["confirmed"], act["declined"], sort_order, act["guarantee"], act["paid"],
-                 act["walkups"], act["notes"], act["bill_role"], act["set_time"], existing_by_artist[artist_id]),
+                 act["walkups"], act["notes"], act["bill_role"], act["set_time"], act["set_time_end"],
+                 existing_by_artist[artist_id]),
             )
         else:
             cur.execute(
                 "INSERT INTO event_artists (event_id, artist_id, confirmed, declined, sort_order, "
-                "guarantee, paid, walkups, notes, bill_role, set_time) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "guarantee, paid, walkups, notes, bill_role, set_time, set_time_end) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (event_id, artist_id, act["confirmed"], act["declined"], sort_order,
-                 act["guarantee"], act["paid"], act["walkups"], act["notes"], act["bill_role"], act["set_time"]),
+                 act["guarantee"], act["paid"], act["walkups"], act["notes"], act["bill_role"],
+                 act["set_time"], act["set_time_end"]),
             )
         sort_order += 1
     cur.execute(

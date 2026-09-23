@@ -103,12 +103,13 @@ class ActDetailsAndContactLog(unittest.TestCase):
         self._book(client)
 
         put = client.put(f"/api/events/{self.event_id}/artists", json={
-            "artists": [{"name": self.artist_name, "set_time": "21:30"}],
+            "artists": [{"name": self.artist_name, "set_time": "21:30", "set_time_end": "22:15"}],
         })
         self.assertEqual(put.status_code, 200, put.get_json())
         events = client.get("/api/events").get_json()["events"]
         mine = next(e for e in events if e["id"] == self.event_id)
         self.assertEqual(mine["artists"][0]["set_time"], "21:30:00")
+        self.assertEqual(mine["artists"][0]["set_time_end"], "22:15:00")
 
         # Same act, no set_time in the payload this time -- an existing act
         # is matched by artist_id and updated in place, so this should
@@ -120,6 +121,7 @@ class ActDetailsAndContactLog(unittest.TestCase):
         events2 = client.get("/api/events").get_json()["events"]
         mine2 = next(e for e in events2 if e["id"] == self.event_id)
         self.assertIsNone(mine2["artists"][0]["set_time"])
+        self.assertIsNone(mine2["artists"][0]["set_time_end"])
 
     def test_invalid_set_time_is_rejected(self):
         client = self.app.test_client()

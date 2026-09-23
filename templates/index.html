@@ -41,6 +41,7 @@
     --dead:#f2c2c2; --dead-bg:#4d2b2b;
     --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
   }
+  :root:not([data-theme="light"]) .show.s-confirmed{color:#fff}
 }
 /* A manually-picked theme (Settings tab) overrides the system preference
    either direction — same variable values as the media query above,
@@ -54,6 +55,7 @@
   --dead:#f2c2c2; --dead-bg:#4d2b2b;
   --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
 }
+:root[data-theme="dark"] .show.s-confirmed{color:#fff}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
@@ -1083,7 +1085,7 @@ function renderListView(){
     // meaning of).
     var needsSettling = visibleEvents().filter(isUnsettled);
     if(needsSettling.length){
-      host.appendChild(el("h3","section","Needs settling (" + needsSettling.length + ")"));
+      host.appendChild(el("h3","section","Needs settled (" + needsSettling.length + ")"));
       var w0 = el("div","tablewrap"), t0 = document.createElement("table");
       var h0 = document.createElement("thead"), hr0 = document.createElement("tr");
       ["Date","Venue","Show"].forEach(function(h){ hr0.appendChild(el("th",null,h)); });
@@ -1139,12 +1141,18 @@ function renderListView(){
 }
 
 /* ============================== artists view =========================== */
-var artistFilter = {tier:"", genre:"", tag:"", showArchived:false};
+var TIER_OPTIONS = ["Local","Regional","National"];
+// Local-only by default — most of the roster is local acts and that's
+// the list booking actually works from day to day; Regional/National are
+// opt-in. Selecting all three (or none) is the same as no tier filter.
+var artistFilter = {tiers:{Local:true, Regional:false, National:false}, genre:"", tag:"", showArchived:false};
 function filteredArtists(){
-  var tier = artistFilter.tier, genre = artistFilter.genre.trim().toLowerCase(), tag = artistFilter.tag.trim().toLowerCase();
+  var selected = TIER_OPTIONS.filter(function(t){ return artistFilter.tiers[t]; });
+  var allOrNone = selected.length === 0 || selected.length === TIER_OPTIONS.length;
+  var genre = artistFilter.genre.trim().toLowerCase(), tag = artistFilter.tag.trim().toLowerCase();
   return store.artists.filter(function(a){
     if(!artistFilter.showArchived && a.active === false) return false;
-    if(tier && a.tier !== tier) return false;
+    if(!allOrNone && (!a.tier || !artistFilter.tiers[a.tier])) return false;
     if(genre && (a.genre||"").toLowerCase().indexOf(genre) < 0) return false;
     if(tag && !(a.tags||[]).some(function(t){ return t.toLowerCase().indexOf(tag) >= 0; })) return false;
     return true;
@@ -1170,11 +1178,17 @@ function renderArtistsView(){
   // The filter bar's inputs are built ONCE — re-rendering just the results
   // below on every keystroke, rather than the whole view, so typing a
   // second letter doesn't destroy the input you're still focused in.
-  var bar = el("div","row-3","");
-  var tierSel = selectKV([{value:"",label:"Any tier"},{value:"Local",label:"Local"},
-    {value:"Regional",label:"Regional"},{value:"National",label:"National"}], artistFilter.tier,
-    function(v){ artistFilter.tier = v; renderArtistsResults(); });
-  bar.appendChild(field("Tier", tierSel));
+  var tierBar = el("div","chips"); tierBar.style.marginBottom = "10px";
+  TIER_OPTIONS.forEach(function(t){
+    var chip = el("button","chip", t);
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", artistFilter.tiers[t] ? "true" : "false");
+    chip.onclick = function(){ artistFilter.tiers[t] = !artistFilter.tiers[t]; renderArtistsView(); };
+    tierBar.appendChild(chip);
+  });
+  host.appendChild(tierBar);
+
+  var bar = el("div","row","");
   var genreInput = input("text", artistFilter.genre, function(v){ artistFilter.genre = v; renderArtistsResults(); });
   genreInput.placeholder = "e.g. metal";
   bar.appendChild(field("Genre", genreInput));
@@ -1248,6 +1262,41 @@ function openArtistForm(artistId){
   if(artistId && !a) return;
   var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
 
+  // A brand-new band still needs one explicit creation step (there's no
+  // id to PATCH against yet) — same shape as a new show needing "Book
+  // it" before it can autosave. Once it exists, every field change here
+  // saves itself, same debounce/"Saving…" pattern as the show editor.
+  var currentId = artistId;
+  var autosaveTimer = null;
+  var errLine = null;
+  function scheduleArtistAutosave(){
+    if(!currentId) return;
+    clearTimeout(autosaveTimer);
+    if(errLine){ errLine.textContent = "Saving…"; errLine.style.color = "var(--ink-3)"; }
+    autosaveTimer = setTimeout(doArtistAutosave, 900);
+  }
+  async function doArtistAutosave(){
+    if(!currentId) return;
+    var id = currentId;
+    var tags = draftA.tags.split(",").map(function(t){ return t.trim(); }).filter(function(t){ return t; });
+    var members = draftA.members.filter(function(m){ return m.name.trim(); });
+    var r = await api("/api/artists/" + id, {method:"PATCH", body: JSON.stringify({
+      tier: draftA.tier || null, genre: draftA.genre, location: draftA.location, tags: tags,
+      instagram: draftA.instagram, facebook: draftA.facebook, website: draftA.website, spotify: draftA.spotify,
+      notes: draftA.notes,
+    })});
+    if(currentId !== id) return; // sheet moved on to a different artist while this was in flight
+    if(!r.ok){
+      if(errLine){ errLine.style.color = "var(--dead)"; errLine.textContent = r.body.error || "Could not save."; }
+      return;
+    }
+    await api("/api/artists/" + id + "/members", {method:"PUT", body: JSON.stringify({members: members})});
+    if(currentId !== id) return;
+    if(errLine){ errLine.style.color = "var(--ink-3)";
+      errLine.textContent = "Saved " + new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}); }
+    await loadBookerLookups();
+  }
+
   var draftA = {
     name: a ? a.name : "",
     tier: a ? (a.tier || "") : "", genre: a ? (a.genre || "") : "", location: a ? (a.location || "") : "",
@@ -1275,15 +1324,16 @@ function openArtistForm(artistId){
       b.type = "button";
       b.setAttribute("aria-pressed", draftA.tier === opt[0] ? "true" : "false");
       b.onclick = function(){ draftA.tier = opt[0]; tierGrid.querySelectorAll("button").forEach(function(x){
-        x.setAttribute("aria-pressed", x.textContent === (opt[0]||"—") ? "true" : "false"); }); };
+        x.setAttribute("aria-pressed", x.textContent === (opt[0]||"—") ? "true" : "false"); });
+        scheduleArtistAutosave(); };
       tierGrid.appendChild(b);
     });
     fs.appendChild(tierGrid);
     var r1 = el("div","row"); r1.style.marginTop = "10px";
-    r1.appendChild(field("Genre", input("text", draftA.genre, function(v){ draftA.genre = v; })));
-    r1.appendChild(field("Location", input("text", draftA.location, function(v){ draftA.location = v; })));
+    r1.appendChild(field("Genre", input("text", draftA.genre, function(v){ draftA.genre = v; scheduleArtistAutosave(); })));
+    r1.appendChild(field("Location", input("text", draftA.location, function(v){ draftA.location = v; scheduleArtistAutosave(); })));
     fs.appendChild(r1);
-    var tagsInput = input("text", draftA.tags, function(v){ draftA.tags = v; });
+    var tagsInput = input("text", draftA.tags, function(v){ draftA.tags = v; scheduleArtistAutosave(); });
     tagsInput.placeholder = "comma-separated — style, location, whatever helps you search later";
     var tagsField = field("Tags", tagsInput); tagsField.style.marginTop = "10px";
     fs.appendChild(tagsField);
@@ -1292,14 +1342,14 @@ function openArtistForm(artistId){
     var fsS = document.createElement("fieldset");
     fsS.appendChild(el("legend",null,"Socials"));
     var rS1 = el("div","row");
-    var igInput = input("text", draftA.instagram, function(v){ draftA.instagram = v; }); igInput.placeholder = "instagram.com/...";
-    var fbInput = input("text", draftA.facebook, function(v){ draftA.facebook = v; }); fbInput.placeholder = "facebook.com/...";
+    var igInput = input("text", draftA.instagram, function(v){ draftA.instagram = v; scheduleArtistAutosave(); }); igInput.placeholder = "instagram.com/...";
+    var fbInput = input("text", draftA.facebook, function(v){ draftA.facebook = v; scheduleArtistAutosave(); }); fbInput.placeholder = "facebook.com/...";
     rS1.appendChild(field("Instagram", igInput));
     rS1.appendChild(field("Facebook", fbInput));
     fsS.appendChild(rS1);
     var rS2 = el("div","row"); rS2.style.marginTop = "10px";
-    var webInput = input("text", draftA.website, function(v){ draftA.website = v; }); webInput.placeholder = "https://...";
-    var spInput = input("text", draftA.spotify, function(v){ draftA.spotify = v; }); spInput.placeholder = "open.spotify.com/artist/...";
+    var webInput = input("text", draftA.website, function(v){ draftA.website = v; scheduleArtistAutosave(); }); webInput.placeholder = "https://...";
+    var spInput = input("text", draftA.spotify, function(v){ draftA.spotify = v; scheduleArtistAutosave(); }); spInput.placeholder = "open.spotify.com/artist/...";
     rS2.appendChild(field("Website", webInput));
     rS2.appendChild(field("Spotify", spInput));
     fsS.appendChild(rS2);
@@ -1307,7 +1357,7 @@ function openArtistForm(artistId){
 
     var fsN = document.createElement("fieldset");
     fsN.appendChild(el("legend",null,"Notes"));
-    fsN.appendChild(expandableTextarea(draftA.notes, function(v){ draftA.notes = v; }, 4));
+    fsN.appendChild(expandableTextarea(draftA.notes, function(v){ draftA.notes = v; scheduleArtistAutosave(); }, 4));
     body.appendChild(fsN);
 
     var fsM = document.createElement("fieldset");
@@ -1315,14 +1365,14 @@ function openArtistForm(artistId){
     var memberList = el("div","memberlist");
     draftA.members.forEach(function(m, idx){
       var row = el("div","memberrow");
-      row.appendChild(input("text", m.name, function(v){ m.name = v; }));
-      var pInput = input("tel", m.phone, function(v){ m.phone = v; }); pInput.placeholder = "Phone";
+      row.appendChild(input("text", m.name, function(v){ m.name = v; scheduleArtistAutosave(); }));
+      var pInput = input("tel", m.phone, function(v){ m.phone = v; scheduleArtistAutosave(); }); pInput.placeholder = "Phone";
       row.appendChild(pInput);
-      var eInput = input("email", m.email, function(v){ m.email = v; }); eInput.placeholder = "Email";
+      var eInput = input("email", m.email, function(v){ m.email = v; scheduleArtistAutosave(); }); eInput.placeholder = "Email";
       row.appendChild(eInput);
       var del = el("button","rowdel","✕");
       del.type = "button";
-      del.onclick = function(){ draftA.members.splice(idx,1); renderForm(); };
+      del.onclick = function(){ draftA.members.splice(idx,1); renderForm(); scheduleArtistAutosave(); };
       row.appendChild(del);
       memberList.appendChild(row);
     });
@@ -1366,36 +1416,44 @@ function openArtistForm(artistId){
       body.appendChild(fsH);
     }
 
-    var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
-    var save = el("button","btn btn-primary","Save");
-    save.onclick = async function(){
-      errLine.textContent = "";
-      var name = draftA.name.trim();
-      if(!a && !name){ errLine.textContent = "Give the band a name."; return; }
-      var members = draftA.members.filter(function(m){ return m.name.trim(); });
-
-      var id = artistId;
-      if(!id){
+    errLine = el("span","hint");
+    if(!a){
+      // No id to autosave against yet — one explicit creation step, same
+      // shape as a new show needing "Book it" before it can autosave.
+      errLine.style.color = "var(--dead)";
+      var create = el("button","btn btn-primary","Create");
+      create.onclick = async function(){
+        errLine.textContent = "";
+        var name = draftA.name.trim();
+        if(!name){ errLine.textContent = "Give the band a name."; return; }
+        var members = draftA.members.filter(function(m){ return m.name.trim(); });
         var created = await api("/api/artists", {method:"POST", body: JSON.stringify({name: name})});
         if(!created.ok){ errLine.textContent = created.body.error || "Could not create."; return; }
-        id = created.body.id;
-      }
-      var tags = draftA.tags.split(",").map(function(t){ return t.trim(); }).filter(function(t){ return t; });
-      var r = await api("/api/artists/" + id, {method:"PATCH", body: JSON.stringify({
-        tier: draftA.tier || null, genre: draftA.genre, location: draftA.location, tags: tags,
-        instagram: draftA.instagram, facebook: draftA.facebook, website: draftA.website, spotify: draftA.spotify,
-        notes: draftA.notes,
-      })});
-      if(!r.ok){ errLine.textContent = r.body.error || "Could not save."; return; }
-      await api("/api/artists/" + id + "/members", {method:"PUT", body: JSON.stringify({members: members})});
-      await loadBookerLookups();
-      closeSheet();
-      renderAll();
-    };
-    foot.appendChild(save);
-    var cancel = el("button","btn","Cancel");
-    cancel.onclick = closeSheet;
-    foot.appendChild(cancel);
+        var id = created.body.id;
+        var tags = draftA.tags.split(",").map(function(t){ return t.trim(); }).filter(function(t){ return t; });
+        var r = await api("/api/artists/" + id, {method:"PATCH", body: JSON.stringify({
+          tier: draftA.tier || null, genre: draftA.genre, location: draftA.location, tags: tags,
+          instagram: draftA.instagram, facebook: draftA.facebook, website: draftA.website, spotify: draftA.spotify,
+          notes: draftA.notes,
+        })});
+        if(!r.ok){ errLine.textContent = r.body.error || "Could not save."; return; }
+        await api("/api/artists/" + id + "/members", {method:"PUT", body: JSON.stringify({members: members})});
+        await loadBookerLookups();
+        closeSheet();
+        renderAll();
+      };
+      foot.appendChild(create);
+      var cancel = el("button","btn","Cancel");
+      cancel.onclick = closeSheet;
+      foot.appendChild(cancel);
+    } else {
+      // Existing bands autosave (see scheduleArtistAutosave/doArtistAutosave)
+      // — no Save button to remember to click.
+      errLine.style.color = "var(--ink-3)";
+      var done = el("button","btn btn-primary","Done");
+      done.onclick = closeSheet;
+      foot.appendChild(done);
+    }
     foot.appendChild(errLine);
     foot.appendChild(el("div","spacer"));
 
@@ -2062,6 +2120,13 @@ function renderSheet(){
     setTimeInput.value = a.set_time || "";
     setTimeInput.onchange = function(){ a.set_time = setTimeInput.value || null; scheduleAutosave(); };
     setTimeWrap.appendChild(setTimeInput);
+    setTimeWrap.appendChild(document.createTextNode(" to "));
+    var setTimeEndInput = document.createElement("input");
+    setTimeEndInput.type = "time";
+    setTimeEndInput.value = a.set_time_end || "";
+    setTimeEndInput.title = "Leave blank for an open-ended headliner set (\"10:30-?\")";
+    setTimeEndInput.onchange = function(){ a.set_time_end = setTimeEndInput.value || null; scheduleAutosave(); };
+    setTimeWrap.appendChild(setTimeEndInput);
     midRow.appendChild(setTimeWrap);
     var notesTa = document.createElement("textarea");
     notesTa.rows = 1;
@@ -2144,7 +2209,7 @@ function renderSheet(){
       if(!name) return;
       draft.artists = draft.artists || [];
       draft.artists.push({name: name, confirmed: false, declined: false, notes: "", bill_role: null,
-        set_time: null, guarantee:"", paid:"", walkups:""});
+        set_time: null, set_time_end: null, guarantee:"", paid:"", walkups:""});
       addingAct = false;
       renderSheet();
       scheduleAutosave();
@@ -2602,38 +2667,37 @@ function renderSheet(){
   }
 }
 function escHtml(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
-// Chronological (earliest set first), not bill order (headliner first) —
-// this is meant to be taped up backstage/at the door, read top to bottom
-// as the night actually runs. A logo isn't wired in yet (no venue logo
-// files on hand) — venue name stands in until Broc supplies one.
+// Bill order (headliner first, per sort_order convention), NOT
+// chronological — this reads top-to-bottom the same way the bill itself
+// does, headliner most prominent. Impact + venue name is a placeholder
+// until Broc has real logo files and a proper format worked out.
 function openSetTimeSheet(ev){
   var w = window.open("", "_blank");
   if(!w) return;
-  var acts = (ev.artists || []).filter(function(a){ return !a.declined; }).slice().sort(function(a,b){
-    if(!a.set_time && !b.set_time) return 0;
-    if(!a.set_time) return 1;
-    if(!b.set_time) return -1;
-    return a.set_time < b.set_time ? -1 : a.set_time > b.set_time ? 1 : 0;
-  });
-  var rows = acts.map(function(a){
-    return "<tr><td class=\"stime\">" + escHtml(a.set_time ? time12(a.set_time) : "TBD") +
-           "</td><td class=\"sname\">" + escHtml(a.name) + "</td></tr>";
+  var acts = (ev.artists || []).filter(function(a){ return !a.declined; });
+  var dayOfTier = (ev.ticket_tiers || []).find(function(t){ return t.label === "Day of show"; });
+  var blocks = acts.map(function(a){
+    var when = a.set_time ? (escHtml(time12(a.set_time)) + " - " + (a.set_time_end ? escHtml(time12(a.set_time_end)) : "?")) : "TBD";
+    return "<div class=\"act\"><div class=\"sname\">" + escHtml(a.name) + "</div><div class=\"stime\">" + when + "</div></div>";
   }).join("");
   w.document.write(
     "<!DOCTYPE html><html><head><title>Set Times — " + escHtml(fullBillName(ev)) + "</title><style>" +
-    "body{font-family:Georgia,'Times New Roman',serif;max-width:700px;margin:40px auto;color:#111;padding:0 20px}" +
-    "h1{font-family:Arial,Helvetica,sans-serif;text-transform:uppercase;letter-spacing:.04em;text-align:center;margin:0}" +
-    "h2{text-align:center;font-weight:normal;color:#555;margin:6px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:16px}" +
-    "table{width:100%;border-collapse:collapse;margin-top:34px}" +
-    "td{padding:14px 10px;border-bottom:1px solid #ccc}" +
-    ".stime{width:110px;font-weight:bold;font-variant-numeric:tabular-nums;font-size:20px;font-family:Arial,Helvetica,sans-serif}" +
-    ".sname{font-size:24px}" +
-    ".printbtn{display:block;margin:34px auto 0;padding:10px 24px;font-size:15px;cursor:pointer}" +
+    "body{font-family:Impact,'Arial Narrow',sans-serif;max-width:700px;margin:40px auto;color:#111;padding:0 20px;text-align:center}" +
+    "h1{text-transform:uppercase;letter-spacing:.04em;margin:0;font-size:40px}" +
+    "h2{font-weight:normal;margin:10px 0 2px;font-size:20px}" +
+    ".acts{margin-top:34px}" +
+    ".act{padding:16px 0;border-bottom:1px solid #ccc}" +
+    ".sname{font-size:30px}" +
+    ".stime{font-size:20px;margin-top:4px}" +
+    ".printbtn{display:block;margin:34px auto 0;padding:10px 24px;font-size:15px;cursor:pointer;font-family:Arial,Helvetica,sans-serif}" +
     "@media print{.printbtn{display:none}}" +
     "</style></head><body>" +
     "<h1>" + escHtml(ev.venue) + "</h1>" +
-    "<h2>" + escHtml(shortDate(ev.show_date)) + (ev.doors ? " &middot; Doors " + escHtml(time12(ev.doors)) : "") + "</h2>" +
-    "<table>" + (rows || "<tr><td class=\"sname\">No acts on the bill yet.</td></tr>") + "</table>" +
+    "<h2>" + escHtml(shortDate(ev.show_date)) + "</h2>" +
+    (ev.doors ? "<h2>Doors " + escHtml(time12(ev.doors)) + "</h2>" : "") +
+    (dayOfTier && dayOfTier.price != null ? "<h2>Day of " + escHtml(money(dayOfTier.price)) + "</h2>" : "") +
+    "<h2>($5 upcharge under 21)</h2>" +
+    "<div class=\"acts\">" + (blocks || "<div class=\"act\">No acts on the bill yet.</div>") + "</div>" +
     "<button class=\"printbtn\" onclick=\"window.print()\">Print</button>" +
     "</body></html>"
   );
