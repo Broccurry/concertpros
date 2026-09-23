@@ -133,7 +133,7 @@ def _artists_by_event(conn, ids: list[int], include_money: bool = False) -> dict
     with conn.cursor() as cur:
         cur.execute(
             f"SELECT ea.event_id, ea.id, ea.artist_id, a.name, ea.confirmed, ea.declined, "
-            f"ea.notes, ea.bill_role{money_cols} FROM event_artists ea "
+            f"ea.notes, ea.bill_role, ea.set_time{money_cols} FROM event_artists ea "
             "JOIN artists a ON a.id = ea.artist_id "
             "WHERE ea.event_id = ANY(%(ids)s) ORDER BY ea.sort_order",
             {"ids": ids},

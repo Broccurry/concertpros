@@ -375,6 +375,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .actmidrow select{width:auto;flex:none;font-size:11.5px;padding:3px 5px;height:25px}
 .actmidrow-fig{display:flex;align-items:center;gap:3px;font-size:11px;color:var(--ink-3)}
 .actmidrow-fig input{width:56px;font-size:11.5px;padding:3px 5px;height:25px}
+.actmidrow-fig input[type=time]{width:90px}
 .actcontact-note-input{flex:1 1 110px;min-width:90px;font-size:11.5px;padding:3px 6px;height:25px;
                         border:1px solid var(--line);border-radius:var(--radius)}
 .actmidrow textarea{flex:1 1 120px;min-width:80px;resize:vertical;min-height:24px;border:1px solid var(--line);
@@ -2054,6 +2055,14 @@ function renderSheet(){
       midRow.appendChild(logBtn);
       midRow.appendChild(contactNoteInput);
     }
+    var setTimeWrap = el("span","actmidrow-fig");
+    setTimeWrap.appendChild(document.createTextNode("Set "));
+    var setTimeInput = document.createElement("input");
+    setTimeInput.type = "time";
+    setTimeInput.value = a.set_time || "";
+    setTimeInput.onchange = function(){ a.set_time = setTimeInput.value || null; scheduleAutosave(); };
+    setTimeWrap.appendChild(setTimeInput);
+    midRow.appendChild(setTimeWrap);
     var notesTa = document.createElement("textarea");
     notesTa.rows = 1;
     notesTa.value = a.notes || "";
@@ -2135,7 +2144,7 @@ function renderSheet(){
       if(!name) return;
       draft.artists = draft.artists || [];
       draft.artists.push({name: name, confirmed: false, declined: false, notes: "", bill_role: null,
-        guarantee:"", paid:"", walkups:""});
+        set_time: null, guarantee:"", paid:"", walkups:""});
       addingAct = false;
       renderSheet();
       scheduleAutosave();
@@ -2559,6 +2568,10 @@ function renderSheet(){
     // explicit Save button to forget to click. errLine doubles as the
     // "Saving…"/"Saved h:mm" indicator instead of an error-only line.
     errLine.style.color = "var(--ink-3)";
+    var setTimeSheetBtn = el("button","btn","Set time sheet");
+    setTimeSheetBtn.type = "button";
+    setTimeSheetBtn.onclick = function(){ openSetTimeSheet(draft); };
+    foot.appendChild(setTimeSheetBtn);
     var done = el("button","btn btn-primary","Done");
     done.onclick = closeSheet;
     foot.appendChild(done);
@@ -2587,6 +2600,44 @@ function renderSheet(){
     };
     foot.appendChild(del);
   }
+}
+function escHtml(s){ return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+// Chronological (earliest set first), not bill order (headliner first) —
+// this is meant to be taped up backstage/at the door, read top to bottom
+// as the night actually runs. A logo isn't wired in yet (no venue logo
+// files on hand) — venue name stands in until Broc supplies one.
+function openSetTimeSheet(ev){
+  var w = window.open("", "_blank");
+  if(!w) return;
+  var acts = (ev.artists || []).filter(function(a){ return !a.declined; }).slice().sort(function(a,b){
+    if(!a.set_time && !b.set_time) return 0;
+    if(!a.set_time) return 1;
+    if(!b.set_time) return -1;
+    return a.set_time < b.set_time ? -1 : a.set_time > b.set_time ? 1 : 0;
+  });
+  var rows = acts.map(function(a){
+    return "<tr><td class=\"stime\">" + escHtml(a.set_time ? time12(a.set_time) : "TBD") +
+           "</td><td class=\"sname\">" + escHtml(a.name) + "</td></tr>";
+  }).join("");
+  w.document.write(
+    "<!DOCTYPE html><html><head><title>Set Times — " + escHtml(fullBillName(ev)) + "</title><style>" +
+    "body{font-family:Georgia,'Times New Roman',serif;max-width:700px;margin:40px auto;color:#111;padding:0 20px}" +
+    "h1{font-family:Arial,Helvetica,sans-serif;text-transform:uppercase;letter-spacing:.04em;text-align:center;margin:0}" +
+    "h2{text-align:center;font-weight:normal;color:#555;margin:6px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:16px}" +
+    "table{width:100%;border-collapse:collapse;margin-top:34px}" +
+    "td{padding:14px 10px;border-bottom:1px solid #ccc}" +
+    ".stime{width:110px;font-weight:bold;font-variant-numeric:tabular-nums;font-size:20px;font-family:Arial,Helvetica,sans-serif}" +
+    ".sname{font-size:24px}" +
+    ".printbtn{display:block;margin:34px auto 0;padding:10px 24px;font-size:15px;cursor:pointer}" +
+    "@media print{.printbtn{display:none}}" +
+    "</style></head><body>" +
+    "<h1>" + escHtml(ev.venue) + "</h1>" +
+    "<h2>" + escHtml(shortDate(ev.show_date)) + (ev.doors ? " &middot; Doors " + escHtml(time12(ev.doors)) : "") + "</h2>" +
+    "<table>" + (rows || "<tr><td class=\"sname\">No acts on the bill yet.</td></tr>") + "</table>" +
+    "<button class=\"printbtn\" onclick=\"window.print()\">Print</button>" +
+    "</body></html>"
+  );
+  w.document.close();
 }
 function renderSheetNet(){
   var line = document.getElementById("netLine");

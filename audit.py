@@ -24,5 +24,5 @@ def record(conn, viewer, entity_type: str, entity_id: int, action: str, detail: 
         """INSERT INTO audit_log (person_id, entity_type, entity_id, action, detail)
            VALUES (%s, %s, %s, %s, %s)""",
         (viewer.id if viewer else None, entity_type, entity_id, action,
-         json.dumps(detail) if detail is not None else None),
+         json.dumps(detail, default=str) if detail is not None else None),
     )
