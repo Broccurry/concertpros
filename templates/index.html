@@ -429,10 +429,23 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
 .todorow-title{margin:0;font-size:13.5px;color:var(--ink)}
 .todorow-done .todorow-title{color:var(--ink-3);text-decoration:line-through}
 
+/* Files: offers/contracts/flyers, either in a show's own folder (event_id
+   set) or the general library (event_id null) — same row markup, same
+   upload flow, in both places (see uploadFile/renderFileList). */
+.filelist{display:flex;flex-direction:column;gap:6px;margin-bottom:10px}
+.filerow{display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);
+         border-radius:var(--radius);padding:8px 10px}
+.filerow-name{flex:1;min-width:0;color:var(--ink);font-size:13.5px;text-decoration:none;overflow:hidden;
+              text-overflow:ellipsis;white-space:nowrap}
+.filerow-name:hover{text-decoration:underline}
+
 /* Vision board: a Trello-style pipeline, stage columns running left to
    right. The board itself keeps the aspirational "Vision Board" name;
    the columns are deliberately plain/functional (Idea/Reaching Out/Offer
    Sent) since they're tracking real progress, not the pitch. */
+.boardsrow{display:flex;gap:32px;align-items:flex-start}
+.boardgroup{flex:1;min-width:0}
+@media (max-width:900px){ .boardsrow{flex-direction:column;gap:0} }
 .visionboard{display:flex;gap:14px;overflow-x:auto;padding-bottom:8px;align-items:flex-start}
 .visioncol{flex:0 0 240px;min-width:240px;background:var(--ground);border-radius:var(--radius);padding:10px}
 .visioncol-head{font-family:var(--display);text-transform:uppercase;font-size:12.5px;letter-spacing:.03em;
@@ -489,7 +502,7 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
         <button role="tab" data-view="artists" aria-selected="false">Artists</button>
         <button role="tab" data-view="staff" aria-selected="false">Staff</button>
         <button role="tab" data-view="vision" aria-selected="false">Vision Board</button>
-        <button role="tab" data-view="mao" aria-selected="false">MAO</button>
+        <button role="tab" data-view="files" aria-selected="false">Files</button>
         <button role="tab" data-view="settings" aria-selected="false">Settings</button>
       </div>
       <div class="monthnav" id="monthnav">
@@ -537,7 +550,7 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
       <div id="peopleHost"></div>
     </section>
     <section id="view-vision" hidden></section>
-    <section id="view-mao" hidden></section>
+    <section id="view-files" hidden></section>
     <section id="view-settings" hidden></section>
     <p class="notice" id="storeNotice"></p>
   </main>
@@ -687,7 +700,7 @@ function staffLabel(s){ return s.person_name || (s.person_id ? "(removed person)
 function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
 
 /* ============================== state =============================== */
-var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], todos:[]};
+var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], todos:[], files:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
 var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:""};
@@ -729,13 +742,19 @@ async function loadEvents(){
 }
 async function loadBookerLookups(){
   if(!canBook()) return;
-  var [v, ro, pe, ar, vc] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
-    api("/api/artists"), api("/api/vision_cards")]);
+  var [v, ro, pe, ar, vc, fl] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
+    api("/api/artists"), api("/api/vision_cards"), api("/api/files")]);
   if(v.ok) store.venues = v.body.venues;
   if(ro.ok) store.roles = ro.body.roles;
   if(pe.ok) store.people = pe.body.people;
   if(ar.ok) store.artists = ar.body.artists;
   if(vc.ok) store.visionCards = vc.body.cards;
+  if(fl.ok) store.files = fl.body.files;
+}
+async function refreshLibraryFiles(){
+  var r = await api("/api/files");
+  if(r.ok) store.files = r.body.files;
+  renderAll();
 }
 async function loadTodos(){
   // Unlike vision/artists/etc., crew needs this too — the endpoint itself
@@ -767,7 +786,7 @@ function renderAll(){
   }).length;
   document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + all.length + " total";
 
-  ["calendar","todo","list","artists","staff","people","vision","mao","settings"].forEach(function(v){
+  ["calendar","todo","list","artists","staff","people","vision","files","settings"].forEach(function(v){
     document.getElementById("view-" + v).hidden = (v !== ui.view);
   });
   if(ui.view === "calendar") renderCalendar();
@@ -777,7 +796,7 @@ function renderAll(){
   if(ui.view === "staff") renderStaffView();
   if(ui.view === "people") renderPeopleTable();
   if(ui.view === "vision") renderVisionBoard();
-  if(ui.view === "mao") renderMAOBoard();
+  if(ui.view === "files") renderFilesView();
   if(ui.view === "settings") renderSettingsView();
 }
 
@@ -1590,6 +1609,7 @@ async function openEvent(id, dateHint){
     var ev = eventById(id);
     draft = JSON.parse(JSON.stringify(ev));
     draft.messages = [];
+    draft.files = [];
     draftIsNew = false;
   } else {
     draft = {
@@ -1597,7 +1617,7 @@ async function openEvent(id, dateHint){
       artists:[], status:"hold1", show_date: dateHint || todayISO(), doors:"19:00", show_time:"20:00",
       deal_type:NO_DEAL, guarantee:"", backend_pct:"", deal_notes:"",
       ticket_tiers:[{label:"Advance",price:""},{label:"Day of show",price:""}], ticket_link:"",
-      announce_date:"", onsale_date:"", notes:"", messages:[], extraDates:[], group_members:[],
+      announce_date:"", onsale_date:"", notes:"", messages:[], files:[], extraDates:[], group_members:[],
       tasks:[], staff:[], settlement:{tickets_sold:"",gross:"",expenses:"",artist_payout:"",settled:false,notes:""}
     };
     draftIsNew = true;
@@ -1608,6 +1628,7 @@ async function openEvent(id, dateHint){
     var r = await api("/api/events/" + id + "/messages");
     if(r.ok && draft && draft.id === id){ draft.messages = r.body.messages; renderSheet(); }
     await refreshMentions(); // opening the thread just marked any of my mentions in it read
+    await refreshEventFiles();
   }
 }
 
@@ -1659,6 +1680,11 @@ function renderCrewSheet(ev){
   close.onclick = closeSheet;
   foot.appendChild(close);
   openScrim();
+}
+async function refreshEventFiles(){
+  var id = draft.id;
+  var r = await api("/api/files?event_id=" + id);
+  if(r.ok && draft && draft.id === id){ draft.files = r.body.files; renderSheet(); }
 }
 async function refreshEventMessages(){
   var id = draft.id;
@@ -2277,6 +2303,19 @@ function renderSheet(){
   body.appendChild(fs8);
 
   if(!draftIsNew){
+    var fs8b = document.createElement("fieldset");
+    fs8b.appendChild(el("legend",null,"Files"));
+    var fileListHost = el("div","filelist");
+    renderFileList(fileListHost, draft.files || [], refreshEventFiles);
+    fs8b.appendChild(fileListHost);
+    fs8b.appendChild(fileUploadInput(async function(chosen){
+      for(var i = 0; i < chosen.length; i++) await uploadFile(chosen[i], draft.id);
+      await refreshEventFiles();
+    }));
+    body.appendChild(fs8b);
+  }
+
+  if(!draftIsNew){
     var fs9 = document.createElement("fieldset");
     fs9.appendChild(el("legend",null,"Messages"));
     var thread = el("div","msgthread");
@@ -2490,12 +2529,19 @@ function renderSheet(){
   if(!draftIsNew && draft.status !== "complete"){
     var del = el("button","btn btn-danger","Delete");
     del.onclick = async function(){
+      if(del.disabled) return;   // a double-tap on mobile shouldn't fire two DELETEs
       if(!window.confirm("Delete " + fullBillName(draft) + " (" + shortDate(draft.show_date) + ")? This can't be undone.")) return;
+      del.disabled = true;
       var r = await api("/api/events/" + draft.id, {method:"DELETE"});
-      if(r.ok){
+      // A 404 here means the show is already gone (someone else deleted it,
+      // or this tab's list was stale from before it vanished off a
+      // multi-day hold) — that's the same end state the user wanted, not
+      // a failure worth alarming them over.
+      if(r.ok || r.status === 404){
         closeSheet();
         await loadEvents();
       } else {
+        del.disabled = false;
         errLine.style.color = "var(--dead)";
         errLine.textContent = r.body.error || "Could not delete.";
       }
@@ -2649,6 +2695,80 @@ function renderTodoView(){
   host.appendChild(list);
 }
 
+/* ============================== files ================================ */
+// One upload path shared by the general Files tab and a show's own Files
+// section — both just call this with a different event_id, so there's no
+// second, slightly different upload flow to drift out of sync with this
+// one. The app never proxies the bytes: the browser PUTs straight to the
+// presigned B2 URL the backend hands back.
+async function uploadFile(file, eventId){
+  var r = await api("/api/files/upload-url", {method:"POST", body: JSON.stringify({
+    filename: file.name, content_type: file.type || "application/octet-stream",
+    size_bytes: file.size, event_id: eventId || null,
+  })});
+  if(!r.ok) return false;
+  var put = await fetch(r.body.upload_url, {
+    method: "PUT", body: file, headers: {"Content-Type": file.type || "application/octet-stream"},
+  });
+  return put.ok;
+}
+function humanFileSize(bytes){
+  if(bytes == null) return "";
+  var units = ["B","KB","MB","GB"], n = bytes, i = 0;
+  while(n >= 1024 && i < units.length - 1){ n /= 1024; i++; }
+  return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
+}
+function renderFileList(host, files, onChanged){
+  host.innerHTML = "";
+  if(!files.length){ host.appendChild(el("p","hint","No files yet.")); return; }
+  files.forEach(function(f){
+    var row = el("div","filerow");
+    var link = el("a","filerow-name", f.filename);
+    link.href = "#";
+    link.onclick = async function(e){
+      e.preventDefault();
+      var r = await api("/api/files/" + f.id + "/download-url");
+      if(r.ok) window.open(r.body.url, "_blank");
+    };
+    row.appendChild(link);
+    row.appendChild(el("span","hint",
+      [humanFileSize(f.size_bytes), f.uploaded_by_name, messageTime(f.created_at)].filter(Boolean).join(" · ")));
+    var del = el("button","rowdel","✕");
+    del.type = "button";
+    del.title = "Delete file";
+    del.onclick = async function(){
+      await api("/api/files/" + f.id, {method:"DELETE"});
+      onChanged();
+    };
+    row.appendChild(del);
+    host.appendChild(row);
+  });
+}
+function fileUploadInput(onFilesChosen){
+  var inp = document.createElement("input");
+  inp.type = "file"; inp.multiple = true; inp.className = "btn";
+  inp.onchange = async function(){
+    var chosen = Array.prototype.slice.call(inp.files || []);
+    inp.disabled = true;
+    await onFilesChosen(chosen);
+    inp.disabled = false;
+    inp.value = "";
+  };
+  return inp;
+}
+function renderFilesView(){
+  var host = document.getElementById("view-files");
+  host.innerHTML = "";
+  host.appendChild(el("p","hint","General library — offers, W-9s, anything not tied to one specific show. A show's own files live on its editor."));
+  host.appendChild(fileUploadInput(async function(chosen){
+    for(var i = 0; i < chosen.length; i++) await uploadFile(chosen[i], null);
+    await refreshLibraryFiles();
+  }));
+  var listHost = el("div","filelist"); listHost.style.marginTop = "14px";
+  host.appendChild(listHost);
+  renderFileList(listHost, store.files || [], refreshLibraryFiles);
+}
+
 /* ============================== vision board ============================ */
 // Plain functional column names — the "Vision Board" name itself already
 // carries the aspirational framing, the columns just track how far an
@@ -2663,13 +2783,34 @@ function visionCardsByColumn(key){
   return (store.visionCards||[]).filter(function(c){ return c.column_key === key; })
     .slice().sort(function(a,b){ return a.sort_order - b.sort_order; });
 }
-function renderVisionBoard(){ renderCardBoard("view-vision", VISION_COLUMNS,
-  "Post an idea below — a band to chase, whatever's worth not forgetting."); }
-function renderMAOBoard(){ renderCardBoard("view-mao", MAO_COLUMNS,
-  "Log an outreach below once you've actually reached out to someone."); }
-function renderCardBoard(hostId, columns, emptyHint){
-  var host = document.getElementById(hostId);
+// Every board on this page at once, stacked, rather than a switcher that
+// hides all but one — this IS the Vision Board space, boards are sections
+// on it, not separate screens. New boards get added here in code as
+// they're actually needed — building a generic "create a board" UI would
+// be speculative complexity for what is, in practice, a couple of boards
+// Broc and his bookers decide on together every few months.
+var BOARDS = [
+  {key:"vision", label:"Vision Board", columns: VISION_COLUMNS,
+   emptyHint:"Post an idea below — a band to chase, whatever's worth not forgetting."},
+  {key:"mao", label:"MAO", columns: MAO_COLUMNS,
+   emptyHint:"Log an outreach below once you've actually reached out to someone."},
+];
+function renderVisionBoard(){
+  var host = document.getElementById("view-vision");
   host.innerHTML = "";
+
+  var row = el("div","boardsrow");
+  host.appendChild(row);
+  BOARDS.forEach(function(b){
+    var group = el("div","boardgroup");
+    group.appendChild(el("h3","section", b.label));
+    var boardHost = el("div");
+    group.appendChild(boardHost);
+    row.appendChild(group);
+    renderCardBoard(boardHost, b.columns, b.emptyHint);
+  });
+}
+function renderCardBoard(host, columns, emptyHint){
 
   var anyCards = columns.some(function(col){ return visionCardsByColumn(col.key).length; });
   if(!anyCards){

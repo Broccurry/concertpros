@@ -23,6 +23,7 @@ import audit
 import auth
 import db
 import permissions
+import storage
 from permissions import Viewer
 
 VALID_HOLD_STATUSES = ("hold1", "hold2", "hold3", "confirmed")  # what a NEW show can be booked as
@@ -1408,6 +1409,83 @@ def create_app():
         event_id = row[0]
         cur.execute("DELETE FROM event_tasks WHERE id = %s", (task_id,))
         audit.record(g.db, g.viewer, "event", event_id, "delete_task", {"task_id": task_id})
+        return jsonify(ok=True)
+
+    def _file_row(row):
+        return {
+            "id": row[0], "event_id": row[1], "filename": row[2], "content_type": row[3],
+            "size_bytes": row[4], "uploaded_by": row[5], "uploaded_by_name": row[6],
+            "created_at": row[7].isoformat(),
+        }
+
+    @app.get("/api/files")
+    @require_booker
+    def list_files():
+        event_id = request.args.get("event_id", type=int)
+        cur = g.db.cursor()
+        cur.execute(
+            """SELECT f.id, f.event_id, f.filename, f.content_type, f.size_bytes,
+                      f.uploaded_by, p.name, f.created_at
+               FROM event_files f LEFT JOIN people p ON p.id = f.uploaded_by
+               WHERE f.event_id IS NOT DISTINCT FROM %s
+               ORDER BY f.created_at DESC""",
+            (event_id,),
+        )
+        return jsonify(files=[_file_row(r) for r in cur.fetchall()])
+
+    @app.post("/api/files/upload-url")
+    @require_booker
+    def create_upload_url():
+        body = request.get_json(silent=True) or {}
+        filename = (body.get("filename") or "").strip()
+        if not filename:
+            return jsonify(error="filename_required"), 400
+        event_id = body.get("event_id")
+        content_type = body.get("content_type") or "application/octet-stream"
+        size_bytes = body.get("size_bytes")
+
+        cur = g.db.cursor()
+        if event_id is not None:
+            cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+            if cur.fetchone() is None:
+                return jsonify(error="event_not_found"), 404
+
+        storage_key = storage.new_storage_key(event_id, filename)
+        cur.execute(
+            """INSERT INTO event_files (event_id, filename, storage_key, content_type, size_bytes, uploaded_by)
+               VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+            (event_id, filename, storage_key, content_type, size_bytes, g.viewer.id),
+        )
+        file_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "event" if event_id else "file", event_id or file_id,
+                     "upload_file", {"filename": filename, "file_id": file_id})
+        upload_url = storage.presign_upload(storage_key, content_type)
+        return jsonify(id=file_id, upload_url=upload_url), 201
+
+    @app.get("/api/files/<int:file_id>/download-url")
+    @require_booker
+    def get_download_url(file_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT storage_key, filename FROM event_files WHERE id = %s", (file_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        storage_key, filename = row
+        return jsonify(url=storage.presign_download(storage_key, filename))
+
+    @app.delete("/api/files/<int:file_id>")
+    @require_booker
+    def delete_file(file_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT event_id, storage_key, filename FROM event_files WHERE id = %s", (file_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        event_id, storage_key, filename = row
+        cur.execute("DELETE FROM event_files WHERE id = %s", (file_id,))
+        storage.delete_object(storage_key)
+        audit.record(g.db, g.viewer, "event" if event_id else "file", event_id or file_id,
+                     "delete_file", {"filename": filename, "file_id": file_id})
         return jsonify(ok=True)
 
     @app.get("/api/events/<int:event_id>/messages")

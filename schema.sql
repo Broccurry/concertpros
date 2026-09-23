@@ -349,6 +349,24 @@ CREATE TABLE todos (
 );
 CREATE INDEX idx_todos_assigned ON todos(assigned_to) WHERE NOT done;
 
+-- Offers, contracts, flyers, riders — stored in Backblaze B2 (see storage.py),
+-- this table is only the pointer to that object plus who/what it belongs to.
+-- event_id NULL means it lives in the general library, not a show's folder.
+-- Booker/owner only for now (contracts are exactly the kind of financial
+-- document crew shouldn't see) — no crew-facing use case has come up yet,
+-- so there's no permissions.py function to write until one does.
+CREATE TABLE event_files (
+    id              SERIAL PRIMARY KEY,
+    event_id        INTEGER REFERENCES events(id) ON DELETE CASCADE,
+    filename        TEXT NOT NULL,
+    storage_key     TEXT NOT NULL UNIQUE,
+    content_type    TEXT,
+    size_bytes      BIGINT,
+    uploaded_by     INTEGER REFERENCES people(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_event_files_event ON event_files(event_id);
+
 -- Seed data matching what's already live in the artifact prototype.
 INSERT INTO venues (name) VALUES ('Frankies'), ('Ottawa Tavern'), ('Cla-Zel Theater');
 INSERT INTO roles (name) VALUES
