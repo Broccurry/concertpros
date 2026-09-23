@@ -1581,7 +1581,7 @@ def create_app():
         audit.record(g.db, g.viewer, "event", event_id, "delete_message", {"message_id": message_id})
         return jsonify(ok=True)
 
-    _VISION_COLUMNS = ("idea", "reaching_out", "offer_sent", "booked")
+    _VISION_COLUMNS = ("idea", "reaching_out", "offer_sent")
 
     @app.get("/api/vision_cards")
     @require_booker
@@ -1717,6 +1717,108 @@ def create_app():
             return jsonify(error="not_found"), 404
         cur.execute("DELETE FROM vision_cards WHERE id = %s", (card_id,))
         audit.record(g.db, g.viewer, "vision_card", card_id, "delete", None)
+        return jsonify(ok=True)
+
+    @app.get("/api/todos")
+    @require_auth
+    def list_todos():
+        return jsonify(todos=permissions.todos_for(g.db, g.viewer))
+
+    @app.post("/api/todos")
+    @require_booker
+    def create_todo():
+        body = request.get_json(silent=True) or {}
+        title = (body.get("title") or "").strip()
+        if not title:
+            return jsonify(error="title_required"), 400
+        assigned_to = body.get("assigned_to") or None
+        if assigned_to is not None:
+            cur = g.db.cursor()
+            cur.execute("SELECT 1 FROM people WHERE id = %s AND active", (assigned_to,))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_person"), 400
+        due_date = None
+        if body.get("due_date"):
+            try:
+                due_date = date.fromisoformat(body["due_date"])
+            except ValueError:
+                return jsonify(error="invalid_due_date"), 400
+        cur = g.db.cursor()
+        cur.execute(
+            "INSERT INTO todos (title, assigned_to, due_date, notes, created_by) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (title, assigned_to, due_date, (body.get("notes") or "").strip() or None, g.viewer.id),
+        )
+        todo_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "todo", todo_id, "create", {"title": title, "assigned_to": assigned_to})
+        return jsonify(id=todo_id), 201
+
+    @app.patch("/api/todos/<int:todo_id>")
+    @require_auth
+    def update_todo(todo_id):
+        """Crew can toggle only `done`, only on a todo assigned to them —
+        the one write a crew viewer can make here, same shape as the
+        assignment clock-in boundary. Booker/owner can edit any field on
+        any todo."""
+        cur = g.db.cursor()
+        cur.execute("SELECT assigned_to FROM todos WHERE id = %s", (todo_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        assigned_to = row[0]
+        body = request.get_json(silent=True) or {}
+
+        if g.viewer.access_level not in ("booker", "owner"):
+            if g.viewer.id != assigned_to:
+                return jsonify(error="forbidden"), 403
+            if set(body.keys()) - {"done"}:
+                return jsonify(error="forbidden"), 403
+            cur.execute("UPDATE todos SET done = %s, updated_at = now() WHERE id = %s", (bool(body.get("done")), todo_id))
+            return jsonify(ok=True)
+
+        updates = {}
+        if "title" in body:
+            title = (body["title"] or "").strip()
+            if not title:
+                return jsonify(error="title_required"), 400
+            updates["title"] = title
+        if "done" in body:
+            updates["done"] = bool(body["done"])
+        if "assigned_to" in body:
+            assigned = body["assigned_to"] or None
+            if assigned is not None:
+                cur.execute("SELECT 1 FROM people WHERE id = %s AND active", (assigned,))
+                if cur.fetchone() is None:
+                    return jsonify(error="unknown_person"), 400
+            updates["assigned_to"] = assigned
+        if "due_date" in body:
+            val = body["due_date"]
+            if val in (None, ""):
+                updates["due_date"] = None
+            else:
+                try:
+                    updates["due_date"] = date.fromisoformat(val)
+                except ValueError:
+                    return jsonify(error="invalid_due_date"), 400
+        if "notes" in body:
+            updates["notes"] = (body["notes"] or "").strip() or None
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur.execute(f"UPDATE todos SET {set_clause}, updated_at = now() WHERE id = %s",
+                    list(updates.values()) + [todo_id])
+        audit.record(g.db, g.viewer, "todo", todo_id, "update", {k: audit.jsonable(v) for k, v in updates.items()})
+        return jsonify(ok=True)
+
+    @app.delete("/api/todos/<int:todo_id>")
+    @require_booker
+    def delete_todo(todo_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM todos WHERE id = %s", (todo_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("DELETE FROM todos WHERE id = %s", (todo_id,))
+        audit.record(g.db, g.viewer, "todo", todo_id, "delete", None)
         return jsonify(ok=True)
 
     return app

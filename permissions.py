@@ -285,3 +285,25 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         e["tasks"] = tasks_by_event.get(eid, [])
         e["group_members"] = members_by_group.get(e["hold_group_id"], []) if e["hold_group_id"] else []
     return events
+
+
+def todos_for(conn, viewer: Viewer) -> list[dict]:
+    """General ops to-dos, not tied to a show. Crew sees and can act on
+    only the ones assigned to them — never anyone else's — booker/owner
+    see and assign all of them. Same shape as events_for: the filter runs
+    in SQL, not by fetching everything and hiding rows client-side."""
+    where = "" if not viewer.is_crew else "WHERE t.assigned_to = %(person_id)s"
+    with conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT t.id, t.title, t.done, t.assigned_to, p.name AS assigned_to_name,
+                   t.due_date, t.notes, t.created_by, t.created_at
+            FROM todos t
+            LEFT JOIN people p ON p.id = t.assigned_to
+            {where}
+            ORDER BY t.done, t.due_date NULLS LAST, t.created_at
+            """,
+            {"person_id": viewer.id},
+        )
+        cols = [c.name for c in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]

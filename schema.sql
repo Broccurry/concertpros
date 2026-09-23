@@ -249,13 +249,13 @@ CREATE TABLE audit_log (
 CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX idx_audit_created ON audit_log(created_at);
 
--- The vision board: a Trello-style pipeline for turning a loose idea into
--- a booked show, one card per idea/opportunity. Replaces the old separate
--- vision_notes (freeform ideas) and ma_offers (live negotiations) tables —
--- those were the same underlying concept ("something we're chasing") with
--- two different, disconnected homes. column_key is the one place that
--- decides a card's stage, an allowlist so a stage added later doesn't
--- silently mean something everywhere at once.
+-- Two boards, one table: Vision Board ("idea" — a flat list of loose
+-- concepts) and MAO/Mutually-Agreeable Offers ("reaching_out" and
+-- "offer_sent" — a real two-stage pipeline). Which board a card lives on
+-- is derived from column_key alone, never stored separately, so a card
+-- can't end up on the wrong board disagreeing with its own stage. No
+-- "booked" stage — once a show is actually booked it lives on the
+-- Calendar, tracking it here too would just be the same fact twice.
 --
 -- trigger_event_id is the "strike while it's hot" case Broc described: a
 -- local band opens a packed show and gets real exposure, so the follow-up
@@ -265,7 +265,7 @@ CREATE TABLE vision_cards (
     id                SERIAL PRIMARY KEY,
     title             TEXT NOT NULL,
     column_key        TEXT NOT NULL DEFAULT 'idea'
-                      CHECK (column_key IN ('idea', 'reaching_out', 'offer_sent', 'booked')),
+                      CHECK (column_key IN ('idea', 'reaching_out', 'offer_sent')),
     sort_order        INTEGER NOT NULL DEFAULT 0,
     artist_id         INTEGER REFERENCES artists(id),
     trigger_event_id  INTEGER REFERENCES events(id) ON DELETE SET NULL,
@@ -329,6 +329,25 @@ CREATE TABLE event_message_acks (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (message_id, person_id)
 );
+
+-- General operational to-dos ("order ticket stock", "fix the marquee
+-- sign") — deliberately separate from event_tasks, which is the per-show
+-- booking checklist and stays scoped to one show. A todo is not tied to
+-- any show. Crew can see and check off only the ones assigned to them
+-- (same one-function-decides shape as events_for); booker/owner see and
+-- assign all of them.
+CREATE TABLE todos (
+    id            SERIAL PRIMARY KEY,
+    title         TEXT NOT NULL,
+    done          BOOLEAN NOT NULL DEFAULT FALSE,
+    assigned_to   INTEGER REFERENCES people(id),
+    due_date      DATE,
+    notes         TEXT,
+    created_by    INTEGER REFERENCES people(id),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_todos_assigned ON todos(assigned_to) WHERE NOT done;
 
 -- Seed data matching what's already live in the artifact prototype.
 INSERT INTO venues (name) VALUES ('Frankies'), ('Ottawa Tavern'), ('Cla-Zel Theater');

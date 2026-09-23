@@ -420,10 +420,19 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
 .notice{font-size:12px;color:var(--ink-3);margin-top:14px;text-align:center}
 
+/* To Do: general ops tasks, phone-first for crew checking off their own. */
+.todolist{display:flex;flex-direction:column;gap:6px}
+.todorow{display:flex;align-items:flex-start;gap:10px;background:var(--surface);border:1px solid var(--line);
+         border-radius:var(--radius);padding:9px 10px}
+.todorow input[type=checkbox]{width:18px;height:18px;accent-color:var(--accent);flex:none;margin-top:2px;cursor:pointer}
+.todorow-main{flex:1;min-width:0}
+.todorow-title{margin:0;font-size:13.5px;color:var(--ink)}
+.todorow-done .todorow-title{color:var(--ink-3);text-decoration:line-through}
+
 /* Vision board: a Trello-style pipeline, stage columns running left to
    right. The board itself keeps the aspirational "Vision Board" name;
    the columns are deliberately plain/functional (Idea/Reaching Out/Offer
-   Sent/Booked) since they're tracking real progress, not the pitch. */
+   Sent) since they're tracking real progress, not the pitch. */
 .visionboard{display:flex;gap:14px;overflow-x:auto;padding-bottom:8px;align-items:flex-start}
 .visioncol{flex:0 0 240px;min-width:240px;background:var(--ground);border-radius:var(--radius);padding:10px}
 .visioncol-head{font-family:var(--display);text-transform:uppercase;font-size:12.5px;letter-spacing:.03em;
@@ -475,10 +484,12 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
       <h1 class="brand">Concert<span>Pro</span></h1>
       <div class="views" role="tablist" aria-label="View" id="navTabs" style="display:none">
         <button role="tab" data-view="calendar" aria-selected="true">Calendar</button>
+        <button role="tab" data-view="todo" aria-selected="false">To Do</button>
         <button role="tab" data-view="list" aria-selected="false">List</button>
         <button role="tab" data-view="artists" aria-selected="false">Artists</button>
         <button role="tab" data-view="staff" aria-selected="false">Staff</button>
         <button role="tab" data-view="vision" aria-selected="false">Vision Board</button>
+        <button role="tab" data-view="mao" aria-selected="false">MAO</button>
         <button role="tab" data-view="settings" aria-selected="false">Settings</button>
       </div>
       <div class="monthnav" id="monthnav">
@@ -517,6 +528,7 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
       <div class="dow"><div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div></div>
       <div class="grid" id="grid"></div>
     </section>
+    <section id="view-todo" hidden></section>
     <section id="view-list" hidden></section>
     <section id="view-artists" hidden></section>
     <section id="view-staff" hidden></section>
@@ -525,6 +537,7 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
       <div id="peopleHost"></div>
     </section>
     <section id="view-vision" hidden></section>
+    <section id="view-mao" hidden></section>
     <section id="view-settings" hidden></section>
     <p class="notice" id="storeNotice"></p>
   </main>
@@ -674,7 +687,7 @@ function staffLabel(s){ return s.person_name || (s.person_id ? "(removed person)
 function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
 
 /* ============================== state =============================== */
-var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[]};
+var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], todos:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
 var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:""};
@@ -724,6 +737,13 @@ async function loadBookerLookups(){
   if(ar.ok) store.artists = ar.body.artists;
   if(vc.ok) store.visionCards = vc.body.cards;
 }
+async function loadTodos(){
+  // Unlike vision/artists/etc., crew needs this too — the endpoint itself
+  // (permissions.todos_for) already scopes a crew viewer to just their
+  // own assignments, so there's nothing to additionally hide here.
+  var r = await api("/api/todos");
+  if(r.ok) store.todos = r.body.todos;
+}
 
 /* ============================== dom helpers ========================== */
 function el(tag, cls, text){
@@ -747,15 +767,17 @@ function renderAll(){
   }).length;
   document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + all.length + " total";
 
-  ["calendar","list","artists","staff","people","vision","settings"].forEach(function(v){
+  ["calendar","todo","list","artists","staff","people","vision","mao","settings"].forEach(function(v){
     document.getElementById("view-" + v).hidden = (v !== ui.view);
   });
   if(ui.view === "calendar") renderCalendar();
+  if(ui.view === "todo") renderTodoView();
   if(ui.view === "list") renderListView();
   if(ui.view === "artists") renderArtistsView();
   if(ui.view === "staff") renderStaffView();
   if(ui.view === "people") renderPeopleTable();
   if(ui.view === "vision") renderVisionBoard();
+  if(ui.view === "mao") renderMAOBoard();
   if(ui.view === "settings") renderSettingsView();
 }
 
@@ -2552,33 +2574,113 @@ async function updateHoldDateStatus(eventId, newStatus, version){
   }
 }
 
+/* ============================== to do ================================== */
+function renderTodoView(){
+  var host = document.getElementById("view-todo");
+  host.innerHTML = "";
+
+  if(canBook()){
+    var addRow = el("div","row-3");
+    var titleInput = input("text", "", function(){});
+    titleInput.placeholder = "New task";
+    var assigneeSel = selectKV([{value:"",label:"Unassigned"}].concat(
+      store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; })), "", function(){});
+    var dueInput = input("date", "", function(){});
+    addRow.appendChild(field("Task", titleInput));
+    addRow.appendChild(field("Assign to", assigneeSel));
+    addRow.appendChild(field("Due (optional)", dueInput));
+    host.appendChild(addRow);
+    var addBtn = el("button","btn btn-primary","+ Add task");
+    addBtn.type = "button";
+    addBtn.style.marginTop = "8px"; addBtn.style.marginBottom = "18px";
+    addBtn.onclick = async function(){
+      var title = titleInput.value.trim();
+      if(!title) return;
+      await api("/api/todos", {method:"POST", body: JSON.stringify({
+        title: title, assigned_to: assigneeSel.value ? Number(assigneeSel.value) : null,
+        due_date: dueInput.value || null,
+      })});
+      await loadTodos();
+      renderAll();
+    };
+    host.appendChild(addBtn);
+  }
+
+  var todos = store.todos || [];
+  if(!todos.length){
+    var e = el("div","empty");
+    e.appendChild(el("h3",null, canBook() ? "No tasks yet" : "Nothing assigned to you"));
+    e.appendChild(el("p",null, canBook() ? "Add one above." : "You're all caught up."));
+    host.appendChild(e);
+    return;
+  }
+
+  var list = el("div","todolist");
+  todos.forEach(function(t){
+    var row = el("div","todorow" + (t.done ? " todorow-done" : ""));
+    var cb = document.createElement("input");
+    cb.type = "checkbox"; cb.checked = t.done;
+    cb.onchange = async function(){
+      await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify({done: cb.checked})});
+      await loadTodos();
+      renderAll();
+    };
+    row.appendChild(cb);
+    var mainCol = el("div","todorow-main");
+    mainCol.appendChild(el("p","todorow-title", t.title));
+    var bits = [];
+    if(canBook()) bits.push(t.assigned_to_name || "Unassigned");
+    if(t.due_date) bits.push("Due " + shortDate(t.due_date));
+    if(bits.length) mainCol.appendChild(el("p","hint", bits.join(" · ")));
+    row.appendChild(mainCol);
+    if(canBook()){
+      var del = el("button","x","✕");
+      del.type = "button";
+      del.title = "Delete task";
+      del.onclick = async function(){
+        await api("/api/todos/" + t.id, {method:"DELETE"});
+        await loadTodos();
+        renderAll();
+      };
+      row.appendChild(del);
+    }
+    list.appendChild(row);
+  });
+  host.appendChild(list);
+}
+
 /* ============================== vision board ============================ */
 // Plain functional column names — the "Vision Board" name itself already
 // carries the aspirational framing, the columns just track how far an
 // idea has moved toward becoming a real booked show.
-var VISION_COLUMNS = [
-  {key:"idea", label:"Idea"},
-  {key:"reaching_out", label:"Reaching Out"},
-  {key:"offer_sent", label:"Offer Sent"},
-  {key:"booked", label:"Booked"},
-];
+// Two separate boards, same underlying vision_cards table — which board a
+// column belongs to is fixed here, in the one place, so a card's stage
+// always implies exactly one board and never disagrees with itself.
+var VISION_COLUMNS = [{key:"idea", label:"Idea"}];
+var MAO_COLUMNS = [{key:"reaching_out", label:"Reaching Out"}, {key:"offer_sent", label:"Offer Sent"}];
+var ALL_VISION_COLUMNS = VISION_COLUMNS.concat(MAO_COLUMNS);
 function visionCardsByColumn(key){
   return (store.visionCards||[]).filter(function(c){ return c.column_key === key; })
     .slice().sort(function(a,b){ return a.sort_order - b.sort_order; });
 }
-function renderVisionBoard(){
-  var host = document.getElementById("view-vision");
+function renderVisionBoard(){ renderCardBoard("view-vision", VISION_COLUMNS,
+  "Post an idea below — a band to chase, whatever's worth not forgetting."); }
+function renderMAOBoard(){ renderCardBoard("view-mao", MAO_COLUMNS,
+  "Log an outreach below once you've actually reached out to someone."); }
+function renderCardBoard(hostId, columns, emptyHint){
+  var host = document.getElementById(hostId);
   host.innerHTML = "";
 
-  if(!(store.visionCards||[]).length){
+  var anyCards = columns.some(function(col){ return visionCardsByColumn(col.key).length; });
+  if(!anyCards){
     var e = el("div","empty");
-    e.appendChild(el("h3",null,"Nothing on the board yet"));
-    e.appendChild(el("p",null,"Post an idea in any column below — a band to chase, a follow-up to send while a show's still fresh, whatever's worth not forgetting."));
+    e.appendChild(el("h3",null,"Nothing here yet"));
+    e.appendChild(el("p",null,emptyHint));
     host.appendChild(e);
   }
 
   var board = el("div","visionboard");
-  VISION_COLUMNS.forEach(function(col){
+  columns.forEach(function(col){
     var colEl = el("div","visioncol");
     colEl.dataset.columnKey = col.key;
     colEl.appendChild(el("h3","visioncol-head", col.label));
@@ -2684,8 +2786,12 @@ function openVisionCardForm(cardId){
   fs.appendChild(el("legend",null,"The idea"));
   fs.appendChild(field("Title", input("text", draftC.title, function(v){ draftC.title = v; })));
 
-  var colSel = selectKV(VISION_COLUMNS.map(function(vc){ return {value:vc.key, label:vc.label}; }),
-    draftC.column_key, function(v){ draftC.column_key = v; });
+  // Which board a card lives on is just whichever stage it's in — moving
+  // it to a MAO stage here is how a plain idea gets promoted onto the
+  // MAO board, no separate "board" concept to keep in sync with this.
+  var colOpts = [{value:"idea", label:"Idea (Vision Board)"},
+    {value:"reaching_out", label:"Reaching Out (MAO)"}, {value:"offer_sent", label:"Offer Sent (MAO)"}];
+  var colSel = selectKV(colOpts, draftC.column_key, function(v){ draftC.column_key = v; });
   var colField = field("Stage", colSel); colField.style.marginTop = "10px";
   fs.appendChild(colField);
 
@@ -2983,13 +3089,15 @@ async function boot(){
   document.getElementById("bookBtn").style.display = canBook() ? "inline-block" : "none";
   document.getElementById("filterbar").style.display = "flex";
   if(!canBook()){
-    // Crew gets the calendar and their own theme preference — booking,
-    // staffing, and admin views are booker/owner-only screens.
+    // Crew gets the calendar, their own to-dos, and their theme
+    // preference — booking, staffing, and admin views are booker/owner-
+    // only screens.
     document.querySelectorAll("#navTabs button").forEach(function(b){
-      if(b.dataset.view !== "calendar" && b.dataset.view !== "settings") b.remove();
+      if(["calendar","todo","settings"].indexOf(b.dataset.view) < 0) b.remove();
     });
   }
   await loadBookerLookups();
+  await loadTodos();
   await loadEvents();
 }
 

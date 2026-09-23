@@ -81,11 +81,15 @@ class VisionBoard(unittest.TestCase):
     def test_a_new_card_defaults_to_the_idea_column(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)
+        # Real cards may already be on the board (this isn't a clean-slate
+        # column), so a new one just needs to land at the end, not at 0.
+        existing_max = max([c["sort_order"] for c in client.get("/api/vision_cards").get_json()["cards"]
+                             if c["column_key"] == "idea"], default=-1)
         card_id = self._create(client)
         cards = client.get("/api/vision_cards").get_json()["cards"]
         mine = next(c for c in cards if c["id"] == card_id)
         self.assertEqual(mine["column_key"], "idea")
-        self.assertEqual(mine["sort_order"], 0)
+        self.assertGreater(mine["sort_order"], existing_max)
 
     def test_a_card_can_be_edited_and_moved_to_another_column(self):
         client = self.app.test_client()
@@ -100,6 +104,12 @@ class VisionBoard(unittest.TestCase):
         self.assertEqual(mine["column_key"], "reaching_out")
         self.assertEqual(mine["notes"], "left a voicemail")
         self.assertEqual(mine["follow_up_date"], "2027-01-05")
+
+    def test_booked_is_not_a_column_a_booked_show_lives_on_the_calendar(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post("/api/vision_cards", json={"title": "x", "column_key": "booked"})
+        self.assertEqual(r.status_code, 400)
 
     def test_invalid_column_is_rejected_on_create_and_update(self):
         client = self.app.test_client()
