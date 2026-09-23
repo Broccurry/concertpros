@@ -250,12 +250,12 @@ CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
 CREATE INDEX idx_audit_created ON audit_log(created_at);
 
 -- Two boards, one table: Vision Board ("idea" — a flat list of loose
--- concepts) and MAO/Mutually-Agreeable Offers ("reaching_out" and
--- "offer_sent" — a real two-stage pipeline). Which board a card lives on
--- is derived from column_key alone, never stored separately, so a card
--- can't end up on the wrong board disagreeing with its own stage. No
--- "booked" stage — once a show is actually booked it lives on the
--- Calendar, tracking it here too would just be the same fact twice.
+-- concepts) and MAO/Mutually-Agreeable Offers ("offer_sent" — one stage,
+-- not a pipeline). Which board a card lives on is derived from column_key
+-- alone, never stored separately, so a card can't end up on the wrong
+-- board disagreeing with its own stage. No "booked" stage — once a show
+-- is actually booked it lives on the Calendar, tracking it here too would
+-- just be the same fact twice.
 --
 -- trigger_event_id is the "strike while it's hot" case Broc described: a
 -- local band opens a packed show and gets real exposure, so the follow-up
@@ -265,7 +265,7 @@ CREATE TABLE vision_cards (
     id                SERIAL PRIMARY KEY,
     title             TEXT NOT NULL,
     column_key        TEXT NOT NULL DEFAULT 'idea'
-                      CHECK (column_key IN ('idea', 'reaching_out', 'offer_sent')),
+                      CHECK (column_key IN ('idea', 'offer_sent')),
     sort_order        INTEGER NOT NULL DEFAULT 0,
     artist_id         INTEGER REFERENCES artists(id),
     trigger_event_id  INTEGER REFERENCES events(id) ON DELETE SET NULL,

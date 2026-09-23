@@ -96,12 +96,12 @@ class VisionBoard(unittest.TestCase):
         self._login(client, self.booker_email)
         card_id = self._create(client)
         r = client.patch(f"/api/vision_cards/{card_id}", json={
-            "column_key": "reaching_out", "notes": "left a voicemail", "follow_up_date": "2027-01-05",
+            "column_key": "offer_sent", "notes": "left a voicemail", "follow_up_date": "2027-01-05",
         })
         self.assertEqual(r.status_code, 200, r.get_json())
         cards = client.get("/api/vision_cards").get_json()["cards"]
         mine = next(c for c in cards if c["id"] == card_id)
-        self.assertEqual(mine["column_key"], "reaching_out")
+        self.assertEqual(mine["column_key"], "offer_sent")
         self.assertEqual(mine["notes"], "left a voicemail")
         self.assertEqual(mine["follow_up_date"], "2027-01-05")
 
@@ -109,6 +109,12 @@ class VisionBoard(unittest.TestCase):
         client = self.app.test_client()
         self._login(client, self.booker_email)
         r = client.post("/api/vision_cards", json={"title": "x", "column_key": "booked"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_reaching_out_is_no_longer_a_column_mao_is_one_stage(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post("/api/vision_cards", json={"title": "x", "column_key": "reaching_out"})
         self.assertEqual(r.status_code, 400)
 
     def test_invalid_column_is_rejected_on_create_and_update(self):

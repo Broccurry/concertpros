@@ -458,7 +458,7 @@ tbody tr.unsettled-row td:first-child{box-shadow:inset 3px 0 0 var(--hold-1-bg)}
 .visioncard-body{flex:1;min-width:0;cursor:pointer}
 .visioncard-title{margin:0 0 4px;font-size:13px;line-height:1.35;color:var(--ink)}
 .vision-followup-due{color:var(--dead);font-weight:600}
-.visioncol-quickadd{width:100%;margin-top:8px;border:1px dashed var(--line-strong);background:transparent;
+.visioncol-quickadd{width:100%;margin-bottom:10px;border:1px dashed var(--line-strong);background:transparent;
                      border-radius:var(--radius);padding:6px 8px;font-size:12.5px}
 @media (max-width:660px){
   .visionboard{flex-direction:column}
@@ -2777,7 +2777,7 @@ function renderFilesView(){
 // column belongs to is fixed here, in the one place, so a card's stage
 // always implies exactly one board and never disagrees with itself.
 var VISION_COLUMNS = [{key:"idea", label:"Idea"}];
-var MAO_COLUMNS = [{key:"reaching_out", label:"Reaching Out"}, {key:"offer_sent", label:"Offer Sent"}];
+var MAO_COLUMNS = [{key:"offer_sent", label:"Offer Sent"}];
 var ALL_VISION_COLUMNS = VISION_COLUMNS.concat(MAO_COLUMNS);
 function visionCardsByColumn(key){
   return (store.visionCards||[]).filter(function(c){ return c.column_key === key; })
@@ -2825,6 +2825,22 @@ function renderCardBoard(host, columns, emptyHint){
     var colEl = el("div","visioncol");
     colEl.dataset.columnKey = col.key;
     colEl.appendChild(el("h3","visioncol-head", col.label));
+
+    var quickAdd = document.createElement("input");
+    quickAdd.type = "text";
+    quickAdd.placeholder = "+ Add a card";
+    quickAdd.className = "visioncol-quickadd";
+    quickAdd.onkeydown = async function(e){
+      if(e.key !== "Enter") return;
+      var title = quickAdd.value.trim();
+      if(!title) return;
+      e.preventDefault();
+      await api("/api/vision_cards", {method:"POST", body: JSON.stringify({title:title, column_key:col.key})});
+      await loadBookerLookups();
+      renderAll();
+    };
+    colEl.appendChild(quickAdd);
+
     var wrap = el("div","visioncol-notes");
     colEl.appendChild(wrap);
 
@@ -2887,20 +2903,6 @@ function renderCardBoard(host, columns, emptyHint){
       wrap.appendChild(card);
     });
 
-    var quickAdd = document.createElement("input");
-    quickAdd.type = "text";
-    quickAdd.placeholder = "+ Add a card";
-    quickAdd.className = "visioncol-quickadd";
-    quickAdd.onkeydown = async function(e){
-      if(e.key !== "Enter") return;
-      var title = quickAdd.value.trim();
-      if(!title) return;
-      e.preventDefault();
-      await api("/api/vision_cards", {method:"POST", body: JSON.stringify({title:title, column_key:col.key})});
-      await loadBookerLookups();
-      renderAll();
-    };
-    colEl.appendChild(quickAdd);
     board.appendChild(colEl);
   });
   host.appendChild(board);
@@ -2930,8 +2932,7 @@ function openVisionCardForm(cardId){
   // Which board a card lives on is just whichever stage it's in — moving
   // it to a MAO stage here is how a plain idea gets promoted onto the
   // MAO board, no separate "board" concept to keep in sync with this.
-  var colOpts = [{value:"idea", label:"Idea (Vision Board)"},
-    {value:"reaching_out", label:"Reaching Out (MAO)"}, {value:"offer_sent", label:"Offer Sent (MAO)"}];
+  var colOpts = [{value:"idea", label:"Idea (Vision Board)"}, {value:"offer_sent", label:"Offer Sent (MAO)"}];
   var colSel = selectKV(colOpts, draftC.column_key, function(v){ draftC.column_key = v; });
   var colField = field("Stage", colSel); colField.style.marginTop = "10px";
   fs.appendChild(colField);

@@ -1659,7 +1659,7 @@ def create_app():
         audit.record(g.db, g.viewer, "event", event_id, "delete_message", {"message_id": message_id})
         return jsonify(ok=True)
 
-    _VISION_COLUMNS = ("idea", "reaching_out", "offer_sent")
+    _VISION_COLUMNS = ("idea", "offer_sent")
 
     @app.get("/api/vision_cards")
     @require_booker
