@@ -234,23 +234,37 @@ td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
 tbody tr:last-child td{border-bottom:0}
 tbody tr{cursor:pointer}
 tbody tr:hover td{background:var(--surface-2)}
-tr.staffrow-urgent td{background:var(--dead-bg);color:var(--dead)}
-tr.staffrow-urgent:hover td{background:var(--dead-bg)}
-tr.staffrow-urgent td.sub{color:var(--dead);font-weight:600}
-.staffcell-clickable{cursor:pointer}
-.staffcell-clickable:hover{text-decoration:underline;text-decoration-style:dotted}
-/* Stacked, not a wide side-by-side row -- the select+time+delete all in
-   one line was forcing this column (and the whole table, via
-   .tablewrap's overflow-x:auto) wider than the viewport, showing a
-   horizontal scrollbar Broc didn't want ("weird slider," 2026-09-24).
-   Capping the cell's width and stacking the controls keeps this editor
-   from ever needing more room than a normal column already has. */
-.staffcell-editing{width:168px;max-width:168px;white-space:normal;cursor:default;padding:6px}
-.staffcell-editlabel{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px}
-.staffcell-editrow{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
-.staffcell-editrow select{font-size:12px;padding:3px 4px;width:100%}
-.staffcell-edittimerow{display:flex;gap:4px;align-items:center}
-.staffcell-edittimerow input[type=time]{font-size:12px;padding:3px;flex:1;min-width:0}
+/* Staff view: one card per show, roles as ROWS inside it -- not columns
+   shared across a table. A show needing 5 roles just grows its own card
+   taller; it never widens the table or squeezes every other show's row,
+   and the title gets its own full-width line so it can't shove role
+   columns around either (both were Broc's complaints, 2026-09-24 --
+   "if we need every type of job it will get very congested" / "weird
+   that how it sits is dependent on the size of the show title"). This
+   replaced an earlier table-based layout entirely, not a patch on it.*/
+.staffmonth-divider{font-family:var(--display);font-size:11px;font-weight:600;letter-spacing:.06em;
+                     text-transform:uppercase;color:var(--ink-3);margin:18px 0 8px}
+.staffmonth-divider:first-child{margin-top:0}
+.staffcard{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+           padding:12px 14px;margin-bottom:10px;cursor:pointer}
+.staffcard:hover{border-color:var(--line-strong)}
+.staffcard-urgent{border-color:var(--dead);background:var(--dead-bg)}
+.staffcard-meta{font-size:12px;color:var(--ink-3);margin-bottom:2px}
+.staffcard-title{font-size:14.5px;font-weight:600;color:var(--ink);margin:0 0 10px;line-height:1.3}
+.staffcard-roles{border-top:1px solid var(--line)}
+.staffcard-role{display:flex;align-items:center;justify-content:space-between;gap:10px;
+                 padding:8px 0;border-bottom:1px solid var(--line);cursor:pointer}
+.staffcard-role:hover{text-decoration:underline;text-decoration-style:dotted}
+.staffcard-role-name{font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;
+                      color:var(--ink-3);flex:none}
+.staffcard-role-value{font-size:13px;color:var(--ink);text-align:right}
+.staffcard-role-value.sub{color:var(--ink-3)}
+.staffcard-urgent .staffcard-role-value.sub{color:var(--dead);font-weight:600}
+.staffcard-role-editing{padding:8px 0;border-bottom:1px solid var(--line);cursor:default}
+.staffcard-editrow{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:6px}
+.staffcard-editrow select{font-size:13px;padding:4px 6px;flex:1 1 160px;min-width:0}
+.staffcard-editrow input[type=time]{font-size:13px;padding:4px 6px;width:100px}
+.staffcard-addrole{margin-top:2px}
 .emaillist{display:flex;flex-direction:column;gap:2px;margin-top:12px}
 .emailrow{display:block;width:100%;text-align:left;border:1px solid transparent;border-bottom-color:var(--line);
           background:transparent;padding:10px 4px;cursor:pointer;border-radius:var(--radius)}
@@ -1798,30 +1812,32 @@ function renderStaffView(){
     e.appendChild(el("p",null,"Staff get assigned on each show, under “Who's working”."));
     host.appendChild(e);
   } else {
-    // Only the roles actually scheduled on one of these shows get a
-    // column — a role nobody's ever assigned here doesn't need to eat
-    // table width on every single row.
-    var usedRoles = store.roles.filter(function(role){
-      return rows.some(function(ev){ return (ev.staff||[]).some(function(s){ return s.role === role.name; }); });
-    });
-    var wrap = el("div","tablewrap"), t = document.createElement("table");
-    var thead = document.createElement("thead"), hr = document.createElement("tr");
-    ["Date","Venue","Show","Doors"].concat(usedRoles.map(function(r){ return r.name; })).concat([""]).forEach(function(h){ hr.appendChild(el("th",null,h)); });
-    thead.appendChild(hr); t.appendChild(thead);
-    var tb = document.createElement("tbody");
+    var cardsHost = el("div");
     var unfilled = 0;
     var staffLastMonth = null;
-    var staffCols = 5 + usedRoles.length;
     rows.forEach(function(ev){
       var monthKey = ev.show_date.slice(0,7);
-      if(monthKey !== staffLastMonth){ tb.appendChild(monthDividerRow(ev.show_date, staffCols)); staffLastMonth = monthKey; }
-      var tr = document.createElement("tr");
+      if(monthKey !== staffLastMonth){
+        var p = parts(ev.show_date);
+        cardsHost.appendChild(el("div","staffmonth-divider", MONTHS[p.m] + " " + p.y));
+        staffLastMonth = monthKey;
+      }
+
+      // Only roles this SHOW actually has get a row -- a 1-role show shows
+      // one row, a 5-role show shows five, and neither affects any other
+      // show's card.
+      var usedRoles = store.roles.filter(function(role){
+        return (ev.staff||[]).some(function(s){ return s.role === role.name; });
+      });
       var rowHasUnfilled = false;
-      tr.onclick = function(){ openEvent(ev.id); };
-      tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
-      tr.appendChild(el("td",null, ev.venue));
-      tr.appendChild(el("td","title-cell", showName(ev)));
-      tr.appendChild(el("td","date-col", time12(ev.doors)));
+
+      var card = el("div","staffcard");
+      card.onclick = function(){ openEvent(ev.id); };
+      card.appendChild(el("div","staffcard-meta",
+        shortDate(ev.show_date) + " · " + ev.venue + (ev.doors ? " · Doors " + time12(ev.doors) : "")));
+      card.appendChild(el("div","staffcard-title", showName(ev)));
+
+      var rolesHost = el("div","staffcard-roles");
       usedRoles.forEach(function(role){
         var staffForRole = (ev.staff||[]).filter(function(s){ return s.role === role.name; });
         var named = staffForRole.filter(function(s){ return s.person_id !== null; }).map(staffLabel);
@@ -1829,18 +1845,17 @@ function renderStaffView(){
         if(!named.length){ unfilled++; rowHasUnfilled = true; }
 
         var isEditing = ui.staffEditingCell && ui.staffEditingCell.eventId === ev.id && ui.staffEditingCell.role === role.name;
-        var td = document.createElement("td");
-        td.onclick = function(e){ e.stopPropagation(); };
+        var roleRow = el("div", isEditing ? "staffcard-role-editing" : "staffcard-role");
+        roleRow.onclick = function(e){ e.stopPropagation(); };
 
         if(isEditing){
-          td.className = "staffcell-editing";
-          // A bare dropdown here looked identical to "+ Shift"'s bare
-          // role-picker at a glance (Broc's report, 2026-09-24) -- this
-          // is editing the {role} shift that already exists on this show,
-          // not adding a new one, so say so.
-          td.appendChild(el("div","staffcell-editlabel", role.name));
+          // A bare dropdown here looked identical to "+ Add a role"'s bare
+          // role-picker at a glance (Broc's report, 2026-09-24) -- this is
+          // editing the {role} shift that already exists on this show, not
+          // adding a new one, so say so.
+          roleRow.appendChild(el("div","staffcard-role-name", role.name));
           staffForRole.forEach(function(s){
-            var editRow = el("div","staffcell-editrow");
+            var editRow = el("div","staffcard-editrow");
             var personSel = selectKV([{value:"",label:"TBA (unfilled)"}].concat(
               store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; })),
               s.person_id || "", async function(v){
@@ -1850,7 +1865,6 @@ function renderStaffView(){
                 renderStaffView();
               });
             editRow.appendChild(personSel);
-            var timeRow = el("div","staffcell-edittimerow");
             var timeInput = document.createElement("input");
             timeInput.type = "time"; timeInput.value = s.scheduled_time || "";
             timeInput.title = "What time this person needs to be there";
@@ -1860,7 +1874,7 @@ function renderStaffView(){
               await loadEvents();
               renderStaffView();
             };
-            timeRow.appendChild(timeInput);
+            editRow.appendChild(timeInput);
             var delBtn = el("button","rowdel","✕");
             delBtn.type = "button"; delBtn.title = "Remove this shift";
             delBtn.onclick = async function(){
@@ -1868,10 +1882,10 @@ function renderStaffView(){
               await loadEvents();
               renderStaffView();
             };
-            timeRow.appendChild(delBtn);
-            editRow.appendChild(timeRow);
-            td.appendChild(editRow);
+            editRow.appendChild(delBtn);
+            roleRow.appendChild(editRow);
           });
+          var editBtnRow = el("div","btnrow");
           var addAnotherBtn = el("button","btn btn-sm","+ Another " + role.name);
           addAnotherBtn.type = "button";
           addAnotherBtn.onclick = async function(){
@@ -1879,32 +1893,30 @@ function renderStaffView(){
             await loadEvents();
             renderStaffView();
           };
-          td.appendChild(addAnotherBtn);
+          editBtnRow.appendChild(addAnotherBtn);
           var doneBtn = el("button","btn btn-sm","Done");
           doneBtn.type = "button";
-          doneBtn.style.marginLeft = "6px";
           doneBtn.onclick = function(){ ui.staffEditingCell = null; renderStaffView(); };
-          td.appendChild(doneBtn);
+          editBtnRow.appendChild(doneBtn);
+          roleRow.appendChild(editBtnRow);
         } else {
           var label = named.join(", ") + (tbaCount ? (named.length ? " + " : "") + tbaCount + " TBA" : "");
-          td.className = (named.length ? "" : "sub ") + "staffcell-clickable";
-          td.textContent = label || "—";
-          td.onclick = function(e){
+          roleRow.appendChild(el("span","staffcard-role-name", role.name));
+          roleRow.appendChild(el("span","staffcard-role-value" + (named.length ? "" : " sub"), label || "—"));
+          roleRow.onclick = function(e){
             e.stopPropagation();
             ui.staffEditingCell = {eventId: ev.id, role: role.name};
             renderStaffView();
           };
         }
-        tr.appendChild(td);
+        rolesHost.appendChild(roleRow);
       });
-      // Two weeks out and still a name missing on this show -- stop being
-      // a quiet TBA in a table and make it something you have to notice.
-      if(rowHasUnfilled && ev.show_date <= staffUrgentBy) tr.className = "staffrow-urgent";
+      card.appendChild(rolesHost);
 
-      // Adding a shift straight from this table -- no need to open the
-      // show itself just to book a 2nd bartender or an extra door person.
-      var shiftTd = document.createElement("td");
+      // Adding a role straight from this card -- no need to open the show
+      // itself just to book a 2nd bartender or an extra door person.
       if(ui.staffAddingShiftFor === ev.id){
+        var roleSelRow = el("div","staffcard-editrow staffcard-addrole");
         var roleSel = selectKV([{value:"",label:"Pick a role —"}].concat(
           store.roles.map(function(r){ return {value:r.id, label:r.name}; })), "", async function(v){
             if(!v) return;
@@ -1913,20 +1925,28 @@ function renderStaffView(){
             await loadEvents();
             renderStaffView();
           });
-        roleSel.onclick = function(e){ e.stopPropagation(); };
-        shiftTd.appendChild(roleSel);
+        roleSelRow.onclick = function(e){ e.stopPropagation(); };
+        roleSelRow.appendChild(roleSel);
+        var cancelRoleBtn = el("button","btn btn-sm","Cancel");
+        cancelRoleBtn.type = "button";
+        cancelRoleBtn.onclick = function(e){ e.stopPropagation(); ui.staffAddingShiftFor = null; renderStaffView(); };
+        roleSelRow.appendChild(cancelRoleBtn);
+        card.appendChild(roleSelRow);
       } else {
-        var addShiftBtn = el("button","btn btn-sm","+ Shift");
+        var addShiftBtn = el("button","btn btn-sm staffcard-addrole","+ Add a role");
         addShiftBtn.type = "button";
         addShiftBtn.onclick = function(e){ e.stopPropagation(); ui.staffAddingShiftFor = ev.id; renderStaffView(); };
-        shiftTd.appendChild(addShiftBtn);
+        card.appendChild(addShiftBtn);
       }
-      tr.appendChild(shiftTd);
-      tb.appendChild(tr);
+
+      // Two weeks out and still a name missing on this show -- stop being
+      // a quiet TBA and make it something you have to notice.
+      if(rowHasUnfilled && ev.show_date <= staffUrgentBy) card.classList.add("staffcard-urgent");
+      cardsHost.appendChild(card);
     });
-    t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
+    host.appendChild(cardsHost);
     host.appendChild(el("p","notice", unfilled
-      ? unfilled + " role" + (unfilled===1?"":"s") + " with no name on it across " + rows.length + " upcoming show" + (rows.length===1?"":"s") + ". Click a row to assign."
+      ? unfilled + " role" + (unfilled===1?"":"s") + " with no name on it across " + rows.length + " upcoming show" + (rows.length===1?"":"s") + ". Tap a role to assign."
       : "Every role has a name on it across all " + rows.length + " upcoming shows."));
   }
   host.appendChild(el("p","notice","This is assignment — who's covering each show. Hours, availability and time off would be a separate build."));
