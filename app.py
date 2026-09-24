@@ -1360,9 +1360,7 @@ def create_app():
     @require_booker
     def pull_ticket_link(event_id):
         """Matches this show to Etix's public event feed by venue + local
-        calendar date. Only reaches Etix's public catalog (see etix.py) --
-        ticket counts/settlement data need the password grant we don't
-        have yet, so this is scoped to just the ticket link for now."""
+        calendar date (see etix.py)."""
         cur = g.db.cursor()
         cur.execute(
             "SELECT e.show_date, v.name FROM events e JOIN venues v ON v.id = e.venue_id WHERE e.id = %s",
@@ -1381,6 +1379,31 @@ def create_app():
         cur.execute("UPDATE events SET ticket_link = %s, updated_at = now() WHERE id = %s", (link, event_id))
         audit.record(g.db, g.viewer, "event", event_id, "pull_ticket_link", {"ticket_link": link})
         return jsonify(ticket_link=link)
+
+    @app.post("/api/events/<int:event_id>/ticket_sales/pull_etix")
+    @require_booker
+    def pull_etix_ticket_sales(event_id):
+        """A manual "pull now," on top of the daily scheduled snapshot
+        (scripts/pull_etix_daily_sales.py) -- same underlying call
+        (etix.pull_and_store_snapshot), so a manual pull and the nightly
+        one can never disagree about how a count got there."""
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT e.show_date, v.name FROM events e JOIN venues v ON v.id = e.venue_id WHERE e.id = %s",
+            (event_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        show_date, venue_name = row
+        try:
+            tickets_sold = etix.pull_and_store_snapshot(g.db, event_id, venue_name, show_date)
+        except Exception as e:
+            return jsonify(error="etix_lookup_failed", detail=str(e)), 502
+        if tickets_sold is None:
+            return jsonify(error="no_matching_etix_event"), 404
+        audit.record(g.db, g.viewer, "event", event_id, "pull_etix_ticket_sales", {"tickets_sold": tickets_sold})
+        return jsonify(ok=True, tickets_sold=tickets_sold)
 
     @app.post("/api/events/<int:event_id>/hold_dates")
     @require_booker

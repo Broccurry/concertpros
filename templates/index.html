@@ -2718,17 +2718,34 @@ function renderSheet(){
     // A day-by-day log, not the one final number -- that's Finals &
     // payout's own Tickets sold field, entered once after the show. This
     // is for watching whether marketing is working while tickets are
-    // still on sale. Manual for now; source:'etix' rows (an hourly pull)
-    // will show up in the same list once that access exists.
+    // still on sale. Manual entry, or a "Pull from Etix" snapshot right
+    // now, or the daily scheduled pull (scripts/pull_etix_daily_sales.py)
+    // -- all land in the same list, source:'etix' rows tagged as such.
     var fsTix = document.createElement("fieldset");
     fsTix.appendChild(el("legend", null, "Ticket sales"));
     var sales = (draft.ticket_sales || []).slice().sort(function(a,b){ return a.sale_date < b.sale_date ? -1 : 1; });
     var latest = sales.length ? sales[sales.length - 1] : null;
 
-    var hero = el("div","tixhero");
+    var heroRow = el("div","btnrow");
+    heroRow.style.alignItems = "center";
+    var hero = el("div","tixhero"); hero.style.marginBottom = "0";
     hero.appendChild(el("div","tixhero-count", latest ? String(latest.tickets_sold) : "—"));
     hero.appendChild(el("div","tixhero-label", latest ? "active as of " + shortDate(latest.sale_date) : "No counts logged yet"));
-    fsTix.appendChild(hero);
+    heroRow.appendChild(hero);
+    heroRow.appendChild(el("div","spacer"));
+    var tixPullBtn = el("button","btn btn-sm","Pull from Etix");
+    tixPullBtn.type = "button";
+    tixPullBtn.onclick = async function(){
+      tixPullBtn.disabled = true; tixPullBtn.textContent = "Pulling…";
+      var r = await api("/api/events/" + draft.id + "/ticket_sales/pull_etix", {method:"POST"});
+      tixPullBtn.disabled = false; tixPullBtn.textContent = "Pull from Etix";
+      if(r.ok) await refreshDraft();
+      else window.alert(r.body.error === "no_matching_etix_event"
+        ? "No matching Etix event found for this venue and date."
+        : (r.body.detail || r.body.error || "Could not pull ticket sales."));
+    };
+    heroRow.appendChild(tixPullBtn);
+    fsTix.appendChild(heroRow);
 
     if(sales.length >= 2) fsTix.appendChild(ticketSalesChart(sales));
 
