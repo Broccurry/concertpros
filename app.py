@@ -2072,7 +2072,7 @@ def create_app():
         return {
             "id": row[0], "event_id": row[1], "filename": row[2], "content_type": row[3],
             "size_bytes": row[4], "uploaded_by": row[5], "uploaded_by_name": row[6],
-            "created_at": row[7].isoformat(), "venue_id": row[8],
+            "created_at": row[7].isoformat(), "venue_id": row[8], "folder_id": row[9],
         }
 
     @app.get("/api/files")
@@ -2087,7 +2087,7 @@ def create_app():
         if "event_id" in request.args:
             cur.execute(
                 """SELECT f.id, f.event_id, f.filename, f.content_type, f.size_bytes,
-                          f.uploaded_by, p.name, f.created_at, f.venue_id
+                          f.uploaded_by, p.name, f.created_at, f.venue_id, f.folder_id
                    FROM event_files f LEFT JOIN people p ON p.id = f.uploaded_by
                    WHERE f.event_id IS NOT DISTINCT FROM %s
                    ORDER BY f.created_at DESC""",
@@ -2096,11 +2096,43 @@ def create_app():
         else:
             cur.execute(
                 """SELECT f.id, f.event_id, f.filename, f.content_type, f.size_bytes,
-                          f.uploaded_by, p.name, f.created_at, f.venue_id
+                          f.uploaded_by, p.name, f.created_at, f.venue_id, f.folder_id
                    FROM event_files f LEFT JOIN people p ON p.id = f.uploaded_by
                    ORDER BY f.created_at DESC"""
             )
         return jsonify(files=[_file_row(r) for r in cur.fetchall()])
+
+    @app.get("/api/file_folders")
+    @require_booker
+    def list_file_folders():
+        cur = g.db.cursor()
+        cur.execute("SELECT id, name FROM file_folders ORDER BY name")
+        return jsonify(folders=[{"id": r[0], "name": r[1]} for r in cur.fetchall()])
+
+    @app.post("/api/file_folders")
+    @require_booker
+    def create_file_folder():
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "").strip()
+        if not name:
+            return jsonify(error="name_required"), 400
+        cur = g.db.cursor()
+        cur.execute("INSERT INTO file_folders (name, created_by) VALUES (%s, %s) RETURNING id", (name, g.viewer.id))
+        folder_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "file_folder", folder_id, "create", {"name": name})
+        return jsonify(id=folder_id), 201
+
+    @app.delete("/api/file_folders/<int:folder_id>")
+    @require_booker
+    def delete_file_folder(folder_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT name FROM file_folders WHERE id = %s", (folder_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("DELETE FROM file_folders WHERE id = %s", (folder_id,))
+        audit.record(g.db, g.viewer, "file_folder", folder_id, "delete", {"name": row[0]})
+        return jsonify(ok=True)
 
     @app.post("/api/files/upload-url")
     @require_booker
@@ -2111,6 +2143,7 @@ def create_app():
             return jsonify(error="filename_required"), 400
         event_id = body.get("event_id")
         venue_id = body.get("venue_id") or None
+        folder_id = body.get("folder_id") or None
         content_type = body.get("content_type") or "application/octet-stream"
         size_bytes = body.get("size_bytes")
 
@@ -2123,16 +2156,20 @@ def create_app():
             cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
             if cur.fetchone() is None:
                 return jsonify(error="unknown_venue"), 400
+        if folder_id is not None:
+            cur.execute("SELECT 1 FROM file_folders WHERE id = %s", (folder_id,))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_folder"), 400
 
-        storage_key = storage.new_storage_key(event_id, filename, venue_id)
+        storage_key = storage.new_storage_key(event_id, filename, venue_id, folder_id)
         cur.execute(
-            """INSERT INTO event_files (event_id, venue_id, filename, storage_key, content_type, size_bytes, uploaded_by)
-               VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-            (event_id, venue_id, filename, storage_key, content_type, size_bytes, g.viewer.id),
+            """INSERT INTO event_files (event_id, venue_id, folder_id, filename, storage_key, content_type, size_bytes, uploaded_by)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (event_id, venue_id, folder_id, filename, storage_key, content_type, size_bytes, g.viewer.id),
         )
         file_id = cur.fetchone()[0]
         audit.record(g.db, g.viewer, "event" if event_id else "file", event_id or file_id,
-                     "upload_file", {"filename": filename, "file_id": file_id, "venue_id": venue_id})
+                     "upload_file", {"filename": filename, "file_id": file_id, "venue_id": venue_id, "folder_id": folder_id})
         upload_url = storage.presign_upload(storage_key, content_type)
         return jsonify(id=file_id, upload_url=upload_url), 201
 

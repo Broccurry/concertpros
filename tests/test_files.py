@@ -43,6 +43,7 @@ class Files(unittest.TestCase):
         self.app = app_module.create_app()
         self.app.config["TESTING"] = True
         self.file_ids = []
+        self.folder_ids = []
 
         self.presign_upload_patcher = patch("storage.presign_upload", return_value="https://upload.example/put")
         self.presign_download_patcher = patch("storage.presign_download", return_value="https://download.example/get")
@@ -68,6 +69,9 @@ class Files(unittest.TestCase):
         for file_id in self.file_ids:
             cur.execute("DELETE FROM audit_log WHERE entity_type IN ('file', 'event') AND entity_id = %s", (file_id,))
             cur.execute("DELETE FROM event_files WHERE id = %s", (file_id,))
+        for folder_id in self.folder_ids:
+            cur.execute("DELETE FROM audit_log WHERE entity_type = 'file_folder' AND entity_id = %s", (folder_id,))
+            cur.execute("DELETE FROM file_folders WHERE id = %s", (folder_id,))
         cur.execute("DELETE FROM audit_log WHERE entity_type = 'event' AND entity_id = %s", (self.event_id,))
         cur.execute("DELETE FROM events WHERE id = %s", (self.event_id,))
         cur.execute("DELETE FROM sessions WHERE person_id IN (%s, %s)", (self.booker_id, self.crew_id))
@@ -161,6 +165,67 @@ class Files(unittest.TestCase):
         self.mock_delete_object.assert_called_once()
         files = client.get("/api/files").get_json()["files"]
         self.assertNotIn(body["id"], [f["id"] for f in files])
+
+    def _create_folder(self, client, name="Insurance"):
+        r = client.post("/api/file_folders", json={"name": name})
+        self.assertEqual(r.status_code, 201, r.get_json())
+        folder_id = r.get_json()["id"]
+        self.folder_ids.append(folder_id)
+        return folder_id
+
+    def test_booker_can_create_and_list_a_folder(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        folder_id = self._create_folder(client)
+        names = [f["name"] for f in client.get("/api/file_folders").get_json()["folders"]]
+        self.assertIn("Insurance", names)
+
+    def test_folder_name_is_required(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post("/api/file_folders", json={})
+        self.assertEqual(r.status_code, 400)
+
+    def test_a_file_can_be_uploaded_into_a_folder(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        folder_id = self._create_folder(client)
+        body = self._upload(client, filename="policy.pdf", folder_id=folder_id)
+        files = client.get("/api/files").get_json()["files"]
+        mine = next(f for f in files if f["id"] == body["id"])
+        self.assertEqual(mine["folder_id"], folder_id)
+        self.assertIsNone(mine["event_id"])
+
+    def test_unknown_folder_is_rejected_on_upload(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post("/api/files/upload-url", json={"filename": "x.pdf", "folder_id": 999999})
+        self.assertEqual(r.status_code, 400)
+
+    def test_deleting_a_folder_moves_its_files_back_to_general_not_deleting_them(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        folder_id = self._create_folder(client)
+        body = self._upload(client, filename="policy.pdf", folder_id=folder_id)
+
+        r = client.delete(f"/api/file_folders/{folder_id}")
+        self.assertEqual(r.status_code, 200)
+        self.folder_ids.remove(folder_id)  # already gone, tearDown's delete would be a no-op anyway
+
+        files = client.get("/api/files").get_json()["files"]
+        mine = next(f for f in files if f["id"] == body["id"])
+        self.assertIsNone(mine["folder_id"])
+
+    def test_crew_cannot_touch_folders(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        folder_id = self._create_folder(client)
+
+        crew_client = self.app.test_client()
+        self._login(crew_client, self.crew_email)
+        self.assertEqual(crew_client.get("/api/file_folders").status_code, 403)
+        self.assertEqual(crew_client.post("/api/file_folders", json={"name": "x"}).status_code, 403)
+        self.assertEqual(crew_client.delete(f"/api/file_folders/{folder_id}").status_code, 403)
 
 
 if __name__ == "__main__":

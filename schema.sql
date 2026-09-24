@@ -419,10 +419,24 @@ CREATE INDEX idx_todos_assigned ON todos(assigned_to) WHERE NOT done;
 -- Booker/owner only for now (contracts are exactly the kind of financial
 -- document crew shouldn't see) — no crew-facing use case has come up yet,
 -- so there's no permissions.py function to write until one does.
+-- A user-created folder in the general library -- for anything that isn't
+-- one show's own files and isn't a venue's stage plot/equipment list
+-- either (e.g. "Insurance", "Marketing assets"). Deliberately just a name;
+-- deleting one doesn't delete its files (ON DELETE SET NULL on
+-- event_files.folder_id below), it just drops them back to the flat
+-- General list.
+CREATE TABLE file_folders (
+    id          SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    created_by  INTEGER REFERENCES people(id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE event_files (
     id              SERIAL PRIMARY KEY,
     event_id        INTEGER REFERENCES events(id) ON DELETE CASCADE,
     venue_id        INTEGER REFERENCES venues(id),  -- stage plot/advance info/equipment list, not tied to one show
+    folder_id       INTEGER REFERENCES file_folders(id) ON DELETE SET NULL,
     filename        TEXT NOT NULL,
     storage_key     TEXT NOT NULL UNIQUE,
     content_type    TEXT,
