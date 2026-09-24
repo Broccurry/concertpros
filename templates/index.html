@@ -1912,8 +1912,19 @@ function openScrim(){
   document.getElementById("scrim").hidden = false; document.body.style.overflow = "hidden";
   if(sheetOpenedFromView === null) sheetOpenedFromView = ui.view;
 }
-function closeSheet(){
+async function closeSheet(){
+  // Closing used to just discard whatever the 900ms debounce hadn't
+  // gotten to yet -- a quick edit-then-close lost the edit. Flush both
+  // the act-list/bill autosave and any typed-but-not-yet-logged contact
+  // note before actually tearing the sheet down.
+  if(draft && !draftIsNew){
+    var toFlush = pendingContactNotes.slice();
+    for(var i = 0; i < toFlush.length; i++){ await toFlush[i].flush(); }
+    clearTimeout(autosaveTimer);
+    await doAutosave();
+  }
   document.getElementById("scrim").hidden = true; document.body.style.overflow = ""; draft = null;
+  pendingContactNotes = [];
   if(sheetOpenedFromView && ui.view !== sheetOpenedFromView){ ui.view = sheetOpenedFromView; setActiveTab(); renderAll(); }
   sheetOpenedFromView = null;
 }
@@ -1970,11 +1981,38 @@ async function doAutosave(){
   if(errLine) errLine.textContent = "Saved " + new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
   await loadEvents();
   await loadBookerLookups();
+  // A brand-new act has no id (and so no contact-log UI, see renderActRow)
+  // until it's actually been saved -- "artists" being in UNSAVED_FIELDS
+  // means a full refreshDraft() would just clobber the server's real ids
+  // back with these id-less ones, so pick the ids up directly off the
+  // list we just reloaded instead of forcing a close/reopen to see them.
+  if(draft && draft.id === eventId){
+    var fresh = (store.events||[]).find(function(e){ return e.id === eventId; });
+    var gotNewIds = false;
+    if(fresh){
+      var byName = {};
+      (fresh.artists||[]).forEach(function(fa){ byName[fa.name.toLowerCase()] = fa; });
+      draft.artists.forEach(function(a){
+        if(!a.id){
+          var match = byName[(a.name||"").toLowerCase()];
+          if(match){ a.id = match.id; a.contacts = match.contacts || []; gotNewIds = true; }
+        }
+      });
+    }
+    if(gotNewIds) renderSheet();
+  }
 }
 
+// Contact-note boxes aren't part of draft.artists (they're a compose box
+// for a NEW logged contact, not a saved field) so closing the sheet
+// before hitting "Log contact" used to just drop whatever was typed.
+// Each act row registers its live input here while it's on screen so
+// closeSheet() can flush any unsent note as a real logged contact.
+var pendingContactNotes = [];
 function renderSheet(){
   var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
   body.innerHTML = ""; foot.innerHTML = "";
+  pendingContactNotes = [];
   document.getElementById("sheetTitle").textContent = draftIsNew ? "Book a show" : fullBillName(draft);
 
   var fs1 = document.createElement("fieldset");
@@ -2220,6 +2258,9 @@ function renderSheet(){
         }
       }
       logBtn.onclick = logContact;
+      pendingContactNotes.push({flush: function(){
+        return contactNoteInput.value.trim() ? logContact() : Promise.resolve();
+      }});
       midRow.appendChild(logBtn);
       midRow.appendChild(contactNoteInput);
     }
