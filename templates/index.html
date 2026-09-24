@@ -505,6 +505,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
                  list-style:none;font-family:var(--body);font-size:14.5px}
 .folder summary::-webkit-details-marker{display:none}
 .folder-name{color:var(--ink)}
+.dropzone-active{outline:2px dashed var(--accent);outline-offset:-2px;background:var(--accent-soft)}
 .yearfolder{background:transparent;border:1px solid var(--line-strong);border-radius:var(--radius);
         padding:10px 14px;margin-bottom:14px}
 .yearfolder > summary{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;
@@ -2792,6 +2793,7 @@ function renderSheet(){
     renderFileList(fileListHost, draft.files || [], refreshEventFiles);
     fs8b.appendChild(fileListHost);
     fs8b.appendChild(fileUploadInput(draft.id, refreshEventFiles));
+    attachDropZone(fs8b, draft.id, null, refreshEventFiles);
     body.appendChild(fs8b);
   }
 
@@ -3400,23 +3402,52 @@ function renderFileList(host, files, onChanged){
 // One upload control, used both here and in a show's own Files section —
 // the failure handling (a failed upload gets alerted, not silently
 // dropped) lives here once instead of being copied at each call site.
+// Shared by the file-picker input and drag-and-drop -- one place that
+// uploads a batch and reports partial failure, so the two entry points
+// can't drift into reporting it differently.
+async function uploadFileBatch(files, eventId, venueId, onDone){
+  var failed = 0;
+  for(var i = 0; i < files.length; i++){ if(!(await uploadFile(files[i], eventId, venueId))) failed++; }
+  if(failed){
+    window.alert(failed + " of " + files.length + " file" + (files.length === 1 ? "" : "s") +
+      " failed to upload. Check your connection and try again.");
+  }
+  await onDone();
+}
 function fileUploadInput(eventId, onDone, venueId){
   var inp = document.createElement("input");
   inp.type = "file"; inp.multiple = true; inp.className = "btn";
   inp.onchange = async function(){
     var chosen = Array.prototype.slice.call(inp.files || []);
     inp.disabled = true;
-    var failed = 0;
-    for(var i = 0; i < chosen.length; i++){ if(!(await uploadFile(chosen[i], eventId, venueId))) failed++; }
+    await uploadFileBatch(chosen, eventId, venueId, onDone);
     inp.disabled = false;
     inp.value = "";
-    if(failed){
-      window.alert(failed + " of " + chosen.length + " file" + (chosen.length === 1 ? "" : "s") +
-        " failed to upload. Check your connection and try again.");
-    }
-    await onDone();
   };
   return inp;
+}
+// Drop files anywhere on `el` to upload them -- same destination (event or
+// venue folder) as the file-picker input sitting right next to it.
+function attachDropZone(el, eventId, venueId, onDone){
+  var depth = 0;
+  el.addEventListener("dragover", function(e){ e.preventDefault(); });
+  el.addEventListener("dragenter", function(e){
+    e.preventDefault();
+    depth++;
+    el.classList.add("dropzone-active");
+  });
+  el.addEventListener("dragleave", function(){
+    depth = Math.max(0, depth - 1);
+    if(depth === 0) el.classList.remove("dropzone-active");
+  });
+  el.addEventListener("drop", async function(e){
+    e.preventDefault();
+    depth = 0;
+    el.classList.remove("dropzone-active");
+    var files = Array.prototype.slice.call((e.dataTransfer && e.dataTransfer.files) || []);
+    if(!files.length) return;
+    await uploadFileBatch(files, eventId, venueId, onDone);
+  });
 }
 async function refreshFiles(){
   var r = await api("/api/files");
@@ -3477,6 +3508,7 @@ function renderFolder(host, key, label, eventId, venueId){
   var listHost = el("div","filelist"); listHost.style.marginTop = "10px";
   det.appendChild(listHost);
   det.appendChild(fileUploadInput(eventId, refreshFiles, venueId));
+  attachDropZone(det, eventId, venueId, refreshFiles);
   host.appendChild(det);
   renderFileList(listHost, files, refreshFiles);
 }
