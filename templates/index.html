@@ -3724,15 +3724,19 @@ function openPersonForm(personId){
   cancel.onclick = closeSheet;
   foot.appendChild(cancel);
   foot.appendChild(errLine);
-  if(p && !outranked){
+  if(p && !outranked && p.id !== me.id){
     foot.appendChild(el("div","spacer"));
     var resetBtn = el("button","btn","Reset password");
+    resetBtn.title = "Generates a new temp password for them to log in with";
     resetBtn.onclick = async function(){
       var r = await api("/api/people/" + p.id + "/reset-password", {method:"POST"});
       if(r.ok) window.alert("New temp password: " + r.body.temp_password);
       else errLine.textContent = r.body.error || "Could not reset password.";
     };
     foot.appendChild(resetBtn);
+  } else if(p && p.id === me.id){
+    foot.appendChild(el("div","spacer"));
+    foot.appendChild(el("span","hint","To change your own password, use Settings → Password."));
   }
   openScrim();
 }
@@ -3902,7 +3906,7 @@ document.getElementById("loginForm").addEventListener("submit", async function(e
   var r = await api("/api/login", {method:"POST", body: JSON.stringify({email:email, password:password})});
   if(r.ok) boot();
   else document.getElementById("loginError").textContent = r.body.error === "too_many_attempts"
-    ? "Too many attempts. Try again in a few minutes."
+    ? "Too many attempts. Try again in about a minute."
     : "Wrong email or password.";
 });
 document.getElementById("logoutBtn").addEventListener("click", async function(){

@@ -269,7 +269,7 @@ SESSION_LIFETIME = timedelta(days=90)
 # it's coming from. Not persisted -- a deploy resets it, which is fine.
 _LOGIN_FAILURES: dict[str, list] = {}
 _LOGIN_MAX_ATTEMPTS = 5
-_LOGIN_WINDOW = timedelta(minutes=15)
+_LOGIN_WINDOW = timedelta(seconds=90)
 
 
 def _login_is_rate_limited(email):
