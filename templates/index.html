@@ -123,10 +123,16 @@ select, textarea{background:#fff;color:#111;color-scheme:light}
 #app{display:none}
 .topbar{position:sticky;top:0;z-index:30;background:var(--surface);border-bottom:1px solid var(--line)}
 .topbar-inner{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:10px;
-              display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.topbar .brand{font-size:22px;line-height:1;white-space:nowrap}
-.views{display:flex;gap:2px;background:var(--surface-2);padding:2px;border-radius:var(--radius)}
-.views button{border:0;background:transparent;color:var(--ink-3);padding:5px 12px;border-radius:4px;font-size:13px;font-weight:500}
+              display:flex;align-items:center;gap:14px;flex-wrap:nowrap}
+.topbar .brand{font-size:22px;line-height:1;white-space:nowrap;flex:none}
+/* The nav tabs are the one thing that grows with the app (11 tabs now,
+   more later) -- it scrolls horizontally on overflow instead of wrapping
+   the WHOLE topbar onto a second line, which was shoving Log out down
+   below Today once Email pushed this row past the available width. */
+.views{display:flex;gap:2px;background:var(--surface-2);padding:2px;border-radius:var(--radius);
+       overflow-x:auto;flex:0 1 auto;scrollbar-width:thin}
+.views button{border:0;background:transparent;color:var(--ink-3);padding:5px 12px;border-radius:4px;font-size:13px;font-weight:500;
+              white-space:nowrap;flex:none}
 .views button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
 .spacer{flex:1 1 auto}
 .who{color:var(--ink-3);font-size:13px;white-space:nowrap}
@@ -233,6 +239,7 @@ tr.staffrow-urgent td.sub{color:var(--dead);font-weight:600}
 .staffcell-clickable{cursor:pointer}
 .staffcell-clickable:hover{text-decoration:underline;text-decoration-style:dotted}
 .staffcell-editing{min-width:190px;white-space:normal;cursor:default;padding:6px}
+.staffcell-editlabel{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px}
 .staffcell-editrow{display:flex;gap:4px;align-items:center;margin-bottom:4px}
 .staffcell-editrow select{font-size:12px;padding:3px 4px;flex:1;min-width:0}
 .staffcell-editrow input[type=time]{font-size:12px;padding:3px;width:90px}
@@ -500,10 +507,6 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .todorow-notes{width:100%;margin-top:6px;font-size:12.5px;resize:vertical;min-height:22px;
                border:1px solid var(--line);background:#fff;color:#111;color-scheme:light;
                border-radius:var(--radius);padding:4px 6px}
-.todocard-head{display:flex;align-items:flex-start;gap:6px}
-.todocard-head input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);flex:none;margin-top:2px;cursor:pointer}
-.todocard-head .visioncard-title{flex:1}
-
 /* Files: offers/contracts/flyers, either in a show's own folder (event_id
    set) or the general library (event_id null) — same row markup, same
    upload flow, in both places (see uploadFile/renderFileList). */
@@ -1814,6 +1817,11 @@ function renderStaffView(){
 
         if(isEditing){
           td.className = "staffcell-editing";
+          // A bare dropdown here looked identical to "+ Shift"'s bare
+          // role-picker at a glance (Broc's report, 2026-09-24) -- this
+          // is editing the {role} shift that already exists on this show,
+          // not adding a new one, so say so.
+          td.appendChild(el("div","staffcell-editlabel", role.name));
           staffForRole.forEach(function(s){
             var editRow = el("div","staffcell-editrow");
             var personSel = selectKV([{value:"",label:"TBA (unfilled)"}].concat(
@@ -3278,42 +3286,102 @@ function renderTodoRow(list, t){
   }
   list.appendChild(row);
 }
+// Same card shape as Vision Board/Offers (title, then a compact hint line)
+// -- Broc's call, 2026-09-24: "the details on the card will be different
+// but the look should be the same." The checkbox stays right on the card
+// (marking something done is the single most common thing to do with a
+// todo, worth one click), but notes/reassign/delete move into a form —
+// openTodoForm, mirroring openVisionCardForm/openOfferForm — instead of
+// living permanently on the card face.
 function renderTodoCardBody(t, body){
-  var head = el("div","todocard-head");
+  body.onclick = function(e){
+    if(e.target.tagName === "INPUT") return;
+    openTodoForm(t.id);
+  };
+  var titleP = el("p","visioncard-title");
   var cb = document.createElement("input");
   cb.type = "checkbox"; cb.checked = t.done;
+  cb.style.marginRight = "6px";
+  cb.onclick = function(e){ e.stopPropagation(); };
   cb.onchange = async function(){
     await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify({done: cb.checked})});
     await loadTodos();
     renderAll();
   };
-  head.appendChild(cb);
-  head.appendChild(el("p","visioncard-title", t.title));
-  body.appendChild(head);
+  titleP.appendChild(cb);
+  titleP.appendChild(document.createTextNode(t.title));
+  body.appendChild(titleP);
 
   var bits = [t.assigned_to_name || "Unassigned"];
   if(t.due_date) bits.push("Due " + shortDate(t.due_date));
   body.appendChild(el("p","hint", bits.join(" · ")));
+}
+function openTodoForm(todoId){
+  var t = (store.todos||[]).find(function(x){ return x.id === todoId; });
+  if(!t) return;
+  var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
+  document.getElementById("sheetTitle").textContent = t.title;
+  body.innerHTML = ""; foot.innerHTML = "";
+
+  var draftT = {title:t.title, assigned_to:t.assigned_to||"", due_date:t.due_date||"", notes:t.notes||"", done:!!t.done};
+
+  var fs = document.createElement("fieldset");
+  fs.appendChild(el("legend",null,"The task"));
+
+  var personOpts = [{value:"",label:"Unassigned"}].concat(
+    store.people.filter(function(p){ return p.active; })
+      .map(function(p){ return {value:p.id, label:p.name}; }));
+
+  var r0 = el("div","row-3");
+  r0.appendChild(field("Title", input("text", draftT.title, function(v){ draftT.title = v; })));
+  r0.appendChild(field("Assigned to", selectKV(personOpts, draftT.assigned_to, function(v){ draftT.assigned_to = v ? Number(v) : ""; })));
+  r0.appendChild(field("Due date", input("date", draftT.due_date, function(v){ draftT.due_date = v; })));
+  fs.appendChild(r0);
+
+  var doneWrap = el("label","checkfield"); doneWrap.style.marginTop = "10px";
+  var doneCb = document.createElement("input");
+  doneCb.type = "checkbox"; doneCb.checked = draftT.done;
+  doneCb.onchange = function(){ draftT.done = doneCb.checked; };
+  doneWrap.appendChild(doneCb);
+  doneWrap.appendChild(document.createTextNode(" Done"));
+  fs.appendChild(doneWrap);
 
   var notesTa = document.createElement("textarea");
-  notesTa.rows = 2; notesTa.className = "todorow-notes";
-  notesTa.placeholder = "Notes / progress...";
-  notesTa.value = t.notes || "";
-  notesTa.onblur = async function(){
-    if(notesTa.value === (t.notes || "")) return;
-    await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify({notes: notesTa.value.trim() || null})});
-    await loadTodos();
-  };
-  body.appendChild(notesTa);
+  notesTa.value = draftT.notes; notesTa.rows = 3;
+  notesTa.oninput = function(){ draftT.notes = notesTa.value; };
+  var notesField = field("Notes", notesTa); notesField.style.marginTop = "10px";
+  fs.appendChild(notesField);
+  body.appendChild(fs);
 
-  var del = el("button","x","✕");
-  del.type = "button"; del.title = "Delete task";
+  var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
+  var save = el("button","btn btn-primary","Save");
+  save.onclick = async function(){
+    errLine.textContent = "";
+    var title = draftT.title.trim();
+    if(!title){ errLine.textContent = "Give it a title."; return; }
+    var payload = {title:title, assigned_to: draftT.assigned_to || null, due_date: draftT.due_date || null,
+                   notes: draftT.notes, done: draftT.done};
+    var r2 = await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify(payload)});
+    if(!r2.ok){ errLine.textContent = r2.body.error || "Could not save."; return; }
+    await loadTodos();
+    closeSheet();
+    renderAll();
+  };
+  foot.appendChild(save);
+  var cancel = el("button","btn","Cancel");
+  cancel.onclick = closeSheet;
+  foot.appendChild(cancel);
+  foot.appendChild(errLine);
+  foot.appendChild(el("div","spacer"));
+  var del = el("button","btn btn-danger","Delete");
   del.onclick = async function(){
     await api("/api/todos/" + t.id, {method:"DELETE"});
     await loadTodos();
+    closeSheet();
     renderAll();
   };
-  body.appendChild(del);
+  foot.appendChild(del);
+  openScrim();
 }
 function todoBoards(){
   return [{key:"general", venueId:null, label:"General"}].concat(
