@@ -227,6 +227,9 @@ td{padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
 tbody tr:last-child td{border-bottom:0}
 tbody tr{cursor:pointer}
 tbody tr:hover td{background:var(--surface-2)}
+tr.staffrow-urgent td{background:var(--dead-bg);color:var(--dead)}
+tr.staffrow-urgent:hover td{background:var(--dead-bg)}
+tr.staffrow-urgent td.sub{color:var(--dead);font-weight:600}
 tr.month-divider{cursor:default}
 tr.month-divider:hover td{background:var(--surface-2)}
 tr.month-divider td{background:var(--surface-2);font-family:var(--display);font-size:11px;font-weight:600;
@@ -868,10 +871,10 @@ function staffLabel(s){ return s.person_name || (s.person_id ? "(removed person)
 function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
 
 /* ============================== state =============================== */
-var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], todos:[], files:[], siteSettings:{}, contactMessages:[]};
+var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current"};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
@@ -910,8 +913,9 @@ async function loadEvents(){
 }
 async function loadBookerLookups(){
   if(!canBook()) return;
-  var [v, ro, pe, ar, vc, fl, ss, cm] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
-    api("/api/artists"), api("/api/vision_cards"), api("/api/files"), api("/api/site_settings"), api("/api/contact_messages")]);
+  var [v, ro, pe, ar, vc, fl, ss, cm, ge] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
+    api("/api/artists"), api("/api/vision_cards"), api("/api/files"), api("/api/site_settings"), api("/api/contact_messages"),
+    api("/api/genres")]);
   if(v.ok) store.venues = v.body.venues;
   if(ro.ok) store.roles = ro.body.roles;
   if(pe.ok) store.people = pe.body.people;
@@ -920,6 +924,7 @@ async function loadBookerLookups(){
   if(fl.ok) store.files = fl.body.files;
   if(ss.ok) store.siteSettings = ss.body;
   if(cm.ok) store.contactMessages = cm.body.messages;
+  if(ge.ok) store.genres = ge.body.genres;
 }
 async function loadTodos(){
   // Unlike vision/artists/etc., crew needs this too — the endpoint itself
@@ -1455,7 +1460,7 @@ function openArtistForm(artistId){
     var tags = draftA.tags.split(",").map(function(t){ return t.trim(); }).filter(function(t){ return t; });
     var members = draftA.members.filter(function(m){ return m.name.trim(); });
     var r = await api("/api/artists/" + id, {method:"PATCH", body: JSON.stringify({
-      tier: draftA.tier || null, genre: draftA.genre, location: draftA.location, tags: tags,
+      tier: draftA.tier || null, genre: draftA.genre, sub_genre: draftA.sub_genre, location: draftA.location, tags: tags,
       instagram: draftA.instagram, facebook: draftA.facebook, website: draftA.website, spotify: draftA.spotify,
       notes: draftA.notes,
     })});
@@ -1473,7 +1478,8 @@ function openArtistForm(artistId){
 
   var draftA = {
     name: a ? a.name : "",
-    tier: a ? (a.tier || "") : "", genre: a ? (a.genre || "") : "", location: a ? (a.location || "") : "",
+    tier: a ? (a.tier || "") : "", genre: a ? (a.genre || "") : "", sub_genre: a ? (a.sub_genre || "") : "",
+    location: a ? (a.location || "") : "",
     tags: a ? (a.tags||[]).join(", ") : "",
     instagram: a ? (a.instagram||"") : "", facebook: a ? (a.facebook||"") : "",
     website: a ? (a.website||"") : "", spotify: a ? (a.spotify||"") : "",
@@ -1503,14 +1509,37 @@ function openArtistForm(artistId){
       tierGrid.appendChild(b);
     });
     fs.appendChild(tierGrid);
-    var r1 = el("div","row"); r1.style.marginTop = "10px";
-    r1.appendChild(field("Genre", input("text", draftA.genre, function(v){ draftA.genre = v; scheduleArtistAutosave(); })));
+
+    // Genre/Location/Sub-genre/Tags, one line of shorter boxes instead of
+    // Genre+Location on one row and Tags on its own below (Broc's flag,
+    // 2026-09-24). Genre is a closed list Broc curates on the Settings
+    // page; sub-genre stays free text but remembers what's been typed
+    // before via the datalist below.
+    var r1 = el("div","row-4"); r1.style.marginTop = "10px";
+    var genreOpts = [{value:"", label:"—"}].concat(
+      store.genres.map(function(g){ return {value:g.name, label:g.name}; }));
+    if(draftA.genre && !store.genres.some(function(g){ return g.name === draftA.genre; })){
+      // Keep an existing value selectable even if it's since been removed
+      // from the list — never silently blank out a real saved value.
+      genreOpts.push({value: draftA.genre, label: draftA.genre + " (removed)"});
+    }
+    r1.appendChild(field("Genre", selectKV(genreOpts, draftA.genre, function(v){ draftA.genre = v; scheduleArtistAutosave(); })));
     r1.appendChild(field("Location", input("text", draftA.location, function(v){ draftA.location = v; scheduleArtistAutosave(); })));
-    fs.appendChild(r1);
+    var subGenreInput = input("text", draftA.sub_genre, function(v){ draftA.sub_genre = v; scheduleArtistAutosave(); });
+    subGenreInput.setAttribute("list", "subGenreOptions");
+    r1.appendChild(field("Sub-genre", subGenreInput));
     var tagsInput = input("text", draftA.tags, function(v){ draftA.tags = v; scheduleArtistAutosave(); });
-    tagsInput.placeholder = "comma-separated — style, location, whatever helps you search later";
-    var tagsField = field("Tags", tagsInput); tagsField.style.marginTop = "10px";
-    fs.appendChild(tagsField);
+    tagsInput.placeholder = "style, etc.";
+    r1.appendChild(field("Tags", tagsInput));
+    fs.appendChild(r1);
+
+    var subGenreList = document.createElement("datalist");
+    subGenreList.id = "subGenreOptions";
+    Array.from(new Set((store.artists||[]).map(function(x){ return x.sub_genre; }).filter(Boolean)))
+      .sort().forEach(function(sg){
+        var opt = document.createElement("option"); opt.value = sg; subGenreList.appendChild(opt);
+      });
+    fs.appendChild(subGenreList);
     body.appendChild(fs);
 
     var fsS = document.createElement("fieldset");
@@ -1683,7 +1712,10 @@ function renderStaffView(){
   var host = document.getElementById("view-staff");
   host.innerHTML = "";
   var today = todayISO();
-  var allRows = visibleEvents().filter(function(ev){ return ev.show_date >= today && ev.status !== "dead"; });
+  // Only confirmed shows -- a hold isn't real enough to staff yet (Broc's
+  // call, 2026-09-24), so it shouldn't show up here just to be unfilled.
+  var allRows = visibleEvents().filter(function(ev){ return ev.show_date >= today && ev.status === "confirmed"; });
+  var staffUrgentBy = (function(){ var t = new Date(); t.setDate(t.getDate() + 14); return iso(t.getFullYear(), t.getMonth(), t.getDate()); })();
 
   var mineWrap = el("label","checkfield");
   var mineCb = document.createElement("input");
@@ -1721,16 +1753,17 @@ function renderStaffView(){
     });
     var wrap = el("div","tablewrap"), t = document.createElement("table");
     var thead = document.createElement("thead"), hr = document.createElement("tr");
-    ["Date","Venue","Show","Doors"].concat(usedRoles.map(function(r){ return r.name; })).forEach(function(h){ hr.appendChild(el("th",null,h)); });
+    ["Date","Venue","Show","Doors"].concat(usedRoles.map(function(r){ return r.name; })).concat([""]).forEach(function(h){ hr.appendChild(el("th",null,h)); });
     thead.appendChild(hr); t.appendChild(thead);
     var tb = document.createElement("tbody");
     var unfilled = 0;
     var staffLastMonth = null;
-    var staffCols = 4 + usedRoles.length;
+    var staffCols = 5 + usedRoles.length;
     rows.forEach(function(ev){
       var monthKey = ev.show_date.slice(0,7);
       if(monthKey !== staffLastMonth){ tb.appendChild(monthDividerRow(ev.show_date, staffCols)); staffLastMonth = monthKey; }
       var tr = document.createElement("tr");
+      var rowHasUnfilled = false;
       tr.onclick = function(){ openEvent(ev.id); };
       tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
       tr.appendChild(el("td",null, ev.venue));
@@ -1740,10 +1773,35 @@ function renderStaffView(){
         var staffForRole = (ev.staff||[]).filter(function(s){ return s.role === role.name; });
         var named = staffForRole.filter(function(s){ return s.person_id !== null; }).map(staffLabel);
         var tbaCount = staffForRole.length - named.length;
-        if(!named.length) unfilled++;
+        if(!named.length){ unfilled++; rowHasUnfilled = true; }
         var label = named.join(", ") + (tbaCount ? (named.length ? " + " : "") + tbaCount + " TBA" : "");
         tr.appendChild(el("td", named.length ? null : "sub", label || "—"));
       });
+      // Two weeks out and still a name missing on this show -- stop being
+      // a quiet TBA in a table and make it something you have to notice.
+      if(rowHasUnfilled && ev.show_date <= staffUrgentBy) tr.className = "staffrow-urgent";
+
+      // Adding a shift straight from this table -- no need to open the
+      // show itself just to book a 2nd bartender or an extra door person.
+      var shiftTd = document.createElement("td");
+      if(ui.staffAddingShiftFor === ev.id){
+        var roleSel = selectKV([{value:"",label:"Pick a role —"}].concat(
+          store.roles.map(function(r){ return {value:r.id, label:r.name}; })), "", async function(v){
+            if(!v) return;
+            await api("/api/events/" + ev.id + "/assignments", {method:"POST", body: JSON.stringify({role_id: Number(v)})});
+            ui.staffAddingShiftFor = null;
+            await loadEvents();
+            renderStaffView();
+          });
+        roleSel.onclick = function(e){ e.stopPropagation(); };
+        shiftTd.appendChild(roleSel);
+      } else {
+        var addShiftBtn = el("button","btn btn-sm","+ Shift");
+        addShiftBtn.type = "button";
+        addShiftBtn.onclick = function(e){ e.stopPropagation(); ui.staffAddingShiftFor = ev.id; renderStaffView(); };
+        shiftTd.appendChild(addShiftBtn);
+      }
+      tr.appendChild(shiftTd);
       tb.appendChild(tr);
     });
     t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
@@ -4184,6 +4242,45 @@ function renderSettingsView(){
     goPeople.onclick = function(){ ui.view = "people"; setActiveTab(); renderAll(); };
     fsPeople.appendChild(goPeople);
     host.appendChild(fsPeople);
+  }
+
+  if(me.access_level === "owner"){
+    var fsGenres = document.createElement("fieldset");
+    fsGenres.appendChild(el("legend",null,"Genres"));
+    fsGenres.appendChild(el("p","hint","The list bookers pick a band's genre from. Sub-genres stay free text and don't live here."));
+    var genreList = el("div","chips"); genreList.style.marginBottom = "10px";
+    store.genres.slice().sort(function(a,b){ return a.name.localeCompare(b.name); }).forEach(function(gv){
+      var chip = el("span","pill pill-muted", gv.name);
+      var del = document.createElement("button");
+      del.type = "button"; del.textContent = "✕"; del.title = "Remove " + gv.name;
+      del.style.cssText = "margin-left:6px;border:none;background:none;color:inherit;cursor:pointer;font-size:10px";
+      del.onclick = async function(){
+        await api("/api/genres/" + gv.id, {method:"DELETE"});
+        await loadBookerLookups();
+        renderSettingsView();
+      };
+      chip.appendChild(del);
+      genreList.appendChild(chip);
+    });
+    if(!store.genres.length) genreList.appendChild(el("p","hint","No genres yet — add the first one below."));
+    fsGenres.appendChild(genreList);
+
+    var newGenreInput = document.createElement("input");
+    newGenreInput.type = "text"; newGenreInput.placeholder = "Add a genre...";
+    var newGenreRow = el("div","row-narrow");
+    var addGenreBtn = el("button","btn","+ Add");
+    addGenreBtn.type = "button";
+    addGenreBtn.onclick = async function(){
+      var name = newGenreInput.value.trim();
+      if(!name) return;
+      var r = await api("/api/genres", {method:"POST", body: JSON.stringify({name: name})});
+      if(r.ok){ newGenreInput.value = ""; await loadBookerLookups(); renderSettingsView(); }
+      else window.alert(r.body.error === "genre_already_exists" ? "That genre already exists." : "Could not add that genre.");
+    };
+    newGenreRow.appendChild(field("New genre", newGenreInput));
+    fsGenres.appendChild(newGenreRow);
+    fsGenres.appendChild(addGenreBtn);
+    host.appendChild(fsGenres);
   }
 }
 

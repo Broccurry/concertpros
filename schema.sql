@@ -53,7 +53,8 @@ CREATE TABLE artists (
     id              SERIAL PRIMARY KEY,
     name            TEXT NOT NULL,
     tier            TEXT CHECK (tier IN ('Local', 'Regional', 'National') OR tier IS NULL),
-    genre           TEXT,
+    genre           TEXT,           -- picked from the owner-curated genres table, not typed free
+    sub_genre       TEXT,           -- free-text but remembered -- see genre_for/api/genres
     tags            TEXT[] NOT NULL DEFAULT '{}',  -- free-text, e.g. style/location — searchable, not a fixed list
     location        TEXT,
     contact_name    TEXT,
@@ -78,6 +79,16 @@ CREATE TABLE artists (
 -- Matching on name happens in the app (case/whitespace/"The"-insensitive,
 -- same normalization the artifact prototype used) rather than a DB
 -- constraint, because two different real acts can share a stage name.
+
+-- The master genre picklist for artists.genre -- owner-curated (Broc's
+-- call, 2026-09-24), so booker/crew pick from this list rather than typing
+-- free text. Deliberately NOT a foreign key from artists.genre: that field
+-- stays plain TEXT so removing a genre here never orphans or blanks a
+-- band's existing record, it just stops being offered going forward.
+CREATE TABLE genres (
+    id    SERIAL PRIMARY KEY,
+    name  TEXT NOT NULL UNIQUE
+);
 
 -- A multi-day hold: several candidate dates for the same prospective
 -- show, each free to sit at its own point on the hold ladder (1st hold

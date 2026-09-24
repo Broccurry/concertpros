@@ -371,6 +371,18 @@ def create_app():
             return fn(*args, **kwargs)
         return wrapper
 
+    def require_owner(fn):
+        """The master genre list is Broc's call, not a booker's -- Cody or
+        Christian can pick from it (and add sub-genres freely), but only
+        the owner decides what's on it in the first place."""
+        @wraps(fn)
+        @require_auth
+        def wrapper(*args, **kwargs):
+            if g.viewer.access_level != "owner":
+                return jsonify(error="forbidden"), 403
+            return fn(*args, **kwargs)
+        return wrapper
+
     @app.get("/healthz")
     def healthz():
         return jsonify(ok=True)
@@ -795,7 +807,7 @@ def create_app():
         normalization/dedup rule everywhere."""
         cur = g.db.cursor()
         cur.execute(
-            "SELECT tier, genre, tags, location, instagram, facebook, website, spotify, notes, active "
+            "SELECT tier, genre, sub_genre, tags, location, instagram, facebook, website, spotify, notes, active "
             "FROM artists WHERE id = %s",
             (artist_id,),
         )
@@ -803,7 +815,7 @@ def create_app():
         if row is None:
             return jsonify(error="not_found"), 404
         before = dict(zip(
-            ["tier", "genre", "tags", "location", "instagram", "facebook", "website", "spotify", "notes", "active"], row))
+            ["tier", "genre", "sub_genre", "tags", "location", "instagram", "facebook", "website", "spotify", "notes", "active"], row))
 
         body = request.get_json(silent=True) or {}
         updates = {}
@@ -815,7 +827,18 @@ def create_app():
                 return jsonify(error="invalid_tier"), 400
             updates["tier"] = tier
         if "genre" in body:
-            updates["genre"] = (body["genre"] or "").strip() or None
+            genre = (body["genre"] or "").strip() or None
+            if genre is not None:
+                cur.execute("SELECT 1 FROM genres WHERE name = %s", (genre,))
+                if cur.fetchone() is None:
+                    return jsonify(error="unknown_genre"), 400
+            updates["genre"] = genre
+        if "sub_genre" in body:
+            # Free text, deliberately not validated against a list --
+            # booking staff can add any sub-genre; the dropdown that offers
+            # previously-used ones back is just a client-side convenience
+            # built from existing values, not an enforced vocabulary.
+            updates["sub_genre"] = (body["sub_genre"] or "").strip() or None
         if "location" in body:
             updates["location"] = (body["location"] or "").strip() or None
         if "notes" in body:
@@ -869,6 +892,41 @@ def create_app():
         cur.execute("DELETE FROM artist_members WHERE artist_id = %s", (artist_id,))
         cur.execute("DELETE FROM artists WHERE id = %s", (artist_id,))
         audit.record(g.db, g.viewer, "artist", artist_id, "delete", {"name": row[0]})
+        return jsonify(ok=True)
+
+    @app.get("/api/genres")
+    @require_booker
+    def list_genres():
+        cur = g.db.cursor()
+        cur.execute("SELECT id, name FROM genres ORDER BY name")
+        return jsonify(genres=[{"id": r[0], "name": r[1]} for r in cur.fetchall()])
+
+    @app.post("/api/genres")
+    @require_owner
+    def create_genre():
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "").strip()
+        if not name:
+            return jsonify(error="name_required"), 400
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM genres WHERE lower(name) = lower(%s)", (name,))
+        if cur.fetchone() is not None:
+            return jsonify(error="genre_already_exists"), 400
+        cur.execute("INSERT INTO genres (name) VALUES (%s) RETURNING id", (name,))
+        genre_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "genre", genre_id, "create", {"name": name})
+        return jsonify(id=genre_id), 201
+
+    @app.delete("/api/genres/<int:genre_id>")
+    @require_owner
+    def delete_genre(genre_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT name FROM genres WHERE id = %s", (genre_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("DELETE FROM genres WHERE id = %s", (genre_id,))
+        audit.record(g.db, g.viewer, "genre", genre_id, "delete", {"name": row[0]})
         return jsonify(ok=True)
 
     @app.post("/api/artists")
@@ -947,6 +1005,22 @@ def create_app():
                      {"event_artist_id": event_artist_id, "method": method, "note": note})
         return jsonify(id=contact_id), 201
 
+    def _create_default_shifts(conn, event_id):
+        """A newly-confirmed show gets one shift each for Door, Sound, and
+        Bartender by default -- enough to open the room; more get added as
+        the date gets closer. Only backfills whichever of the three is
+        actually missing, so re-confirming (or a hold group collapsing
+        into an already-confirmed date) never creates duplicates."""
+        cur = conn.cursor()
+        cur.execute("SELECT id, name FROM roles WHERE name IN ('Door', 'Sound', 'Bartender')")
+        for role_id, _name in cur.fetchall():
+            cur.execute("SELECT 1 FROM assignments WHERE event_id = %s AND role_id = %s LIMIT 1", (event_id, role_id))
+            if cur.fetchone() is None:
+                cur.execute(
+                    "INSERT INTO assignments (event_id, role_id, person_id) VALUES (%s, %s, NULL)",
+                    (event_id, role_id),
+                )
+
     @app.post("/api/events")
     @require_booker
     def create_event():
@@ -1007,6 +1081,8 @@ def create_app():
                 "INSERT INTO event_tasks (event_id, label, sort_order) VALUES (%s, %s, %s)",
                 (event_id, label, i),
             )
+        if status == "confirmed":
+            _create_default_shifts(g.db, event_id)
         for extra_date in extra_dates:
             cur.execute(
                 "INSERT INTO events (venue_id, show_date, status, hold_group_id, created_by) "
@@ -1096,6 +1172,8 @@ def create_app():
                     return jsonify(error="not_found"), 404
                 return jsonify(error="version_conflict", current_version=current[0]), 409
             new_version = result[0]
+            if updates.get("status") == "confirmed" and before["status"] != "confirmed":
+                _create_default_shifts(g.db, event_id)
         else:
             # Part of a multi-day hold — per-date fields land on this id,
             # everything else redirects to the group's anchor. The version
@@ -1133,6 +1211,8 @@ def create_app():
             # inherits the anchor's shared data if it wasn't already the
             # anchor, then every other candidate date is deleted outright
             # — Broc's call, no "didn't work out" trail for them.
+            if per_date.get("status") == "confirmed" and before["status"] != "confirmed":
+                _create_default_shifts(g.db, event_id)
             if per_date.get("status") == "confirmed":
                 if anchor_id != event_id:
                     _migrate_shared_event_data(g.db, anchor_id, event_id)

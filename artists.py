@@ -41,7 +41,7 @@ def find_or_create(conn, name: str) -> int:
 def list_artists(conn) -> list[dict]:
     cur = conn.cursor()
     cur.execute(
-        "SELECT id, name, tier, genre, tags, location, instagram, facebook, website, spotify, notes, active "
+        "SELECT id, name, tier, genre, sub_genre, tags, location, instagram, facebook, website, spotify, notes, active "
         "FROM artists ORDER BY name"
     )
     cols = [c.name for c in cur.description]
