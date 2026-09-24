@@ -158,7 +158,10 @@ class Offers(unittest.TestCase):
         offer_id = self._create(client)
         r = client.delete(f"/api/offers/{offer_id}")
         self.assertEqual(r.status_code, 200)
-        self.offer_ids.remove(offer_id)
+        # Leave offer_id in self.offer_ids -- tearDown's cleanup still needs
+        # to delete the "delete" action's own audit_log row for it (the
+        # offer row itself is already gone, so that DELETE is just a
+        # harmless no-op).
         offers = client.get("/api/offers").get_json()["offers"]
         self.assertNotIn(offer_id, [o["id"] for o in offers])
 

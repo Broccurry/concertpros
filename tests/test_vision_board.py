@@ -182,13 +182,20 @@ class VisionBoard(unittest.TestCase):
         exposure, so the follow-up card should carry that context with it."""
         client = self.app.test_client()
         self._login(client, self.booker_email)
+        # Unique, obviously-fake names -- "Harbor Divide" and "The Browning"
+        # are real touring bands with real production show history, and
+        # find_or_create matching onto those existing rows made this test's
+        # tearDown fail (can't delete an artist real event_artists rows
+        # still reference) and leaked a real-looking card onto production's
+        # actual Vision Board every time this ran.
+        band_a, band_b = f"Test Opener {id(self)}", f"Test Headliner {id(self)}"
         r = client.post("/api/events", json={
-            "venue_id": self.venue_id, "acts": ["Harbor Divide", "The Browning"], "show_date": "2027-09-17",
+            "venue_id": self.venue_id, "acts": [band_a, band_b], "show_date": "2027-09-17",
         })
         self.assertEqual(r.status_code, 201, r.get_json())
         self.event_id = r.get_json()["id"]
 
-        card_id = self._create(client, title="Harbor Divide follow-up", trigger_event_id=self.event_id)
+        card_id = self._create(client, title=f"{band_a} follow-up", trigger_event_id=self.event_id)
         cards = client.get("/api/vision_cards").get_json()["cards"]
         mine = next(c for c in cards if c["id"] == card_id)
         self.assertEqual(mine["trigger_event_id"], self.event_id)
