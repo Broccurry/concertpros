@@ -2299,9 +2299,25 @@ function renderSheet(){
   addTier.type = "button";
   addTier.onclick = function(){ draft.ticket_tiers = draft.ticket_tiers || []; draft.ticket_tiers.push({label:"",price:""}); renderSheet(); };
   fs4.appendChild(addTier);
-  var linkField = field("Ticket link", input("url", draft.ticket_link, function(v){ draft.ticket_link = v; }));
+  var linkInput = input("url", draft.ticket_link, function(v){ draft.ticket_link = v; });
+  var linkField = field("Ticket link", linkInput);
   linkField.style.marginTop = "12px";
   fs4.appendChild(linkField);
+  if(!draftIsNew){
+    var pullBtn = el("button","btn btn-sm","Pull from Etix");
+    pullBtn.type = "button";
+    pullBtn.style.marginTop = "6px";
+    pullBtn.onclick = async function(){
+      pullBtn.disabled = true; pullBtn.textContent = "Looking…";
+      var r = await api("/api/events/" + draft.id + "/pull_ticket_link", {method:"POST"});
+      pullBtn.disabled = false; pullBtn.textContent = "Pull from Etix";
+      if(r.ok){ draft.ticket_link = r.body.ticket_link; linkInput.value = r.body.ticket_link; await refreshDraft(); }
+      else window.alert(r.body.error === "no_matching_etix_event"
+        ? "No matching Etix event found for this venue and date."
+        : (r.body.error || "Could not pull a ticket link."));
+    };
+    fs4.appendChild(pullBtn);
+  }
   var r4 = el("div","row-narrow"); r4.style.marginTop = "12px";
   r4.appendChild(field("Announce", input("date", draft.announce_date, function(v){ draft.announce_date = v; })));
   r4.appendChild(field("On sale", input("date", draft.onsale_date, function(v){ draft.onsale_date = v; })));

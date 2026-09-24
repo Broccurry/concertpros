@@ -25,6 +25,7 @@ import audit
 import auth
 import db
 import permissions
+import etix
 import storage
 from permissions import Viewer
 
@@ -909,6 +910,32 @@ def create_app():
             },
         )
         return jsonify(ok=True, version=new_version)
+
+    @app.post("/api/events/<int:event_id>/pull_ticket_link")
+    @require_booker
+    def pull_ticket_link(event_id):
+        """Matches this show to Etix's public event feed by venue + local
+        calendar date. Only reaches Etix's public catalog (see etix.py) --
+        ticket counts/settlement data need the password grant we don't
+        have yet, so this is scoped to just the ticket link for now."""
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT e.show_date, v.name FROM events e JOIN venues v ON v.id = e.venue_id WHERE e.id = %s",
+            (event_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        show_date, venue_name = row
+        try:
+            link = etix.find_ticket_link(venue_name, show_date)
+        except Exception as e:
+            return jsonify(error="etix_lookup_failed", detail=str(e)), 502
+        if not link:
+            return jsonify(error="no_matching_etix_event"), 404
+        cur.execute("UPDATE events SET ticket_link = %s, updated_at = now() WHERE id = %s", (link, event_id))
+        audit.record(g.db, g.viewer, "event", event_id, "pull_ticket_link", {"ticket_link": link})
+        return jsonify(ticket_link=link)
 
     @app.post("/api/events/<int:event_id>/hold_dates")
     @require_booker
