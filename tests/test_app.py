@@ -70,6 +70,22 @@ class LoginAndEventsEndToEnd(unittest.TestCase):
         resp = self.client.get("/api/events")
         self.assertEqual(resp.status_code, 401)
 
+    def test_five_failed_logins_locks_out_even_the_right_password(self):
+        for _ in range(5):
+            r = self.client.post("/api/login", json={"email": self.email, "password": "nope"})
+            self.assertEqual(r.status_code, 401)
+        r = self.client.post("/api/login", json={"email": self.email, "password": self.password})
+        self.assertEqual(r.status_code, 429, r.get_json())
+        self.assertEqual(r.get_json()["error"], "too_many_attempts")
+        app_module._LOGIN_FAILURES.pop(self.email, None)
+
+    def test_a_successful_login_does_not_count_against_the_limit(self):
+        for _ in range(4):
+            self.client.post("/api/login", json={"email": self.email, "password": "nope"})
+        r = self.client.post("/api/login", json={"email": self.email, "password": self.password})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        app_module._LOGIN_FAILURES.pop(self.email, None)
+
     def test_full_login_then_fetch_events(self):
         resp = self.client.post("/api/login", json={"email": self.email, "password": self.password})
         self.assertEqual(resp.status_code, 200, resp.get_json())

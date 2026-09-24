@@ -263,6 +263,25 @@ def _migrate_shared_event_data(conn, from_id, to_id):
 SESSION_COOKIE = "cp_session"
 SESSION_LIFETIME = timedelta(days=90)
 
+# Login brute-force guard -- in-process only (fine at our one-gunicorn-
+# worker scale; see Procfile), keyed by email rather than IP so a
+# password-guessing run against one account is throttled no matter where
+# it's coming from. Not persisted -- a deploy resets it, which is fine.
+_LOGIN_FAILURES: dict[str, list] = {}
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW = timedelta(minutes=15)
+
+
+def _login_is_rate_limited(email):
+    now = datetime.now(timezone.utc)
+    attempts = [t for t in _LOGIN_FAILURES.get(email, []) if now - t < _LOGIN_WINDOW]
+    _LOGIN_FAILURES[email] = attempts
+    return len(attempts) >= _LOGIN_MAX_ATTEMPTS
+
+
+def _login_record_failure(email):
+    _LOGIN_FAILURES.setdefault(email, []).append(datetime.now(timezone.utc))
+
 
 class ConcertProsJSONProvider(DefaultJSONProvider):
     """psycopg returns date/time/Decimal for DATE/TIME/NUMERIC columns;
@@ -445,6 +464,8 @@ def create_app():
         body = request.get_json(silent=True) or {}
         email = (body.get("email") or "").strip().lower()
         password = body.get("password") or ""
+        if email and _login_is_rate_limited(email):
+            return jsonify(error="too_many_attempts"), 429
         cur = g.db.cursor()
         cur.execute(
             "SELECT id, password_hash, access_level FROM people WHERE lower(email) = %s AND active",
@@ -452,8 +473,11 @@ def create_app():
         )
         row = cur.fetchone()
         if row is None or row[1] is None or not auth.verify_password(password, row[1]):
+            if email:
+                _login_record_failure(email)
             return jsonify(error="invalid_credentials"), 401
         person_id, _, access_level = row
+        _LOGIN_FAILURES.pop(email, None)
         token = auth.new_session_token()
         expires_at = datetime.now(timezone.utc) + SESSION_LIFETIME
         cur.execute(

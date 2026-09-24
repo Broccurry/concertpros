@@ -3215,7 +3215,20 @@ function renderFolder(host, key, label, eventId){
   var det = document.createElement("details");
   det.className = "folder";
   det.open = !!ui.openFolders[key];
-  det.addEventListener("toggle", function(){ ui.openFolders[key] = det.open; });
+  det.addEventListener("toggle", function(){
+    ui.openFolders[key] = det.open;
+    // One show folder open at a time -- there can be 80+ of these in a
+    // year, and they piling up open was Broc's exact complaint.
+    if(det.open){
+      document.querySelectorAll(".folder").forEach(function(other){
+        if(other !== det && other.open){
+          other.open = false;
+          ui.openFolders[other.dataset.folderKey] = false;
+        }
+      });
+    }
+  });
+  det.dataset.folderKey = key;
   var sum = document.createElement("summary");
   sum.appendChild(el("span","folder-name", label));
   sum.appendChild(el("span","hint", files.length + (files.length === 1 ? " file" : " files")));
@@ -3759,6 +3772,40 @@ function renderSettingsView(){
   fs.appendChild(el("p","hint","Dark and Light stay picked on this device regardless of your system setting. Match device follows whatever your phone or computer is set to."));
   host.appendChild(fs);
 
+  var fsPw = document.createElement("fieldset");
+  fsPw.appendChild(el("legend",null,"Password"));
+  var curPwInput = input("password", "", function(){});
+  curPwInput.autocomplete = "current-password";
+  var newPwInput = input("password", "", function(){});
+  newPwInput.autocomplete = "new-password";
+  var pwRow = el("div","row-narrow");
+  pwRow.appendChild(field("Current password", curPwInput));
+  pwRow.appendChild(field("New password", newPwInput));
+  fsPw.appendChild(pwRow);
+  var pwMsg = el("p","hint","At least 8 characters.");
+  fsPw.appendChild(pwMsg);
+  var pwBtn = el("button","btn","Change password");
+  pwBtn.type = "button";
+  pwBtn.onclick = async function(){
+    pwBtn.disabled = true;
+    var r = await api("/api/change-password", {method:"POST", body: JSON.stringify({
+      current_password: curPwInput.value, new_password: newPwInput.value,
+    })});
+    pwBtn.disabled = false;
+    if(r.ok){
+      curPwInput.value = ""; newPwInput.value = "";
+      pwMsg.textContent = "Password changed.";
+      pwMsg.style.color = "var(--confirm)";
+    } else {
+      pwMsg.textContent = r.body.error === "wrong_current_password" ? "Current password is wrong."
+        : r.body.error === "password_too_short" ? "New password needs at least 8 characters."
+        : "Could not change the password.";
+      pwMsg.style.color = "var(--dead)";
+    }
+  };
+  fsPw.appendChild(pwBtn);
+  host.appendChild(fsPw);
+
   if(canBook()){
     var fsPeople = document.createElement("fieldset");
     fsPeople.appendChild(el("legend",null,"People"));
@@ -3854,7 +3901,9 @@ document.getElementById("loginForm").addEventListener("submit", async function(e
   var password = document.getElementById("password").value;
   var r = await api("/api/login", {method:"POST", body: JSON.stringify({email:email, password:password})});
   if(r.ok) boot();
-  else document.getElementById("loginError").textContent = "Wrong email or password.";
+  else document.getElementById("loginError").textContent = r.body.error === "too_many_attempts"
+    ? "Too many attempts. Try again in a few minutes."
+    : "Wrong email or password.";
 });
 document.getElementById("logoutBtn").addEventListener("click", async function(){
   await api("/api/logout", {method:"POST"});
