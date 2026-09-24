@@ -3451,8 +3451,9 @@ function renderWebsiteView(){
 // column belongs to is fixed here, in the one place, so a card's stage
 // always implies exactly one board and never disagrees with itself.
 var VISION_COLUMNS = [{key:"idea", label:"Idea"}];
+var PROGRESS_COLUMNS = [{key:"in_progress", label:"In Progress"}];
 var MAO_COLUMNS = [{key:"offer_sent", label:"Offer Sent"}];
-var ALL_VISION_COLUMNS = VISION_COLUMNS.concat(MAO_COLUMNS);
+var ALL_VISION_COLUMNS = VISION_COLUMNS.concat(PROGRESS_COLUMNS).concat(MAO_COLUMNS);
 function visionCardsByColumn(key){
   return (store.visionCards||[]).filter(function(c){ return c.column_key === key; })
     .slice().sort(function(a,b){ return a.sort_order - b.sort_order; });
@@ -3466,6 +3467,8 @@ function visionCardsByColumn(key){
 var BOARDS = [
   {key:"vision", label:"Ideas", columns: VISION_COLUMNS,
    emptyHint:"Post an idea below — a band to chase, whatever's worth not forgetting."},
+  {key:"progress", label:"In Progress", columns: PROGRESS_COLUMNS,
+   emptyHint:"Drag a card here once it's more than just an idea — someone's actively working it."},
   {key:"mao", label:"MAO", columns: MAO_COLUMNS,
    emptyHint:"Log an outreach below once you've actually reached out to someone."},
 ];
@@ -3544,11 +3547,13 @@ function renderCardBoard(host, columns, emptyHint){
         card.classList.remove("visioncard-dragging");
         var from = dragState; dragState = null;
 
-        // Which column is the pointer over? Then which position within it.
-        var cols = Array.prototype.slice.call(board.querySelectorAll(".visioncol"));
+        // Which column is the pointer over? Search every board on the page,
+        // not just this card's own board -- a card can be dragged from
+        // Ideas straight into In Progress or MAO, same gesture either way.
+        var cols = Array.prototype.slice.call(document.querySelectorAll("#view-vision .visioncol"));
         var targetCol = cols.find(function(ce){
           var r = ce.getBoundingClientRect();
-          return e.clientX >= r.left && e.clientX <= r.right;
+          return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
         }) || card.closest(".visioncol");
         var targetKey = targetCol.dataset.columnKey;
         var siblings = Array.prototype.slice.call(targetCol.querySelectorAll(".visioncard"));
@@ -3610,7 +3615,7 @@ function openVisionCardForm(cardId){
   // Which board a card lives on is just whichever stage it's in — moving
   // it to a MAO stage here is how a plain idea gets promoted onto the
   // MAO board, no separate "board" concept to keep in sync with this.
-  var colOpts = [{value:"idea", label:"Idea (Vision Board)"}, {value:"offer_sent", label:"Offer Sent (MAO)"}];
+  var colOpts = [{value:"idea", label:"Idea (Vision Board)"}, {value:"in_progress", label:"In Progress"}, {value:"offer_sent", label:"Offer Sent (MAO)"}];
   var artistOpts = [{value:"",label:"No band linked"}].concat(
     store.artists.slice().sort(function(a,b){ return a.name.localeCompare(b.name); })
       .map(function(a){ return {value:a.id, label:a.name}; }));

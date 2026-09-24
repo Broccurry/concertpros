@@ -288,7 +288,7 @@ CREATE TABLE vision_cards (
     id                SERIAL PRIMARY KEY,
     title             TEXT NOT NULL,
     column_key        TEXT NOT NULL DEFAULT 'idea'
-                      CHECK (column_key IN ('idea', 'offer_sent')),
+                      CHECK (column_key IN ('idea', 'in_progress', 'offer_sent')),
     sort_order        INTEGER NOT NULL DEFAULT 0,
     artist_id         INTEGER REFERENCES artists(id),
     venue_id          INTEGER REFERENCES venues(id),  -- optional: file the idea under a specific room
