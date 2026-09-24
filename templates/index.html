@@ -255,6 +255,12 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .ticketsaleslist{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
 .ticketsalerow{display:flex;align-items:center;gap:10px;font-size:13.5px;padding:4px 0}
 .ticketsalerow .x{margin-left:auto}
+.tixhero{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
+.tixhero-count{font-family:var(--display);font-size:32px;line-height:1;color:var(--ink)}
+.tixhero-label{color:var(--ink-3);font-size:13px}
+.tixchart{width:100%;height:76px;display:block;margin-bottom:8px}
+.tixmanage{margin-top:8px}
+.tixmanage summary{cursor:pointer;color:var(--ink-3);font-size:13px}
 .tierrow,.stafrow{display:grid;grid-template-columns:minmax(120px,200px) 110px 32px;gap:8px;margin-bottom:6px;align-items:center}
 .stafrow{grid-template-columns:140px 1fr 32px}
 .stafrow-edit{grid-template-columns:110px 1fr 110px auto 32px}
@@ -636,6 +642,38 @@ function shortDate(s){
   if(!s) return "";
   var p = parts(s);
   return DOW_SHORT[new Date(p.y,p.m,p.d).getDay()] + " " + MONTHS[p.m].slice(0,3) + " " + p.d;
+}
+// A day-by-day ticket count line, left-to-right by date so a spike (or a
+// day sales stalled) reads at a glance -- the alternative was a growing
+// column of dates, which is what this replaced. sales: ascending by date.
+function ticketSalesChart(sales){
+  var W = 460, H = 84, padL = 4, padR = 4, padT = 8, padB = 6;
+  var svg = document.createElementNS("http://www.w3.org/2000/svg","svg");
+  svg.setAttribute("viewBox","0 0 " + W + " " + H);
+  svg.setAttribute("class","tixchart");
+  var ns = svg.namespaceURI;
+  var times = sales.map(function(s){ var p = parts(s.sale_date); return new Date(p.y,p.m,p.d).getTime(); });
+  var minT = times[0], maxT = times[times.length-1];
+  var counts = sales.map(function(s){ return s.tickets_sold; });
+  var maxC = Math.max.apply(null, counts) || 1;
+  function x(i){ return maxT === minT ? W/2 : padL + (times[i]-minT)/(maxT-minT) * (W-padL-padR); }
+  function y(v){ return padT + (1 - v/maxC) * (H-padT-padB); }
+  var poly = document.createElementNS(ns,"polyline");
+  poly.setAttribute("points", sales.map(function(s,i){ return x(i)+","+y(s.tickets_sold); }).join(" "));
+  poly.setAttribute("fill","none");
+  poly.setAttribute("stroke","var(--accent)");
+  poly.setAttribute("stroke-width","2");
+  svg.appendChild(poly);
+  sales.forEach(function(s,i){
+    var c = document.createElementNS(ns,"circle");
+    c.setAttribute("cx", x(i)); c.setAttribute("cy", y(s.tickets_sold)); c.setAttribute("r","3");
+    c.setAttribute("fill", s.source === "etix" ? "var(--confirm)" : "var(--accent)");
+    var title = document.createElementNS(ns,"title");
+    title.textContent = shortDate(s.sale_date) + ": " + s.tickets_sold;
+    c.appendChild(title);
+    svg.appendChild(c);
+  });
+  return svg;
 }
 // A full-width divider row, dropped into a table body wherever the month
 // changes — shared by List and the Staff schedule so a run of many shows
@@ -2299,25 +2337,34 @@ function renderSheet(){
   addTier.type = "button";
   addTier.onclick = function(){ draft.ticket_tiers = draft.ticket_tiers || []; draft.ticket_tiers.push({label:"",price:""}); renderSheet(); };
   fs4.appendChild(addTier);
-  var linkInput = input("url", draft.ticket_link, function(v){ draft.ticket_link = v; });
+  var openLinkBtn = el("button","btn btn-sm","Open ↗");
+  openLinkBtn.type = "button";
+  openLinkBtn.title = "Open the ticket link in a new tab";
+  function syncOpenLinkBtn(){ openLinkBtn.disabled = !draft.ticket_link; }
+  var linkInput = input("url", draft.ticket_link, function(v){ draft.ticket_link = v; syncOpenLinkBtn(); });
+  openLinkBtn.onclick = function(){ window.open(draft.ticket_link, "_blank", "noopener"); };
+  syncOpenLinkBtn();
   var linkField = field("Ticket link", linkInput);
-  linkField.style.marginTop = "12px";
-  fs4.appendChild(linkField);
+  linkField.style.flex = "1";
+  var linkRow = el("div","linkfieldrow");
+  linkRow.style.cssText = "display:flex;align-items:flex-end;gap:8px;margin-top:12px";
+  linkRow.appendChild(linkField);
+  linkRow.appendChild(openLinkBtn);
   if(!draftIsNew){
     var pullBtn = el("button","btn btn-sm","Pull from Etix");
     pullBtn.type = "button";
-    pullBtn.style.marginTop = "6px";
     pullBtn.onclick = async function(){
       pullBtn.disabled = true; pullBtn.textContent = "Looking…";
       var r = await api("/api/events/" + draft.id + "/pull_ticket_link", {method:"POST"});
       pullBtn.disabled = false; pullBtn.textContent = "Pull from Etix";
-      if(r.ok){ draft.ticket_link = r.body.ticket_link; linkInput.value = r.body.ticket_link; await refreshDraft(); }
+      if(r.ok){ draft.ticket_link = r.body.ticket_link; linkInput.value = r.body.ticket_link; syncOpenLinkBtn(); await refreshDraft(); }
       else window.alert(r.body.error === "no_matching_etix_event"
         ? "No matching Etix event found for this venue and date."
         : (r.body.error || "Could not pull a ticket link."));
     };
-    fs4.appendChild(pullBtn);
+    linkRow.appendChild(pullBtn);
   }
+  fs4.appendChild(linkRow);
   var r4 = el("div","row-narrow"); r4.style.marginTop = "12px";
   r4.appendChild(field("Announce", input("date", draft.announce_date, function(v){ draft.announce_date = v; })));
   r4.appendChild(field("On sale", input("date", draft.onsale_date, function(v){ draft.onsale_date = v; })));
@@ -2331,27 +2378,17 @@ function renderSheet(){
     // still on sale. Manual for now; source:'etix' rows (an hourly pull)
     // will show up in the same list once that access exists.
     var fsTix = document.createElement("fieldset");
+    fsTix.appendChild(el("legend", null, "Ticket sales"));
     var sales = (draft.ticket_sales || []).slice().sort(function(a,b){ return a.sale_date < b.sale_date ? -1 : 1; });
     var latest = sales.length ? sales[sales.length - 1] : null;
-    fsTix.appendChild(el("legend", null, "Ticket sales" +
-      (latest ? " — " + latest.tickets_sold + " as of " + shortDate(latest.sale_date) : "")));
-    var tixList = el("div","ticketsaleslist");
-    sales.forEach(function(s){
-      var row = el("div","ticketsalerow");
-      row.appendChild(el("span","date-col", shortDate(s.sale_date)));
-      row.appendChild(el("span",null, String(s.tickets_sold)));
-      if(s.source === "etix") row.appendChild(el("span","pill pill-muted","Etix"));
-      var del = el("button","x","✕");
-      del.type = "button";
-      del.title = "Remove this entry";
-      del.onclick = async function(){
-        await api("/api/events/" + draft.id + "/ticket_sales/" + s.sale_date, {method:"DELETE"});
-        await refreshDraft();
-      };
-      row.appendChild(del);
-      tixList.appendChild(row);
-    });
-    fsTix.appendChild(tixList);
+
+    var hero = el("div","tixhero");
+    hero.appendChild(el("div","tixhero-count", latest ? String(latest.tickets_sold) : "—"));
+    hero.appendChild(el("div","tixhero-label", latest ? "active as of " + shortDate(latest.sale_date) : "No counts logged yet"));
+    fsTix.appendChild(hero);
+
+    if(sales.length >= 2) fsTix.appendChild(ticketSalesChart(sales));
+
     var tixAddRow = el("div","row-3"); tixAddRow.style.marginTop = "8px";
     var tixDateInput = input("date", todayISO(), function(){});
     var tixCountInput = input("number", "", function(){});
@@ -2370,6 +2407,32 @@ function renderSheet(){
     };
     tixAddRow.appendChild(tixLogBtn);
     fsTix.appendChild(tixAddRow);
+
+    if(sales.length){
+      var tixManage = document.createElement("details");
+      tixManage.className = "tixmanage";
+      var tixSummary = document.createElement("summary");
+      tixSummary.textContent = "Manage entries (" + sales.length + ")";
+      tixManage.appendChild(tixSummary);
+      var tixList = el("div","ticketsaleslist");
+      sales.slice().reverse().forEach(function(s){
+        var row = el("div","ticketsalerow");
+        row.appendChild(el("span","date-col", shortDate(s.sale_date)));
+        row.appendChild(el("span",null, String(s.tickets_sold)));
+        if(s.source === "etix") row.appendChild(el("span","pill pill-muted","Etix"));
+        var del = el("button","x","✕");
+        del.type = "button";
+        del.title = "Remove this entry";
+        del.onclick = async function(){
+          await api("/api/events/" + draft.id + "/ticket_sales/" + s.sale_date, {method:"DELETE"});
+          await refreshDraft();
+        };
+        row.appendChild(del);
+        tixList.appendChild(row);
+      });
+      tixManage.appendChild(tixList);
+      fsTix.appendChild(tixManage);
+    }
     body.appendChild(fsTix);
   }
 
