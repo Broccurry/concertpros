@@ -470,6 +470,26 @@ CREATE TABLE contact_messages (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Each booker/owner connects their OWN existing mailbox (e.g. their
+-- @innovationconcerts.com address hosted on Zoho) -- this is "read your
+-- own real email inside the app instead of POP-fetching it into personal
+-- Gmail," not a shared org inbox. One row per person; the password is
+-- encrypted at rest (see crypto.py) since it's a real external-account
+-- credential, not app data. 2026-09-24.
+CREATE TABLE email_accounts (
+    id                  SERIAL PRIMARY KEY,
+    person_id           INTEGER NOT NULL UNIQUE REFERENCES people(id) ON DELETE CASCADE,
+    email_address       TEXT NOT NULL,
+    imap_host           TEXT NOT NULL,
+    imap_port           INTEGER NOT NULL DEFAULT 993,
+    smtp_host           TEXT NOT NULL,
+    smtp_port           INTEGER NOT NULL DEFAULT 465,
+    username            TEXT NOT NULL,
+    encrypted_password  TEXT NOT NULL,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Seed data matching what's already live in the artifact prototype.
 INSERT INTO venues (name) VALUES ('Frankies'), ('Ottawa Tavern'), ('Cla-Zel Theater');
 INSERT INTO roles (name) VALUES

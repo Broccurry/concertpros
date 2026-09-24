@@ -23,7 +23,9 @@ from dotenv import load_dotenv
 import artists as artists_module
 import audit
 import auth
+import crypto
 import db
+import email_client
 import permissions
 import etix
 import storage
@@ -927,6 +929,132 @@ def create_app():
             return jsonify(error="not_found"), 404
         cur.execute("DELETE FROM genres WHERE id = %s", (genre_id,))
         audit.record(g.db, g.viewer, "genre", genre_id, "delete", {"name": row[0]})
+        return jsonify(ok=True)
+
+    # Each booker/owner connects their OWN mailbox -- there's no cross-person
+    # access here at all (every query below is scoped to g.viewer.id), so
+    # require_booker is the whole permission check: it already keeps crew
+    # out entirely, and nobody can reach anyone else's connected account
+    # because nothing here ever takes a person_id from the request.
+    def _email_account_row(person_id):
+        cur = g.db.cursor()
+        cur.execute("""SELECT email_address, imap_host, imap_port, smtp_host, smtp_port,
+                              username, encrypted_password
+                       FROM email_accounts WHERE person_id = %s""", (person_id,))
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "email_address": row[0], "imap_host": row[1], "imap_port": row[2],
+            "smtp_host": row[3], "smtp_port": row[4], "username": row[5],
+            "password": crypto.decrypt(row[6]),
+        }
+
+    @app.get("/api/email/account")
+    @require_booker
+    def get_email_account():
+        cur = g.db.cursor()
+        cur.execute("""SELECT email_address, imap_host, imap_port, smtp_host, smtp_port
+                       FROM email_accounts WHERE person_id = %s""", (g.viewer.id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(account=None)
+        return jsonify(account={
+            "email_address": row[0], "imap_host": row[1], "imap_port": row[2],
+            "smtp_host": row[3], "smtp_port": row[4],
+        })
+
+    @app.post("/api/email/account")
+    @require_booker
+    def connect_email_account():
+        """Tests the connection for real before saving anything -- a typo'd
+        app password should fail loudly right here, not silently sit broken
+        until someone opens the Email tab days later."""
+        body = request.get_json(silent=True) or {}
+        email_address = (body.get("email_address") or "").strip()
+        password = body.get("password") or ""
+        if not email_address or not password:
+            return jsonify(error="email_and_password_required"), 400
+        account = {
+            "email_address": email_address,
+            "username": (body.get("username") or email_address).strip(),
+            "password": password,
+            "imap_host": (body.get("imap_host") or "imap.zoho.com").strip(),
+            "imap_port": int(body.get("imap_port") or 993),
+            "smtp_host": (body.get("smtp_host") or "smtp.zoho.com").strip(),
+            "smtp_port": int(body.get("smtp_port") or 465),
+        }
+        try:
+            email_client.test_connection(account)
+        except email_client.EmailAuthError as e:
+            return jsonify(error="connection_failed", detail=str(e)), 400
+
+        encrypted = crypto.encrypt(password)
+        cur = g.db.cursor()
+        cur.execute("""INSERT INTO email_accounts
+                           (person_id, email_address, imap_host, imap_port, smtp_host, smtp_port, username, encrypted_password)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                       ON CONFLICT (person_id) DO UPDATE SET
+                           email_address = EXCLUDED.email_address, imap_host = EXCLUDED.imap_host,
+                           imap_port = EXCLUDED.imap_port, smtp_host = EXCLUDED.smtp_host,
+                           smtp_port = EXCLUDED.smtp_port, username = EXCLUDED.username,
+                           encrypted_password = EXCLUDED.encrypted_password, updated_at = now()""",
+                    (g.viewer.id, account["email_address"], account["imap_host"], account["imap_port"],
+                     account["smtp_host"], account["smtp_port"], account["username"], encrypted))
+        audit.record(g.db, g.viewer, "email_account", g.viewer.id, "connect", {"email_address": email_address})
+        return jsonify(ok=True)
+
+    @app.delete("/api/email/account")
+    @require_booker
+    def disconnect_email_account():
+        cur = g.db.cursor()
+        cur.execute("DELETE FROM email_accounts WHERE person_id = %s", (g.viewer.id,))
+        audit.record(g.db, g.viewer, "email_account", g.viewer.id, "disconnect", {})
+        return jsonify(ok=True)
+
+    @app.get("/api/email/inbox")
+    @require_booker
+    def email_inbox():
+        account = _email_account_row(g.viewer.id)
+        if account is None:
+            return jsonify(error="not_connected"), 400
+        try:
+            messages = email_client.list_messages(account)
+        except email_client.EmailAuthError as e:
+            return jsonify(error="connection_failed", detail=str(e)), 502
+        return jsonify(messages=messages)
+
+    @app.get("/api/email/message/<uid>")
+    @require_booker
+    def email_message(uid):
+        account = _email_account_row(g.viewer.id)
+        if account is None:
+            return jsonify(error="not_connected"), 400
+        try:
+            message = email_client.get_message(account, uid)
+        except email_client.EmailAuthError as e:
+            return jsonify(error="connection_failed", detail=str(e)), 502
+        if message is None:
+            return jsonify(error="not_found"), 404
+        return jsonify(message=message)
+
+    @app.post("/api/email/send")
+    @require_booker
+    def email_send():
+        account = _email_account_row(g.viewer.id)
+        if account is None:
+            return jsonify(error="not_connected"), 400
+        body = request.get_json(silent=True) or {}
+        to = (body.get("to") or "").strip()
+        subject = (body.get("subject") or "").strip()
+        message_body = body.get("body") or ""
+        if not to or not subject:
+            return jsonify(error="to_and_subject_required"), 400
+        try:
+            email_client.send_message(account, to, subject, message_body)
+        except email_client.EmailAuthError as e:
+            return jsonify(error="connection_failed", detail=str(e)), 502
+        audit.record(g.db, g.viewer, "email_account", g.viewer.id, "send", {"to": to, "subject": subject})
         return jsonify(ok=True)
 
     @app.post("/api/artists")
