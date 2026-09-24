@@ -210,7 +210,12 @@ class Files(unittest.TestCase):
 
         r = client.delete(f"/api/file_folders/{folder_id}")
         self.assertEqual(r.status_code, 200)
-        self.folder_ids.remove(folder_id)  # already gone, tearDown's delete would be a no-op anyway
+        # Leave folder_id in self.folder_ids -- tearDown still needs to
+        # clean up this folder's own audit_log rows (create + delete), even
+        # though the file_folders row itself is already gone (that DELETE
+        # becomes a harmless no-op). Removing it here was the bug: it skips
+        # the audit_log cleanup entirely, leaking a row that still
+        # references the test person and breaks tearDown's people delete.
 
         files = client.get("/api/files").get_json()["files"]
         mine = next(f for f in files if f["id"] == body["id"])
