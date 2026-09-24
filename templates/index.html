@@ -462,6 +462,9 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .filerow-name{flex:1;min-width:0;color:var(--ink);font-size:13.5px;text-decoration:none;overflow:hidden;
               text-overflow:ellipsis;white-space:nowrap}
 .filerow-name:hover{text-decoration:underline}
+.filethumb{width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--line);
+           background:var(--surface-2);flex:none}
+.filethumb-loading{opacity:.4}
 .folder{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
         padding:10px 14px;margin-bottom:10px}
 .folder summary{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;
@@ -3085,11 +3088,33 @@ function humanFileSize(bytes){
   while(n >= 1024 && i < units.length - 1){ n /= 1024; i++; }
   return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
 }
+// Presigned download URLs expire in 5 minutes (storage.DOWNLOAD_URL_TTL) --
+// cached shorter than that so a thumbnail never goes stale while visible,
+// and a fresh one is fetched next render instead of failing silently.
+var THUMB_CACHE = {};
+function fileThumb(f){
+  var img = el("img","filethumb");
+  img.alt = "";
+  var cached = THUMB_CACHE[f.id];
+  if(cached && Date.now() - cached.at < 4 * 60 * 1000){
+    img.src = cached.url;
+  } else {
+    img.classList.add("filethumb-loading");
+    api("/api/files/" + f.id + "/download-url").then(function(r){
+      if(!r.ok) return;
+      THUMB_CACHE[f.id] = {url: r.body.url, at: Date.now()};
+      img.src = r.body.url;
+      img.classList.remove("filethumb-loading");
+    });
+  }
+  return img;
+}
 function renderFileList(host, files, onChanged){
   host.innerHTML = "";
   if(!files.length){ host.appendChild(el("p","hint","No files yet.")); return; }
   files.forEach(function(f){
     var row = el("div","filerow");
+    if((f.content_type||"").indexOf("image/") === 0) row.appendChild(fileThumb(f));
     var link = el("a","filerow-name", f.filename);
     link.href = "#";
     link.onclick = async function(e){
