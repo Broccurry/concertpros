@@ -2290,7 +2290,7 @@ def create_app():
         audit.record(g.db, g.viewer, "event", event_id, "delete_message", {"message_id": message_id})
         return jsonify(ok=True)
 
-    _VISION_COLUMNS = ("idea", "in_progress", "offer_sent", "follow_up")
+    _VISION_COLUMNS = ("idea", "in_progress", "follow_up")
 
     @app.get("/api/vision_cards")
     @require_booker
@@ -2452,6 +2452,138 @@ def create_app():
             return jsonify(error="not_found"), 404
         cur.execute("DELETE FROM vision_cards WHERE id = %s", (card_id,))
         audit.record(g.db, g.viewer, "vision_card", card_id, "delete", None)
+        return jsonify(ok=True)
+
+    _OFFER_COLUMNS = ("mao", "needed", "sent", "confirmed")
+
+    @app.get("/api/offers")
+    @require_booker
+    def list_offers():
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT o.id, o.title, o.column_key, o.sort_order, o.dead, "
+            "o.artist_id, a.name AS artist_name, o.venue_id, v.name AS venue_name, "
+            "o.notes, o.link, o.created_by, o.created_at "
+            "FROM offers o "
+            "LEFT JOIN artists a ON a.id = o.artist_id "
+            "LEFT JOIN venues v ON v.id = o.venue_id "
+            "ORDER BY o.column_key, o.sort_order"
+        )
+        cols = [c.name for c in cur.description]
+        return jsonify(offers=[dict(zip(cols, row)) for row in cur.fetchall()])
+
+    def _parse_offer_fields(body, require_title=False):
+        """One place deciding what a valid offer looks like, used by both
+        create and update -- same shape as _parse_vision_card_fields."""
+        updates = {}
+        if "title" in body or require_title:
+            title = (body.get("title") or "").strip()
+            if not title:
+                return None, "title_required"
+            updates["title"] = title
+        if "column_key" in body:
+            if body["column_key"] not in _OFFER_COLUMNS:
+                return None, "invalid_column"
+            updates["column_key"] = body["column_key"]
+        if "artist_id" in body:
+            updates["artist_id"] = body["artist_id"] or None
+        if "venue_id" in body:
+            venue_id = body["venue_id"] or None
+            if venue_id is not None:
+                cur = g.db.cursor()
+                cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
+                if cur.fetchone() is None:
+                    return None, "unknown_venue"
+            updates["venue_id"] = venue_id
+        if "notes" in body:
+            updates["notes"] = (body["notes"] or "").strip() or None
+        if "link" in body:
+            updates["link"] = (body["link"] or "").strip() or None
+        if "dead" in body:
+            updates["dead"] = bool(body["dead"])
+        return updates, None
+
+    @app.post("/api/offers")
+    @require_booker
+    def create_offer():
+        body = request.get_json(silent=True) or {}
+        updates, err = _parse_offer_fields(body, require_title=True)
+        if err:
+            return jsonify(error=err), 400
+        if updates.get("artist_id"):
+            cur = g.db.cursor()
+            cur.execute("SELECT 1 FROM artists WHERE id = %s", (updates["artist_id"],))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_artist"), 400
+        title = updates.pop("title")
+        column_key = updates.pop("column_key", "mao")
+        cur = g.db.cursor()
+        cur.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM offers WHERE column_key = %s", (column_key,))
+        sort_order = cur.fetchone()[0]
+        cols = ["title", "column_key", "sort_order", "created_by"] + list(updates.keys())
+        vals = [title, column_key, sort_order, g.viewer.id] + list(updates.values())
+        cur.execute(
+            f"INSERT INTO offers ({', '.join(cols)}) VALUES ({', '.join(['%s'] * len(vals))}) RETURNING id",
+            vals,
+        )
+        offer_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "offer", offer_id, "create", {"title": title, "column_key": column_key})
+        return jsonify(id=offer_id), 201
+
+    @app.patch("/api/offers/<int:offer_id>")
+    @require_booker
+    def update_offer(offer_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM offers WHERE id = %s", (offer_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        body = request.get_json(silent=True) or {}
+        updates, err = _parse_offer_fields(body)
+        if err:
+            return jsonify(error=err), 400
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+        if updates.get("artist_id"):
+            cur.execute("SELECT 1 FROM artists WHERE id = %s", (updates["artist_id"],))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_artist"), 400
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur.execute(f"UPDATE offers SET {set_clause}, updated_at = now() WHERE id = %s",
+                    list(updates.values()) + [offer_id])
+        audit.record(g.db, g.viewer, "offer", offer_id, "update",
+                     {k: audit.jsonable(v) for k, v in updates.items()})
+        return jsonify(ok=True)
+
+    @app.post("/api/offers/reorder")
+    @require_booker
+    def reorder_offers():
+        """Same shape as /api/vision_cards/reorder -- the client sends the
+        full, final ordered list of ids for whichever board changed."""
+        body = request.get_json(silent=True) or {}
+        column_key = body.get("column_key")
+        offer_ids = body.get("offer_ids")
+        if column_key not in _OFFER_COLUMNS:
+            return jsonify(error="invalid_column"), 400
+        if not isinstance(offer_ids, list) or not offer_ids:
+            return jsonify(error="offer_ids_required"), 400
+        cur = g.db.cursor()
+        for i, offer_id in enumerate(offer_ids):
+            cur.execute(
+                "UPDATE offers SET column_key = %s, sort_order = %s WHERE id = %s",
+                (column_key, i, offer_id),
+            )
+        return jsonify(ok=True)
+
+    @app.delete("/api/offers/<int:offer_id>")
+    @require_booker
+    def delete_offer(offer_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT title FROM offers WHERE id = %s", (offer_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("DELETE FROM offers WHERE id = %s", (offer_id,))
+        audit.record(g.db, g.viewer, "offer", offer_id, "delete", {"title": row[0]})
         return jsonify(ok=True)
 
     @app.get("/api/todos")

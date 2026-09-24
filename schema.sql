@@ -299,7 +299,7 @@ CREATE TABLE vision_cards (
     id                SERIAL PRIMARY KEY,
     title             TEXT NOT NULL,
     column_key        TEXT NOT NULL DEFAULT 'idea'
-                      CHECK (column_key IN ('idea', 'in_progress', 'offer_sent', 'follow_up')),
+                      CHECK (column_key IN ('idea', 'in_progress', 'follow_up')),
     sort_order        INTEGER NOT NULL DEFAULT 0,
     artist_id         INTEGER REFERENCES artists(id),
     venue_id          INTEGER REFERENCES venues(id),  -- optional: file the idea under a specific room
@@ -313,6 +313,31 @@ CREATE TABLE vision_cards (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX idx_vision_cards_column ON vision_cards(column_key, sort_order);
+
+-- Its own tab, deliberately separate from vision_cards (Broc's call,
+-- 2026-09-24): offers run at a much higher weekly volume than ideas, with
+-- a much higher fraction going nowhere, so mixing them into the Vision
+-- Board would bury actual ideas in offer churn. MAO (Mutually Agreeable
+-- Offer) is an agent-initiated invite -- "band X will be in your area,
+-- want in?" -- so a card can land straight in that stage with no prior
+-- idea behind it at all, unlike Vision Board cards which always start as
+-- someone's idea.
+CREATE TABLE offers (
+    id          SERIAL PRIMARY KEY,
+    title       TEXT NOT NULL,
+    column_key  TEXT NOT NULL DEFAULT 'mao'
+                CHECK (column_key IN ('mao', 'needed', 'sent', 'confirmed')),
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    dead        BOOLEAN NOT NULL DEFAULT FALSE,  -- "didn't work out" -- hidden by default, same as a show
+    artist_id   INTEGER REFERENCES artists(id),
+    venue_id    INTEGER REFERENCES venues(id),
+    notes       TEXT,
+    link        TEXT,
+    created_by  INTEGER REFERENCES people(id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_offers_column ON offers(column_key, sort_order);
 CREATE INDEX idx_vision_cards_follow_up ON vision_cards(follow_up_date) WHERE follow_up_date IS NOT NULL;
 
 -- A band can have more than one point of contact (the singer, the manager,

@@ -1,8 +1,9 @@
 """Real database, real Flask test client: the vision board — a Trello-
-style pipeline (Idea -> Reaching Out -> Offer Sent -> Booked) that replaced
-the old separate vision_notes/ma_offers tables. Covers card CRUD, the
-column allowlist, drag-reorder persistence, linking a card to the show
-that created the opportunity, and keeping crew out entirely.
+style pipeline (Idea -> In Progress -> Follow Up) for chasing bands, not
+tracking offers (those live in their own offers table/tab as of
+2026-09-24, see test_offers.py). Covers card CRUD, the column allowlist,
+drag-reorder persistence, linking a card to the show that created the
+opportunity, and keeping crew out entirely.
 """
 import unittest
 
@@ -105,12 +106,12 @@ class VisionBoard(unittest.TestCase):
         self._login(client, self.booker_email)
         card_id = self._create(client)
         r = client.patch(f"/api/vision_cards/{card_id}", json={
-            "column_key": "offer_sent", "notes": "left a voicemail", "follow_up_date": "2027-01-05",
+            "column_key": "follow_up", "notes": "left a voicemail", "follow_up_date": "2027-01-05",
         })
         self.assertEqual(r.status_code, 200, r.get_json())
         cards = client.get("/api/vision_cards").get_json()["cards"]
         mine = next(c for c in cards if c["id"] == card_id)
-        self.assertEqual(mine["column_key"], "offer_sent")
+        self.assertEqual(mine["column_key"], "follow_up")
         self.assertEqual(mine["notes"], "left a voicemail")
         self.assertEqual(mine["follow_up_date"], "2027-01-05")
 
@@ -124,6 +125,16 @@ class VisionBoard(unittest.TestCase):
         client = self.app.test_client()
         self._login(client, self.booker_email)
         r = client.post("/api/vision_cards", json={"title": "x", "column_key": "reaching_out"})
+        self.assertEqual(r.status_code, 400)
+
+    def test_offer_sent_is_no_longer_a_column_offers_moved_to_their_own_tab(self):
+        # 2026-09-24: MAO/Needed/Sent/Confirmed moved off the Vision Board
+        # entirely into their own offers table/tab -- offers run at a much
+        # higher volume with a much higher fizzle rate than an idea worth
+        # chasing, so they no longer belong here at all.
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post("/api/vision_cards", json={"title": "x", "column_key": "offer_sent"})
         self.assertEqual(r.status_code, 400)
 
     def test_invalid_column_is_rejected_on_create_and_update(self):
@@ -148,13 +159,13 @@ class VisionBoard(unittest.TestCase):
         b = self._create(client, title="Card B")
         c = self._create(client, title="Card C")
 
-        r = client.post("/api/vision_cards/reorder", json={"column_key": "offer_sent", "card_ids": [c, a, b]})
+        r = client.post("/api/vision_cards/reorder", json={"column_key": "in_progress", "card_ids": [c, a, b]})
         self.assertEqual(r.status_code, 200, r.get_json())
 
         cards = client.get("/api/vision_cards").get_json()["cards"]
         moved = [x for x in cards if x["id"] in (a, b, c)]
         by_id = {x["id"]: x for x in moved}
-        self.assertTrue(all(x["column_key"] == "offer_sent" for x in moved))
+        self.assertTrue(all(x["column_key"] == "in_progress" for x in moved))
         self.assertEqual(by_id[c]["sort_order"], 0)
         self.assertEqual(by_id[a]["sort_order"], 1)
         self.assertEqual(by_id[b]["sort_order"], 2)

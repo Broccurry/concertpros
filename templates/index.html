@@ -540,6 +540,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .visioncol-empty{margin:0;font-size:12px;color:var(--ink-3);line-height:1.4}
 .visioncol-quickadd{width:100%;margin-bottom:10px;border:1px dashed var(--line-strong);background:transparent;
                      border-radius:var(--radius);padding:6px 8px;font-size:12.5px}
+.visioncol-quickadd-btn{width:100%;margin-bottom:10px}
 @media (max-width:660px){
   .visionboard{flex-direction:column}
   .visioncol{flex:none;min-width:0}
@@ -589,6 +590,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         <button role="tab" data-view="staff" aria-selected="false">Staff</button>
         <button role="tab" data-view="todo" aria-selected="false">To Do</button>
         <button role="tab" data-view="vision" aria-selected="false">Vision Board</button>
+        <button role="tab" data-view="offers" aria-selected="false">Offers</button>
         <button role="tab" data-view="files" aria-selected="false">Files</button>
         <button role="tab" data-view="website" aria-selected="false">Website</button>
         <button role="tab" data-view="settings" aria-selected="false">Settings</button>
@@ -642,6 +644,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
       <div id="peopleHost"></div>
     </section>
     <section id="view-vision" hidden></section>
+    <section id="view-offers" hidden></section>
     <section id="view-files" hidden></section>
     <section id="view-website" hidden></section>
     <section id="view-settings" hidden></section>
@@ -872,10 +875,10 @@ function staffLabel(s){ return s.person_name || (s.person_id ? "(removed person)
 function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
 
 /* ============================== state =============================== */
-var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[]};
+var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], offers:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
@@ -914,14 +917,15 @@ async function loadEvents(){
 }
 async function loadBookerLookups(){
   if(!canBook()) return;
-  var [v, ro, pe, ar, vc, fl, ss, cm, ge] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
-    api("/api/artists"), api("/api/vision_cards"), api("/api/files"), api("/api/site_settings"), api("/api/contact_messages"),
+  var [v, ro, pe, ar, vc, of, fl, ss, cm, ge] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
+    api("/api/artists"), api("/api/vision_cards"), api("/api/offers"), api("/api/files"), api("/api/site_settings"), api("/api/contact_messages"),
     api("/api/genres")]);
   if(v.ok) store.venues = v.body.venues;
   if(ro.ok) store.roles = ro.body.roles;
   if(pe.ok) store.people = pe.body.people;
   if(ar.ok) store.artists = ar.body.artists;
   if(vc.ok) store.visionCards = vc.body.cards;
+  if(of.ok) store.offers = of.body.offers;
   if(fl.ok) store.files = fl.body.files;
   if(ss.ok) store.siteSettings = ss.body;
   if(cm.ok) store.contactMessages = cm.body.messages;
@@ -959,7 +963,7 @@ function renderAll(){
   }).length;
   document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + activeUpcoming.length + " total";
 
-  ["calendar","todo","list","artists","staff","people","vision","files","website","settings"].forEach(function(v){
+  ["calendar","todo","list","artists","staff","people","vision","offers","files","website","settings"].forEach(function(v){
     document.getElementById("view-" + v).hidden = (v !== ui.view);
   });
   if(ui.view === "calendar") renderCalendar();
@@ -969,6 +973,7 @@ function renderAll(){
   if(ui.view === "staff") renderStaffView();
   if(ui.view === "people") renderPeopleTable();
   if(ui.view === "vision") renderVisionBoard();
+  if(ui.view === "offers") renderOffersView();
   if(ui.view === "files") renderFilesView();
   if(ui.view === "website") renderWebsiteView();
   if(ui.view === "settings") renderSettingsView();
@@ -3796,9 +3801,8 @@ function renderWebsiteView(){
 // always implies exactly one board and never disagrees with itself.
 var VISION_COLUMNS = [{key:"idea", label:"Idea"}];
 var PROGRESS_COLUMNS = [{key:"in_progress", label:"In Progress"}];
-var MAO_COLUMNS = [{key:"offer_sent", label:"Offer Sent"}];
 var FOLLOWUP_COLUMNS = [{key:"follow_up", label:"Follow Up"}];
-var ALL_VISION_COLUMNS = VISION_COLUMNS.concat(PROGRESS_COLUMNS).concat(MAO_COLUMNS).concat(FOLLOWUP_COLUMNS);
+var ALL_VISION_COLUMNS = VISION_COLUMNS.concat(PROGRESS_COLUMNS).concat(FOLLOWUP_COLUMNS);
 function visionCardsByColumn(key){
   return (store.visionCards||[]).filter(function(c){ return c.column_key === key; })
     .slice().sort(function(a,b){ return a.sort_order - b.sort_order; });
@@ -3814,8 +3818,6 @@ var BOARDS = [
    emptyHint:"Post an idea below — a band to chase, whatever's worth not forgetting."},
   {key:"progress", label:"In Progress", columns: PROGRESS_COLUMNS,
    emptyHint:"Drag a card here once it's more than just an idea — someone's actively working it."},
-  {key:"mao", label:"MAO", columns: MAO_COLUMNS,
-   emptyHint:"Log an outreach below once you've actually reached out to someone."},
   {key:"followup", label:"Follow Up", columns: FOLLOWUP_COLUMNS,
    emptyHint:"A local killed it opening a national show, or a regional date sold well — drop a card here so the follow-up actually happens instead of just being a good idea at the time."},
 ];
@@ -3861,11 +3863,161 @@ function renderVisionBoard(){
     });
   });
 }
+
+/* ============================== offers ================================ */
+// Its own tab, deliberately not a Vision Board column (Broc's call,
+// 2026-09-24): offers run at a much higher weekly volume than ideas, with
+// a much higher fraction going nowhere, so mixing them in would bury real
+// ideas in offer churn. MAO (Mutually Agreeable Offer) is an agent-
+// initiated invite -- "band X will be near you, want in?" -- so a card can
+// start life directly in that board with no prior idea behind it at all.
+var OFFER_BOARDS = [
+  {key:"mao", columns:[{key:"mao", label:"MAO"}],
+   emptyHint:"An agent flags a band routing near you and asks if you want in — drop it here."},
+  {key:"needed", columns:[{key:"needed", label:"Needed"}],
+   emptyHint:"This one needs a number put together."},
+  {key:"sent", columns:[{key:"sent", label:"Sent"}],
+   emptyHint:"Log one below once you've actually sent an offer."},
+  {key:"confirmed", columns:[{key:"confirmed", label:"Confirmed"}],
+   emptyHint:"Accepted offers land here."},
+];
+function offersByColumn(key){
+  return (store.offers||[]).filter(function(o){ return o.column_key === key && (ui.showDeadOffers || !o.dead); })
+    .slice().sort(function(a,b){ return a.sort_order - b.sort_order; });
+}
+async function moveOffer(offerId, columnKey, index){
+  var ids = offersByColumn(columnKey).map(function(o){ return o.id; }).filter(function(id){ return id !== offerId; });
+  ids.splice(index, 0, offerId);
+  await api("/api/offers/reorder", {method:"POST", body: JSON.stringify({column_key: columnKey, offer_ids: ids})});
+  await loadBookerLookups();
+  renderAll();
+}
+function renderOfferCardBody(o, body){
+  body.onclick = function(){ openOfferForm(o.id); };
+  body.appendChild(el("p","visioncard-title", o.title));
+  if(o.dead) body.appendChild(el("span","pill s-dead","Didn't work out"));
+  if(o.artist_name) body.appendChild(el("span","pill s-complete", o.artist_name));
+  if(o.venue_name) body.appendChild(el("span","pill pill-muted", o.venue_name));
+}
+function renderOffersView(){
+  var host = document.getElementById("view-offers");
+  host.innerHTML = "";
+
+  var toggleWrap = el("label","checkfield"); toggleWrap.style.marginBottom = "14px";
+  var toggleCb = document.createElement("input");
+  toggleCb.type = "checkbox"; toggleCb.checked = !!ui.showDeadOffers;
+  toggleCb.onchange = function(){ ui.showDeadOffers = toggleCb.checked; renderAll(); };
+  toggleWrap.appendChild(toggleCb);
+  toggleWrap.appendChild(document.createTextNode(" Show offers that didn't work out"));
+  host.appendChild(toggleWrap);
+
+  var row = el("div","boardsrow");
+  host.appendChild(row);
+  OFFER_BOARDS.forEach(function(b){
+    var group = el("div","boardgroup");
+    group.appendChild(el("h3","section", b.columns[0].label));
+    var boardHost = el("div");
+    group.appendChild(boardHost);
+    row.appendChild(group);
+    renderCardBoard(boardHost, b.columns, {
+      allColumnsSelector: "#view-offers .visioncol",
+      itemsForColumn: offersByColumn,
+      quickAddMode: "button",
+      quickAddPlaceholder: "+ Offer",
+      emptyHint: b.emptyHint,
+      onQuickAdd: function(colKey){ openOfferForm(null, colKey); },
+      onMove: moveOffer,
+      renderCardBody: renderOfferCardBody,
+    });
+  });
+}
+function openOfferForm(offerId, defaultColumnKey){
+  var o = offerId ? (store.offers||[]).find(function(x){ return x.id === offerId; }) : null;
+  var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
+  document.getElementById("sheetTitle").textContent = o ? o.title : "New offer";
+  body.innerHTML = ""; foot.innerHTML = "";
+
+  var draftO = o
+    ? {title:o.title, column_key:o.column_key, artist_id:o.artist_id||"", venue_id:o.venue_id||"",
+       notes:o.notes||"", link:o.link||"", dead:!!o.dead}
+    : {title:"", column_key:defaultColumnKey||"mao", artist_id:"", venue_id:"", notes:"", link:"", dead:false};
+
+  var fs = document.createElement("fieldset");
+  fs.appendChild(el("legend",null,"The offer"));
+
+  var stageOpts = [{value:"mao",label:"MAO"},{value:"needed",label:"Needed"},{value:"sent",label:"Sent"},{value:"confirmed",label:"Confirmed"}];
+  var artistOpts = [{value:"",label:"No band linked"}].concat(
+    store.artists.slice().sort(function(a,b){ return a.name.localeCompare(b.name); })
+      .map(function(a){ return {value:a.id, label:a.name}; }));
+  var venueOpts = [{value:"",label:"No venue"}].concat(
+    store.venues.map(function(v){ return {value:v.id, label:v.name}; }));
+
+  var r0 = el("div","row-4");
+  r0.appendChild(field("Title", input("text", draftO.title, function(v){ draftO.title = v; })));
+  r0.appendChild(field("Stage", selectKV(stageOpts, draftO.column_key, function(v){ draftO.column_key = v; })));
+  r0.appendChild(field("Band (optional)", selectKV(artistOpts, draftO.artist_id, function(v){ draftO.artist_id = v ? Number(v) : ""; })));
+  r0.appendChild(field("Venue (optional)", selectKV(venueOpts, draftO.venue_id, function(v){ draftO.venue_id = v ? Number(v) : ""; })));
+  fs.appendChild(r0);
+
+  var r1 = el("div","row"); r1.style.marginTop = "10px";
+  r1.appendChild(field("Link (offer doc, etc.)", input("text", draftO.link, function(v){ draftO.link = v; })));
+  fs.appendChild(r1);
+
+  var deadWrap = el("label","checkfield"); deadWrap.style.marginTop = "10px";
+  var deadCb = document.createElement("input");
+  deadCb.type = "checkbox"; deadCb.checked = draftO.dead;
+  deadCb.onchange = function(){ draftO.dead = deadCb.checked; };
+  deadWrap.appendChild(deadCb);
+  deadWrap.appendChild(document.createTextNode(" Didn't work out"));
+  fs.appendChild(deadWrap);
+
+  var notesTa = document.createElement("textarea");
+  notesTa.value = draftO.notes; notesTa.rows = 3;
+  notesTa.oninput = function(){ draftO.notes = notesTa.value; };
+  var notesField = field("Notes", notesTa); notesField.style.marginTop = "10px";
+  fs.appendChild(notesField);
+  body.appendChild(fs);
+
+  var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
+  var save = el("button","btn btn-primary","Save");
+  save.onclick = async function(){
+    errLine.textContent = "";
+    var title = draftO.title.trim();
+    if(!title){ errLine.textContent = "Give it a title."; return; }
+    var payload = {title:title, column_key: draftO.column_key, artist_id: draftO.artist_id || null,
+                   venue_id: draftO.venue_id || null, notes: draftO.notes, link: draftO.link, dead: draftO.dead};
+    var r2 = o ? await api("/api/offers/" + o.id, {method:"PATCH", body: JSON.stringify(payload)})
+               : await api("/api/offers", {method:"POST", body: JSON.stringify(payload)});
+    if(!r2.ok){ errLine.textContent = r2.body.error || "Could not save."; return; }
+    await loadBookerLookups();
+    closeSheet();
+    renderAll();
+  };
+  foot.appendChild(save);
+  var cancel = el("button","btn","Cancel");
+  cancel.onclick = closeSheet;
+  foot.appendChild(cancel);
+  foot.appendChild(errLine);
+  if(o){
+    foot.appendChild(el("div","spacer"));
+    var del = el("button","btn btn-danger","Delete");
+    del.onclick = async function(){
+      await api("/api/offers/" + o.id, {method:"DELETE"});
+      await loadBookerLookups();
+      closeSheet();
+      renderAll();
+    };
+    foot.appendChild(del);
+  }
+  openScrim();
+}
+
 // The one place every kanban-style board on this site is actually built --
-// Vision Board and To Do both call this with different data, so "why do
-// the boards look different" can't happen again by construction. Every
-// board renders the same shape no matter how many cards it holds: quick-add
-// on top, then either cards or (in place of them) a plain hint line.
+// Vision Board, Offers, and To Do all call this with different data, so
+// "why do the boards look different" can't happen again by construction.
+// Every board renders the same shape no matter how many cards it holds:
+// quick-add on top, then either cards or (in place of them) a plain hint
+// line.
 // opts: {allColumnsSelector, itemsForColumn(colKey), quickAddPlaceholder,
 //        onQuickAdd(colKey,title), onMove(itemId,colKey,index),
 //        renderCardBody(item, bodyEl), emptyHint}
@@ -3879,20 +4031,31 @@ function renderCardBoard(host, columns, opts){
     // header on its only column) is the exact redundancy Broc flagged.
     if(columns.length > 1) colEl.appendChild(el("h3","visioncol-head", col.label));
 
-    var quickAdd = document.createElement("input");
-    quickAdd.type = "text";
-    quickAdd.placeholder = opts.quickAddPlaceholder || "+ Add a card";
-    quickAdd.className = "visioncol-quickadd";
-    quickAdd.onkeydown = async function(e){
-      if(e.key !== "Enter") return;
-      var title = quickAdd.value.trim();
-      if(!title) return;
-      e.preventDefault();
-      quickAdd.disabled = true;
-      await opts.onQuickAdd(col.key, title);
-      quickAdd.disabled = false;
-    };
-    colEl.appendChild(quickAdd);
+    // Two ways to add a card: a quick inline text box that creates
+    // immediately (Vision Board, To Do), or a button that opens a full
+    // sheet first (Offers -- there's real structure to fill in per offer,
+    // same reason "+ Add band" opens a sheet instead of just taking a name).
+    if(opts.quickAddMode === "button"){
+      var quickAddBtn = el("button","btn btn-primary visioncol-quickadd-btn", opts.quickAddPlaceholder || "+ Add");
+      quickAddBtn.type = "button";
+      quickAddBtn.onclick = function(){ opts.onQuickAdd(col.key); };
+      colEl.appendChild(quickAddBtn);
+    } else {
+      var quickAdd = document.createElement("input");
+      quickAdd.type = "text";
+      quickAdd.placeholder = opts.quickAddPlaceholder || "+ Add a card";
+      quickAdd.className = "visioncol-quickadd";
+      quickAdd.onkeydown = async function(e){
+        if(e.key !== "Enter") return;
+        var title = quickAdd.value.trim();
+        if(!title) return;
+        e.preventDefault();
+        quickAdd.disabled = true;
+        await opts.onQuickAdd(col.key, title);
+        quickAdd.disabled = false;
+      };
+      colEl.appendChild(quickAdd);
+    }
 
     var wrap = el("div","visioncol-notes");
     colEl.appendChild(wrap);
@@ -3975,10 +4138,12 @@ function openVisionCardForm(cardId){
   var fs = document.createElement("fieldset");
   fs.appendChild(el("legend",null,"The idea"));
 
-  // Which board a card lives on is just whichever stage it's in — moving
-  // it to a MAO stage here is how a plain idea gets promoted onto the
-  // MAO board, no separate "board" concept to keep in sync with this.
-  var colOpts = [{value:"idea", label:"Idea (Vision Board)"}, {value:"in_progress", label:"In Progress"}, {value:"offer_sent", label:"Offer Sent (MAO)"}, {value:"follow_up", label:"Follow Up"}];
+  // Which board a card lives on is just whichever stage it's in -- no
+  // separate "board" concept to keep in sync with this. Offers (MAO,
+  // Needed, Sent, Confirmed) moved to their own tab (2026-09-24, Broc's
+  // call) -- they run at a much higher volume with a much higher
+  // fizzle-out rate than an idea worth chasing, so they don't belong here.
+  var colOpts = [{value:"idea", label:"Idea (Vision Board)"}, {value:"in_progress", label:"In Progress"}, {value:"follow_up", label:"Follow Up"}];
   var artistOpts = [{value:"",label:"No band linked"}].concat(
     store.artists.slice().sort(function(a,b){ return a.name.localeCompare(b.name); })
       .map(function(a){ return {value:a.id, label:a.name}; }));
