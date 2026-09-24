@@ -40,8 +40,13 @@ CREATE TABLE person_roles (
 );
 
 CREATE TABLE venues (
-    id      SERIAL PRIMARY KEY,
-    name    TEXT NOT NULL UNIQUE
+    id                SERIAL PRIMARY KEY,
+    name              TEXT NOT NULL UNIQUE,
+    address           TEXT,
+    phone             TEXT,
+    description       TEXT,
+    hero_storage_key  TEXT,
+    hero_filename     TEXT
 );
 
 CREATE TABLE artists (
@@ -400,6 +405,29 @@ CREATE TABLE event_website (
     blurb           TEXT,
     published       BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- A singleton row (id must be TRUE, so only one can ever exist) for the
+-- handful of site-wide settings that don't belong to any one show or
+-- venue. Company-wide social links (Broc's call, 2026-09-24) rather than
+-- per-venue -- one footer, same on every page.
+CREATE TABLE site_settings (
+    id             BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+    facebook_url   TEXT,
+    instagram_url  TEXT,
+    tiktok_url     TEXT,
+    twitter_url    TEXT,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE contact_messages (
+    id          SERIAL PRIMARY KEY,
+    name        TEXT NOT NULL,
+    email       TEXT NOT NULL,
+    venue_id    INTEGER REFERENCES venues(id),
+    message     TEXT NOT NULL,
+    read_at     TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Seed data matching what's already live in the artifact prototype.

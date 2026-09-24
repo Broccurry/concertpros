@@ -152,9 +152,18 @@ select, textarea{background:#fff;color:#111;color-scheme:light}
 .chip{border:1px solid var(--line);background:transparent;color:var(--ink-2);padding:3px 10px;
       border-radius:999px;font-size:12.5px;white-space:nowrap}
 .chip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
-.legend{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-left:auto}
-.legend-item{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--ink-3);white-space:nowrap}
-.swatch{width:11px;height:11px;border-radius:2px;flex:none}
+.calsearch{position:relative;margin-left:auto;min-width:220px}
+.calsearch input{width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:5px 8px;font-size:12.5px}
+.calsearch-results{position:absolute;top:calc(100% + 6px);left:0;right:0;max-height:320px;overflow-y:auto;
+                    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+                    box-shadow:var(--shadow);z-index:20;padding:6px}
+.calsearch-row{display:flex;gap:8px;align-items:center;width:100%;text-align:left;background:none;border:none;
+               border-bottom:1px solid var(--line);padding:6px 4px;font-size:12.5px;cursor:pointer;color:inherit}
+.calsearch-row:last-child{border-bottom:none}
+.calsearch-row:hover{background:var(--surface-2)}
+.calsearch-date{color:var(--ink-3);white-space:nowrap;font-variant-numeric:tabular-nums}
+.calsearch-venue{margin-left:auto;color:var(--ink-3);white-space:nowrap;font-size:11.5px}
+.calsearch-empty{padding:8px 4px;font-size:12px;color:var(--ink-3)}
 .showdead-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);white-space:nowrap;cursor:pointer}
 .showdead-toggle input{width:auto}
 
@@ -529,7 +538,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
   .visioncol{flex:none;min-width:0}
 }
 
-@media (max-width:860px){.legend{margin-left:0;width:100%}.monthnav h2{min-width:140px;font-size:17px}}
+@media (max-width:860px){.calsearch{margin-left:0;width:100%}.monthnav h2{min-width:140px;font-size:17px}}
 @media (max-width:660px){
   .dow div{font-size:9px;letter-spacing:.05em}
   .grid{gap:3px}
@@ -589,17 +598,20 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         <div class="mentionspop" id="mentionsPop" hidden></div>
       </div>
       <span class="who" id="whoami"></span>
-      <button class="btn btn-primary" id="bookBtn" style="display:none">+ Book a show</button>
       <button class="btn" id="logoutBtn">Log out</button>
     </div>
   </header>
 
   <div class="filterbar" id="filterbar" style="display:none">
     <div class="filterbar-inner">
+      <button class="btn btn-primary" id="bookBtn" style="display:none">+ Book a show</button>
       <span class="eyebrow">Venue</span>
       <div class="chips" id="venueChips"></div>
       <span class="eyebrow" id="countLabel"></span>
-      <div class="legend" id="legend"></div>
+      <div class="calsearch" id="calSearchWrap">
+        <input type="search" id="calSearchInput" placeholder="Search shows...">
+        <div class="calsearch-results" id="calSearchResults" hidden></div>
+      </div>
       <label class="showdead-toggle">
         <input type="checkbox" id="showDeadToggle">
         Show didn't work out
@@ -916,7 +928,6 @@ function el(tag, cls, text){
 /* ============================== top-level render ===================== */
 function renderAll(){
   renderVenueChips();
-  renderLegend();
   document.getElementById("monthLabel").textContent = MONTHS[ui.cursor.m] + " " + ui.cursor.y;
   document.getElementById("monthnav").style.display = (ui.view === "calendar") ? "flex" : "none";
 
@@ -952,20 +963,31 @@ function renderVenueChips(){
     box.appendChild(b);
   });
 }
-function renderLegend(){
-  var box = document.getElementById("legend");
+function renderCalSearchResults(query){
+  var box = document.getElementById("calSearchResults");
+  var q = (query || "").trim();
+  if(!q){ box.hidden = true; box.innerHTML = ""; return; }
+  var results = searchShows(query).slice(0, 8);
   box.innerHTML = "";
-  // hold1/2/3 are one shade now (the number badge on the card carries the
-  // distinction), so the legend shows one "Hold" swatch instead of three
-  // identical-looking ones.
-  ["hold1","confirmed","complete","dead"].forEach(function(k){
-    var item = el("span","legend-item");
-    var sw = el("span","swatch");
-    sw.style.background = STATUS[k].swatch;
-    item.appendChild(sw);
-    item.appendChild(document.createTextNode(k === "hold1" ? "Hold (1/2/3)" : STATUS[k].label));
-    box.appendChild(item);
-  });
+  if(!results.length){
+    box.appendChild(el("div","calsearch-empty","No shows found"));
+  } else {
+    results.forEach(function(ev){
+      var row = el("button","calsearch-row");
+      row.type = "button";
+      row.appendChild(el("span","calsearch-date", shortDate(ev.show_date)));
+      var nameSpan = el("span","name"); nameSpan.appendChild(actsNodes(ev));
+      row.appendChild(nameSpan);
+      row.appendChild(el("span","calsearch-venue", ev.venue));
+      row.onclick = function(){
+        document.getElementById("calSearchInput").value = "";
+        box.hidden = true; box.innerHTML = "";
+        openEvent(ev.id);
+      };
+      box.appendChild(row);
+    });
+  }
+  box.hidden = false;
 }
 function setActiveTab(){
   document.querySelectorAll("#navTabs button").forEach(function(b){
@@ -1099,14 +1121,27 @@ function renderListView(){
   var host = document.getElementById("view-list");
   host.innerHTML = "";
 
+  // The search input is built ONCE here and never touched again on
+  // keystroke -- only renderListResults() below re-renders, into its own
+  // sub-container. Rebuilding the whole view (as this used to do) replaced
+  // the focused input with a new DOM node every keystroke, which is why
+  // typing appeared to "stop after one letter."
   var searchWrap = el("div","field"); searchWrap.style.marginBottom = "14px";
   var searchInput = document.createElement("input");
   searchInput.type = "search";
   searchInput.placeholder = "Search shows by band name...";
   searchInput.value = ui.listSearch || "";
-  searchInput.oninput = function(){ ui.listSearch = searchInput.value; renderListView(); };
   searchWrap.appendChild(searchInput);
   host.appendChild(searchWrap);
+
+  var resultsHost = el("div");
+  host.appendChild(resultsHost);
+
+  searchInput.oninput = function(){ ui.listSearch = searchInput.value; renderListResults(resultsHost); };
+  renderListResults(resultsHost);
+}
+function renderListResults(host){
+  host.innerHTML = "";
 
   if((ui.listSearch||"").trim()){
     var results = searchShows(ui.listSearch);
@@ -1251,14 +1286,16 @@ var TIER_OPTIONS = ["Local","Regional","National"];
 // Local-only by default — most of the roster is local acts and that's
 // the list booking actually works from day to day; Regional/National are
 // opt-in. Selecting all three (or none) is the same as no tier filter.
-var artistFilter = {tiers:{Local:true, Regional:false, National:false}, genre:"", tag:"", showArchived:false};
+var artistFilter = {tiers:{Local:true, Regional:false, National:false}, name:"", genre:"", tag:"", showArchived:false};
 function filteredArtists(){
   var selected = TIER_OPTIONS.filter(function(t){ return artistFilter.tiers[t]; });
   var allOrNone = selected.length === 0 || selected.length === TIER_OPTIONS.length;
+  var name = normName(artistFilter.name);
   var genre = artistFilter.genre.trim().toLowerCase(), tag = artistFilter.tag.trim().toLowerCase();
   return store.artists.filter(function(a){
     if(!artistFilter.showArchived && a.active === false) return false;
     if(!allOrNone && (!a.tier || !artistFilter.tiers[a.tier])) return false;
+    if(name && normName(a.name).indexOf(name) < 0) return false;
     if(genre && (a.genre||"").toLowerCase().indexOf(genre) < 0) return false;
     if(tag && !(a.tags||[]).some(function(t){ return t.toLowerCase().indexOf(tag) >= 0; })) return false;
     return true;
@@ -1280,6 +1317,15 @@ function renderArtistsView(){
     host.appendChild(e);
     return;
   }
+
+  var searchWrap = el("div","field"); searchWrap.style.marginBottom = "10px";
+  var nameInput = document.createElement("input");
+  nameInput.type = "search";
+  nameInput.placeholder = "Search bands by name...";
+  nameInput.value = artistFilter.name || "";
+  nameInput.oninput = function(){ artistFilter.name = nameInput.value; renderArtistsResults(); };
+  searchWrap.appendChild(nameInput);
+  host.appendChild(searchWrap);
 
   // The filter bar's inputs are built ONCE — re-rendering just the results
   // below on every keystroke, rather than the whole view, so typing a
@@ -3969,6 +4015,11 @@ document.getElementById("nextMonth").addEventListener("click", goToNextMonth);
 document.getElementById("todayBtn").addEventListener("click", function(){ var t=new Date(); ui.cursor={y:t.getFullYear(),m:t.getMonth()}; renderAll(); });
 document.getElementById("showDeadToggle").addEventListener("change", function(e){ ui.showDead = e.target.checked; renderAll(); });
 document.getElementById("bookBtn").addEventListener("click", function(){ openEvent(null, todayISO()); });
+document.getElementById("calSearchInput").addEventListener("input", function(e){ renderCalSearchResults(e.target.value); });
+document.addEventListener("click", function(e){
+  var wrap = document.getElementById("calSearchWrap");
+  if(!wrap.contains(e.target)) document.getElementById("calSearchResults").hidden = true;
+});
 document.getElementById("addPersonBtn").addEventListener("click", function(){ openPersonForm(null); });
 document.getElementById("mentionsBtn").addEventListener("click", toggleMentionsPop);
 document.addEventListener("click", function(e){
