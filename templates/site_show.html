@@ -25,9 +25,15 @@
   .lineup-row:last-child{border-bottom:none}
   .lineup-name{font-weight:600}
   .lineup-time{color:var(--ink-2);font-size:13.5px;white-space:nowrap}
+  .actions-row{display:flex;flex-wrap:wrap;gap:10px;margin:-10px 0 24px}
+  .action-link{display:inline-flex;align-items:center;gap:6px;color:var(--ink-2);text-decoration:none;
+               font-size:13px;border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--surface)}
+  .action-link:hover{border-color:var(--accent);color:var(--accent)}
+  .action-link svg{width:15px;height:15px;fill:currentColor}
 </style>
 </head>
 <body>
+{% include "_site_nav.html" %}
 <a class="back" href="/site">&larr; All shows</a>
 <main>
   {% if show.hero_url %}<img class="hero" src="{{ show.hero_url }}" alt="{{ show.headliner or 'Show flyer' }}">{% endif %}
@@ -46,6 +52,26 @@
     </div>
   {% endif %}
 
+  <div class="actions-row">
+    {% if show.hero_url %}
+      <a class="action-link" href="/site/{{ show.id }}/flyer">
+        <svg viewBox="0 0 24 24"><path d="M12 3v11.6l4-4 1.4 1.4L12 17.8l-5.4-5.8L8 10.6l4 4V3ZM5 19h14v2H5Z"/></svg>
+        Download flyer
+      </a>
+    {% endif %}
+    <a class="action-link" href="https://www.facebook.com/sharer/sharer.php?u={{ request.url | urlencode }}" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24"><path d="M22 12a10 10 0 1 0-11.6 9.9v-7H7.9V12h2.5V9.8c0-2.5 1.5-3.9 3.8-3.9 1.1 0 2.2.2 2.2.2v2.4h-1.3c-1.2 0-1.6.8-1.6 1.6V12h2.8l-.4 2.9h-2.4v7A10 10 0 0 0 22 12Z"/></svg>
+      Share
+    </a>
+    <a class="action-link" href="https://twitter.com/intent/tweet?url={{ request.url | urlencode }}&text={{ (show.headliner or 'This show') | urlencode }}" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24"><path d="M18.9 2h3l-6.6 7.5L23 22h-6.1l-4.8-6.3L6.6 22H3.5l7-8-7.7-12H9l4.4 5.8Zm-1 18h1.7L7.2 4H5.4Z"/></svg>
+      Tweet
+    </a>
+    <button class="action-link" type="button" onclick="navigator.clipboard.writeText(window.location.href).then(()=>{this.textContent='Link copied!'})" style="cursor:pointer;font:inherit">
+      Copy link
+    </button>
+  </div>
+
   {% if show.blurb %}
     <section><p class="blurb">{{ show.blurb }}</p></section>
   {% endif %}
@@ -62,5 +88,6 @@
     </section>
   {% endif %}
 </main>
+{% include "_site_footer.html" %}
 </body>
 </html>

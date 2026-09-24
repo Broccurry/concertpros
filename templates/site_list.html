@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Upcoming Shows</title>
+<title>{{ "Past Shows" if when == "past" else "Upcoming Shows" }}</title>
 <style>
   :root{--ink:#16181d;--ink-2:#6b7382;--ground:#f2f3f6;--surface:#fff;--line:#e2e4ea;--accent:#c6122a}
   *{box-sizing:border-box}
@@ -11,6 +11,14 @@
   header{background:var(--ink);color:#fff;padding:28px 16px;text-align:center}
   header h1{margin:0;font-size:22px;text-transform:uppercase;letter-spacing:.08em}
   main{max-width:720px;margin:0 auto;padding:20px 16px 60px}
+  .tabs{display:flex;gap:8px;margin-bottom:14px}
+  .tabs a{flex:none;padding:7px 16px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
+          color:var(--ink-2);text-decoration:none;font-size:13px;font-weight:600}
+  .tabs a.active{background:var(--accent);border-color:var(--accent);color:#fff}
+  .venuefilter{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+  .venuefilter a{padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--surface);
+                 color:var(--ink-2);text-decoration:none;font-size:12.5px}
+  .venuefilter a.active{background:var(--ink);border-color:var(--ink);color:#fff}
   .card{display:block;background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;
         margin-bottom:18px;text-decoration:none;color:inherit;box-shadow:0 1px 3px rgba(0,0,0,.06)}
   .card img{width:100%;display:block;aspect-ratio:16/9;object-fit:cover;background:var(--line)}
@@ -22,10 +30,22 @@
 </style>
 </head>
 <body>
-<header><h1>Upcoming Shows</h1></header>
+{% include "_site_nav.html" %}
+<header><h1>{{ "Past Shows" if when == "past" else "Upcoming Shows" }}</h1></header>
 <main>
+  <div class="tabs">
+    <a href="/site?when=current{{ '&venue=' ~ venue_id if venue_id }}" class="{{ 'active' if when != 'past' }}">Current</a>
+    <a href="/site?when=past{{ '&venue=' ~ venue_id if venue_id }}" class="{{ 'active' if when == 'past' }}">Past</a>
+  </div>
+  <div class="venuefilter">
+    <a href="/site?when={{ when }}" class="{{ 'active' if not venue_id }}">All venues</a>
+    {% for v in venues %}
+      <a href="/site?when={{ when }}&venue={{ v.id }}" class="{{ 'active' if venue_id == v.id }}">{{ v.name }}</a>
+    {% endfor %}
+  </div>
+
   {% if not shows %}
-    <p class="empty">Nothing on sale right now — check back soon.</p>
+    <p class="empty">{{ "No past shows here yet." if when == "past" else "Nothing on sale right now — check back soon." }}</p>
   {% endif %}
   {% for s in shows %}
     <a class="card" href="/site/{{ s.id }}">
@@ -38,5 +58,6 @@
     </a>
   {% endfor %}
 </main>
+{% include "_site_footer.html" %}
 </body>
 </html>

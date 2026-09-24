@@ -476,6 +476,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .todorow-main{flex:1;min-width:0}
 .todorow-title{margin:0;font-size:13.5px;color:var(--ink)}
 .todorow-done .todorow-title{color:var(--ink-3);text-decoration:line-through}
+.todorow-unread{border-left:3px solid var(--accent)}
 .todorow-notes{width:100%;margin-top:6px;font-size:12.5px;resize:vertical;min-height:22px;
                border:1px solid var(--line);background:#fff;color:#111;color-scheme:light;
                border-radius:var(--radius);padding:4px 6px}
@@ -865,10 +866,10 @@ function staffLabel(s){ return s.person_name || (s.person_id ? "(removed person)
 function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
 
 /* ============================== state =============================== */
-var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], todos:[], files:[]};
+var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], todos:[], files:[], siteSettings:{}, contactMessages:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current"};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
@@ -907,14 +908,16 @@ async function loadEvents(){
 }
 async function loadBookerLookups(){
   if(!canBook()) return;
-  var [v, ro, pe, ar, vc, fl] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
-    api("/api/artists"), api("/api/vision_cards"), api("/api/files")]);
+  var [v, ro, pe, ar, vc, fl, ss, cm] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
+    api("/api/artists"), api("/api/vision_cards"), api("/api/files"), api("/api/site_settings"), api("/api/contact_messages")]);
   if(v.ok) store.venues = v.body.venues;
   if(ro.ok) store.roles = ro.body.roles;
   if(pe.ok) store.people = pe.body.people;
   if(ar.ok) store.artists = ar.body.artists;
   if(vc.ok) store.visionCards = vc.body.cards;
   if(fl.ok) store.files = fl.body.files;
+  if(ss.ok) store.siteSettings = ss.body;
+  if(cm.ok) store.contactMessages = cm.body.messages;
 }
 async function loadTodos(){
   // Unlike vision/artists/etc., crew needs this too — the endpoint itself
@@ -3431,6 +3434,120 @@ function renderFilesView(){
 // permissions._events_for_booker) rather than fetched per-show here, same
 // reasoning as staff/tasks/tickets already being there — one list load
 // instead of one request per show on this tab.
+function renderVenueEditor(host, v){
+  var card = el("div","websitecard");
+  card.appendChild(el("strong",null, v.name));
+
+  if(v.hero_url){
+    var img = document.createElement("img");
+    img.src = v.hero_url; img.alt = v.name;
+    img.style.cssText = "width:100%;max-width:320px;display:block;margin:8px 0;border-radius:8px";
+    card.appendChild(img);
+  }
+
+  function saveField(fieldName, value){
+    var body = {}; body[fieldName] = value;
+    api("/api/venues/" + v.id, {method:"PATCH", body: JSON.stringify(body)});
+  }
+
+  var addrInp = document.createElement("input");
+  addrInp.type = "text"; addrInp.value = v.address || ""; addrInp.placeholder = "Street address";
+  addrInp.onblur = function(){ if(addrInp.value !== (v.address||"")){ v.address = addrInp.value; saveField("address", v.address); } };
+  card.appendChild(field("Address", addrInp));
+
+  var phoneInp = document.createElement("input");
+  phoneInp.type = "text"; phoneInp.value = v.phone || ""; phoneInp.placeholder = "Phone number";
+  phoneInp.onblur = function(){ if(phoneInp.value !== (v.phone||"")){ v.phone = phoneInp.value; saveField("phone", v.phone); } };
+  var phoneField = field("Phone", phoneInp); phoneField.style.marginTop = "10px";
+  card.appendChild(phoneField);
+
+  var descTa = document.createElement("textarea");
+  descTa.rows = 3; descTa.value = v.description || ""; descTa.placeholder = "A couple sentences about the room, shown on the public Venues page";
+  descTa.onblur = function(){ if(descTa.value !== (v.description||"")){ v.description = descTa.value; saveField("description", v.description); } };
+  var descField = field("Description", descTa); descField.style.marginTop = "10px";
+  card.appendChild(descField);
+
+  var heroInput = document.createElement("input");
+  heroInput.type = "file"; heroInput.accept = "image/*"; heroInput.className = "btn";
+  heroInput.onchange = async function(){
+    var file = heroInput.files[0];
+    if(!file) return;
+    heroInput.disabled = true;
+    var r = await api("/api/venues/" + v.id + "/hero-upload-url", {method:"POST", body: JSON.stringify({
+      filename: file.name, content_type: file.type || "application/octet-stream",
+    })});
+    if(r.ok){
+      var put = await fetch(r.body.upload_url, {method:"PUT", body: file, headers:{"Content-Type": file.type || "application/octet-stream"}});
+      if(put.ok){
+        await api("/api/venues/" + v.id, {method:"PATCH", body: JSON.stringify({
+          hero_storage_key: r.body.storage_key, hero_filename: r.body.filename,
+        })});
+        await loadBookerLookups();
+        renderAll();
+      } else {
+        window.alert("Upload failed. Check your connection and try again.");
+      }
+    }
+    heroInput.disabled = false; heroInput.value = "";
+  };
+  var heroField = field("Hero image", heroInput); heroField.style.marginTop = "10px";
+  card.appendChild(heroField);
+
+  host.appendChild(card);
+}
+function renderSiteSettingsEditor(host){
+  var card = el("div","websitecard");
+  var ss = store.siteSettings || {};
+  [["facebook_url","Facebook"], ["instagram_url","Instagram"], ["tiktok_url","TikTok"], ["twitter_url","X / Twitter"]]
+    .forEach(function(pair, i){
+      var inp = document.createElement("input");
+      inp.type = "url"; inp.value = ss[pair[0]] || ""; inp.placeholder = "https://...";
+      inp.onblur = function(){
+        if(inp.value === (ss[pair[0]]||"")) return;
+        ss[pair[0]] = inp.value.trim();
+        var body = {}; body[pair[0]] = ss[pair[0]];
+        api("/api/site_settings", {method:"PUT", body: JSON.stringify(body)});
+      };
+      var f = field(pair[1], inp);
+      if(i) f.style.marginTop = "10px";
+      card.appendChild(f);
+    });
+  host.appendChild(card);
+}
+function renderContactMessages(host){
+  var messages = store.contactMessages || [];
+  if(!messages.length){
+    host.appendChild(el("p","hint","No messages yet."));
+    return;
+  }
+  var unread = messages.filter(function(m){ return !m.read_at; });
+  if(unread.length) host.appendChild(el("p","hint", unread.length + " unread"));
+  var list = el("div","todolist");
+  messages.forEach(function(m){
+    var row = el("div","todorow" + (m.read_at ? "" : " todorow-unread"));
+    var mainCol = el("div","todorow-main");
+    mainCol.appendChild(el("p","todorow-title", m.name + " <" + m.email + ">"));
+    var bits = [messageTime(m.created_at)];
+    if(m.venue_name) bits.push("Re: " + m.venue_name);
+    mainCol.appendChild(el("p","hint", bits.join(" · ")));
+    mainCol.appendChild(el("p",null, m.message));
+    row.appendChild(mainCol);
+    var del = el("button","x","✕");
+    del.type = "button"; del.title = "Delete message";
+    del.onclick = async function(){
+      await api("/api/contact_messages/" + m.id, {method:"DELETE"});
+      await loadBookerLookups();
+      renderAll();
+    };
+    row.appendChild(del);
+    list.appendChild(row);
+    if(!m.read_at){
+      m.read_at = new Date().toISOString();
+      api("/api/contact_messages/" + m.id, {method:"PATCH", body: JSON.stringify({read:true})});
+    }
+  });
+  host.appendChild(list);
+}
 function renderWebsiteView(){
   var host = document.getElementById("view-website");
   host.innerHTML = "";
@@ -3442,7 +3559,25 @@ function renderWebsiteView(){
   linkP.appendChild(siteLink);
   host.appendChild(linkP);
 
-  foldersEvents().forEach(function(ev){
+  var toggleRow = el("div","chips"); toggleRow.style.marginBottom = "14px";
+  [["current","Current"],["past","Past"]].forEach(function(pair){
+    var chip = el("button","chip", pair[1]);
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", ui.websiteWhen === pair[0] ? "true" : "false");
+    chip.onclick = function(){ ui.websiteWhen = pair[0]; renderAll(); };
+    toggleRow.appendChild(chip);
+  });
+  host.appendChild(toggleRow);
+
+  var today = todayISO();
+  var shownEvents = foldersEvents().filter(function(ev){
+    return ui.websiteWhen === "past" ? ev.show_date < today : ev.show_date >= today;
+  });
+  if(!shownEvents.length){
+    host.appendChild(el("p","hint", ui.websiteWhen === "past" ? "No past shows yet." : "No upcoming confirmed shows yet."));
+  }
+
+  shownEvents.forEach(function(ev){
     var w = ev.website || {hero_file_id:null, blurb:null, published:false};
 
     async function saveWebsite(){
@@ -3509,6 +3644,17 @@ function renderWebsiteView(){
 
     host.appendChild(card);
   });
+
+  host.appendChild(el("h3","section","Venue Info"));
+  host.appendChild(el("p","hint","Address, phone, description and a hero photo for the public Venues page."));
+  store.venues.forEach(function(v){ renderVenueEditor(host, v); });
+
+  host.appendChild(el("h3","section","Social Links"));
+  host.appendChild(el("p","hint","One shared set, shown in the footer of every public page."));
+  renderSiteSettingsEditor(host);
+
+  host.appendChild(el("h3","section","Contact Messages"));
+  renderContactMessages(host);
 }
 
 /* ============================== vision board ============================ */

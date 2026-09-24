@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Our Venues</title>
+<style>
+  :root{--ink:#16181d;--ink-2:#6b7382;--ground:#f2f3f6;--surface:#fff;--line:#e2e4ea;--accent:#c6122a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:"Helvetica Neue",Arial,sans-serif;line-height:1.4}
+  header{background:var(--ink);color:#fff;padding:28px 16px;text-align:center}
+  header h1{margin:0;font-size:22px;text-transform:uppercase;letter-spacing:.08em}
+  main{max-width:720px;margin:0 auto;padding:20px 16px 60px}
+  .venue{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:20px;
+         box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .venue img{width:100%;display:block;aspect-ratio:16/9;object-fit:cover;background:var(--line)}
+  .venue-body{padding:18px}
+  .venue-name{margin:0 0 6px;font-size:20px;font-weight:700}
+  .venue-line{font-size:13.5px;color:var(--ink-2);margin-bottom:4px}
+  .venue-desc{margin-top:10px;font-size:15px}
+  .venue-shows{display:inline-block;margin-top:12px;color:var(--accent);text-decoration:none;font-size:13.5px;font-weight:600}
+</style>
+</head>
+<body>
+{% include "_site_nav.html" %}
+<header><h1>Our Venues</h1></header>
+<main>
+  {% for v in venues %}
+    <div class="venue">
+      {% if v.hero_url %}<img src="{{ v.hero_url }}" alt="{{ v.name }}">{% endif %}
+      <div class="venue-body">
+        <p class="venue-name">{{ v.name }}</p>
+        {% if v.address %}<p class="venue-line">{{ v.address }}</p>{% endif %}
+        {% if v.phone %}<p class="venue-line">{{ v.phone }}</p>{% endif %}
+        {% if v.description %}<p class="venue-desc">{{ v.description }}</p>{% endif %}
+        <a class="venue-shows" href="/site?venue={{ v.id }}">See shows at {{ v.name }} &rarr;</a>
+      </div>
+    </div>
+  {% endfor %}
+</main>
+{% include "_site_footer.html" %}
+</body>
+</html>

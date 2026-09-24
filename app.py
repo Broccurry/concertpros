@@ -15,7 +15,7 @@ from datetime import date, datetime, time, timezone, timedelta
 from decimal import Decimal
 from functools import wraps
 
-from flask import Flask, g, jsonify, render_template, request
+from flask import Flask, g, jsonify, redirect, render_template, request
 from flask.json.provider import DefaultJSONProvider
 
 from dotenv import load_dotenv
@@ -315,6 +315,18 @@ def create_app():
             conn.commit()
         conn.close()
 
+    @app.context_processor
+    def inject_site_social():
+        # Every public template can reach the shared social links without
+        # each /site route having to fetch and pass them along itself --
+        # one place decides what's in the footer, not one per route.
+        cur = g.db.cursor()
+        cur.execute("SELECT facebook_url, instagram_url, tiktok_url, twitter_url FROM site_settings WHERE id = TRUE")
+        row = cur.fetchone() or (None, None, None, None)
+        return {"site_social": {
+            "facebook": row[0], "instagram": row[1], "tiktok": row[2], "twitter": row[3],
+        }}
+
     def current_viewer():
         token = request.cookies.get(SESSION_COOKIE)
         if not token:
@@ -375,24 +387,44 @@ def create_app():
         h = hour % 12 or 12
         return f"{h}{ap}" if minute == 0 else f"{h}:{minute:02d}{ap}"
 
-    def _public_shows(conn, event_ids=None):
+    def _public_shows(conn, event_ids=None, when="current", venue_id=None):
         """The public site's own query — deliberately never permissions.
         events_for(), which is written for an authenticated Viewer and
         would need to be told, correctly, every single time, not to leak
         deal/hold/settlement columns to an anonymous visitor. A published
         show is the most restrictive tier there is, so it gets its own
-        query that structurally cannot select those columns at all."""
+        query that structurally cannot select those columns at all.
+
+        A single-show lookup (event_ids given) always finds the show
+        regardless of when/venue -- those two only filter the listing page,
+        otherwise an old show's own page would 404 once it's no longer
+        "current"."""
         cur = conn.cursor()
-        where = "ew.published = TRUE" + (" AND e.id = ANY(%(ids)s)" if event_ids is not None else "")
+        where = ["ew.published = TRUE"]
+        params: dict = {}
+        if event_ids is not None:
+            where.append("e.id = ANY(%(ids)s)")
+            params["ids"] = event_ids
+            order = "e.show_date"
+        else:
+            if venue_id:
+                where.append("e.venue_id = %(venue_id)s")
+                params["venue_id"] = venue_id
+            if when == "past":
+                where.append("e.show_date < CURRENT_DATE")
+                order = "e.show_date DESC"
+            else:
+                where.append("e.show_date >= CURRENT_DATE")
+                order = "e.show_date"
         cur.execute(
-            f"""SELECT e.id, e.show_date, e.doors, e.ticket_link, v.name AS venue,
+            f"""SELECT e.id, e.show_date, e.doors, e.ticket_link, v.id AS venue_id, v.name AS venue,
                        ew.blurb, ew.hero_file_id
                 FROM events e
                 JOIN event_website ew ON ew.event_id = e.id
                 JOIN venues v ON v.id = e.venue_id
-                WHERE {where}
-                ORDER BY e.show_date""",
-            {"ids": event_ids},
+                WHERE {" AND ".join(where)}
+                ORDER BY {order}""",
+            params,
         )
         cols = [c.name for c in cur.description]
         shows = [dict(zip(cols, row)) for row in cur.fetchall()]
@@ -450,7 +482,16 @@ def create_app():
 
     @app.get("/site")
     def public_site_list():
-        return render_template("site_list.html", shows=_public_shows(g.db))
+        when = "past" if request.args.get("when") == "past" else "current"
+        venue_id = request.args.get("venue", type=int)
+        cur = g.db.cursor()
+        cur.execute("SELECT id, name FROM venues ORDER BY name")
+        venues = [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
+        return render_template(
+            "site_list.html",
+            shows=_public_shows(g.db, when=when, venue_id=venue_id),
+            when=when, venue_id=venue_id, venues=venues,
+        )
 
     @app.get("/site/<int:event_id>")
     def public_site_show(event_id):
@@ -458,6 +499,103 @@ def create_app():
         if not shows:
             return render_template("site_404.html"), 404
         return render_template("site_show.html", show=shows[0])
+
+    @app.get("/site/<int:event_id>/flyer")
+    def public_site_flyer(event_id):
+        cur = g.db.cursor()
+        cur.execute(
+            """SELECT f.storage_key, f.filename
+               FROM events e JOIN event_website ew ON ew.event_id = e.id
+               JOIN event_files f ON f.id = ew.hero_file_id
+               WHERE e.id = %s AND ew.published = TRUE""",
+            (event_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return render_template("site_404.html"), 404
+        storage_key, filename = row
+        return redirect(storage.presign_download(storage_key, filename, disposition="attachment"))
+
+    @app.get("/site/venues")
+    def public_site_venues():
+        cur = g.db.cursor()
+        cur.execute("SELECT id, name, address, phone, description, hero_storage_key, hero_filename FROM venues ORDER BY name")
+        venues = []
+        for vid, name, address, phone, description, hero_key, hero_filename in cur.fetchall():
+            venues.append({
+                "id": vid, "name": name, "address": address, "phone": phone, "description": description,
+                "hero_url": storage.presign_download(hero_key, hero_filename) if hero_key else None,
+            })
+        return render_template("site_venues.html", venues=venues)
+
+    @app.get("/site/contact")
+    def public_site_contact():
+        cur = g.db.cursor()
+        cur.execute("SELECT id, name FROM venues ORDER BY name")
+        venues = [{"id": r[0], "name": r[1]} for r in cur.fetchall()]
+        return render_template("site_contact.html", venues=venues)
+
+    @app.post("/api/contact")
+    def submit_contact():
+        body = request.get_json(silent=True) or {}
+        name = (body.get("name") or "").strip()[:200]
+        email = (body.get("email") or "").strip()[:200]
+        message = (body.get("message") or "").strip()[:4000]
+        venue_id = body.get("venue_id") or None
+        if not name or not email or not message:
+            return jsonify(error="all_fields_required"), 400
+        if "@" not in email:
+            return jsonify(error="invalid_email"), 400
+        cur = g.db.cursor()
+        if venue_id is not None:
+            cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
+            if cur.fetchone() is None:
+                venue_id = None
+        cur.execute(
+            "INSERT INTO contact_messages (name, email, venue_id, message) VALUES (%s, %s, %s, %s) RETURNING id",
+            (name, email, venue_id, message),
+        )
+        return jsonify(ok=True), 201
+
+    @app.get("/api/contact_messages")
+    @require_booker
+    def list_contact_messages():
+        cur = g.db.cursor()
+        cur.execute(
+            """SELECT cm.id, cm.name, cm.email, cm.venue_id, v.name, cm.message, cm.read_at, cm.created_at
+               FROM contact_messages cm LEFT JOIN venues v ON v.id = cm.venue_id
+               ORDER BY cm.created_at DESC"""
+        )
+        cols = ["id", "name", "email", "venue_id", "venue_name", "message", "read_at", "created_at"]
+        messages = []
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            d["read_at"] = d["read_at"].isoformat() if d["read_at"] else None
+            d["created_at"] = d["created_at"].isoformat()
+            messages.append(d)
+        return jsonify(messages=messages)
+
+    @app.patch("/api/contact_messages/<int:msg_id>")
+    @require_booker
+    def update_contact_message(msg_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM contact_messages WHERE id = %s", (msg_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        body = request.get_json(silent=True) or {}
+        if body.get("read"):
+            cur.execute("UPDATE contact_messages SET read_at = now() WHERE id = %s", (msg_id,))
+        return jsonify(ok=True)
+
+    @app.delete("/api/contact_messages/<int:msg_id>")
+    @require_booker
+    def delete_contact_message(msg_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM contact_messages WHERE id = %s", (msg_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("DELETE FROM contact_messages WHERE id = %s", (msg_id,))
+        return jsonify(ok=True)
 
     @app.post("/api/login")
     def login():
@@ -559,9 +697,84 @@ def create_app():
     @require_auth
     def list_venues():
         cur = g.db.cursor()
-        cur.execute("SELECT id, name FROM venues ORDER BY name")
-        cols = [c.name for c in cur.description]
-        return jsonify(venues=[dict(zip(cols, row)) for row in cur.fetchall()])
+        cur.execute(
+            "SELECT id, name, address, phone, description, hero_storage_key, hero_filename "
+            "FROM venues ORDER BY name"
+        )
+        venues = []
+        for vid, name, address, phone, description, hero_key, hero_filename in cur.fetchall():
+            venues.append({
+                "id": vid, "name": name, "address": address, "phone": phone, "description": description,
+                "hero_filename": hero_filename,
+                "hero_url": storage.presign_download(hero_key, hero_filename) if hero_key else None,
+            })
+        return jsonify(venues=venues)
+
+    @app.patch("/api/venues/<int:venue_id>")
+    @require_booker
+    def update_venue(venue_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT hero_storage_key FROM venues WHERE id = %s", (venue_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        old_hero_key = row[0]
+        body = request.get_json(silent=True) or {}
+        updates = {}
+        for field in ("address", "phone", "description"):
+            if field in body:
+                updates[field] = (body[field] or "").strip() or None
+        if "hero_storage_key" in body:
+            updates["hero_storage_key"] = body["hero_storage_key"] or None
+            updates["hero_filename"] = (body.get("hero_filename") or "").strip() or None
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur.execute(f"UPDATE venues SET {set_clause} WHERE id = %s", list(updates.values()) + [venue_id])
+        if "hero_storage_key" in updates and old_hero_key and old_hero_key != updates["hero_storage_key"]:
+            storage.delete_object(old_hero_key)
+        audit.record(g.db, g.viewer, "venue", venue_id, "update", {k: audit.jsonable(v) for k, v in updates.items()})
+        return jsonify(ok=True)
+
+    @app.post("/api/venues/<int:venue_id>/hero-upload-url")
+    @require_booker
+    def create_venue_hero_upload_url(venue_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        body = request.get_json(silent=True) or {}
+        filename = (body.get("filename") or "").strip()
+        if not filename:
+            return jsonify(error="filename_required"), 400
+        content_type = body.get("content_type") or "application/octet-stream"
+        storage_key = storage.new_storage_key(None, filename, venue_id)
+        upload_url = storage.presign_upload(storage_key, content_type)
+        return jsonify(storage_key=storage_key, filename=filename, upload_url=upload_url), 201
+
+    @app.get("/api/site_settings")
+    @require_booker
+    def get_site_settings():
+        cur = g.db.cursor()
+        cur.execute("SELECT facebook_url, instagram_url, tiktok_url, twitter_url FROM site_settings WHERE id = TRUE")
+        row = cur.fetchone() or (None, None, None, None)
+        return jsonify(facebook_url=row[0], instagram_url=row[1], tiktok_url=row[2], twitter_url=row[3])
+
+    @app.put("/api/site_settings")
+    @require_booker
+    def update_site_settings():
+        body = request.get_json(silent=True) or {}
+        updates = {}
+        for k in ("facebook_url", "instagram_url", "tiktok_url", "twitter_url"):
+            if k in body:
+                updates[k] = (body[k] or "").strip() or None
+        if not updates:
+            return jsonify(error="no_fields_to_update"), 400
+        set_clause = ", ".join(f"{k} = %s" for k in updates)
+        cur = g.db.cursor()
+        cur.execute(f"UPDATE site_settings SET {set_clause}, updated_at = now() WHERE id = TRUE", list(updates.values()))
+        audit.record(g.db, g.viewer, "site_settings", 1, "update", {k: audit.jsonable(v) for k, v in updates.items()})
+        return jsonify(ok=True)
 
     @app.get("/api/artists")
     @require_auth

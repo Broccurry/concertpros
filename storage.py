@@ -50,13 +50,13 @@ def presign_upload(storage_key, content_type):
     )
 
 
-def presign_download(storage_key, filename):
+def presign_download(storage_key, filename, disposition="inline"):
     return _client().generate_presigned_url(
         "get_object",
         Params={
             "Bucket": os.environ["B2_BUCKET"],
             "Key": storage_key,
-            "ResponseContentDisposition": f'inline; filename="{filename}"',
+            "ResponseContentDisposition": f'{disposition}; filename="{filename}"',
         },
         ExpiresIn=DOWNLOAD_URL_TTL,
     )

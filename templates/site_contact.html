@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact Us</title>
+<style>
+  :root{--ink:#16181d;--ink-2:#6b7382;--ground:#f2f3f6;--surface:#fff;--line:#e2e4ea;--accent:#c6122a}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:"Helvetica Neue",Arial,sans-serif;line-height:1.4}
+  header{background:var(--ink);color:#fff;padding:28px 16px;text-align:center}
+  header h1{margin:0;font-size:22px;text-transform:uppercase;letter-spacing:.08em}
+  main{max-width:520px;margin:0 auto;padding:20px 16px 60px}
+  .field{margin-bottom:14px;display:flex;flex-direction:column;gap:5px}
+  .field label{font-size:12.5px;color:var(--ink-2);font-weight:600}
+  .field input,.field select,.field textarea{border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+                                              font-size:15px;font-family:inherit;background:#fff;color:#111}
+  .field textarea{resize:vertical;min-height:110px}
+  button{width:100%;background:var(--accent);color:#fff;border:none;border-radius:8px;padding:13px;
+         font-size:16px;font-weight:700;cursor:pointer}
+  button:disabled{opacity:.6;cursor:default}
+  .msg{margin-top:14px;font-size:14px;text-align:center}
+  .msg.ok{color:#1c8a4a}
+  .msg.err{color:var(--accent)}
+</style>
+</head>
+<body>
+{% include "_site_nav.html" %}
+<header><h1>Contact Us</h1></header>
+<main>
+  <form id="contactForm">
+    <div class="field">
+      <label for="cf_name">Name</label>
+      <input id="cf_name" name="name" type="text" required>
+    </div>
+    <div class="field">
+      <label for="cf_email">Email</label>
+      <input id="cf_email" name="email" type="email" required>
+    </div>
+    <div class="field">
+      <label for="cf_venue">Which venue is this about? (optional)</label>
+      <select id="cf_venue" name="venue_id">
+        <option value="">Not venue-specific</option>
+        {% for v in venues %}<option value="{{ v.id }}">{{ v.name }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="field">
+      <label for="cf_message">Message</label>
+      <textarea id="cf_message" name="message" required></textarea>
+    </div>
+    <button type="submit" id="cfSubmit">Send message</button>
+    <p class="msg" id="cfMsg"></p>
+  </form>
+</main>
+{% include "_site_footer.html" %}
+<script>
+document.getElementById("contactForm").addEventListener("submit", async function(e){
+  e.preventDefault();
+  var btn = document.getElementById("cfSubmit"), msg = document.getElementById("cfMsg");
+  var body = {
+    name: document.getElementById("cf_name").value.trim(),
+    email: document.getElementById("cf_email").value.trim(),
+    venue_id: document.getElementById("cf_venue").value || null,
+    message: document.getElementById("cf_message").value.trim(),
+  };
+  btn.disabled = true; btn.textContent = "Sending...";
+  msg.textContent = ""; msg.className = "msg";
+  try {
+    var r = await fetch("/api/contact", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    if(r.ok){
+      msg.textContent = "Thanks — we'll get back to you soon.";
+      msg.className = "msg ok";
+      document.getElementById("contactForm").reset();
+    } else {
+      msg.textContent = "Something went wrong — check the fields and try again.";
+      msg.className = "msg err";
+    }
+  } catch(err){
+    msg.textContent = "Something went wrong — check your connection and try again.";
+    msg.className = "msg err";
+  }
+  btn.disabled = false; btn.textContent = "Send message";
+});
+</script>
+</body>
+</html>
