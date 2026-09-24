@@ -319,10 +319,12 @@ def todos_for(conn, viewer: Viewer) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(
             f"""
-            SELECT t.id, t.title, t.done, t.assigned_to, p.name AS assigned_to_name,
+            SELECT t.id, t.title, t.done, t.completed_at, t.venue_id, v.name AS venue_name,
+                   t.assigned_to, p.name AS assigned_to_name,
                    t.due_date, t.notes, t.created_by, t.created_at
             FROM todos t
             LEFT JOIN people p ON p.id = t.assigned_to
+            LEFT JOIN venues v ON v.id = t.venue_id
             {where}
             ORDER BY t.done, t.due_date NULLS LAST, t.created_at
             """,

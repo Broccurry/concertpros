@@ -288,7 +288,7 @@ CREATE TABLE vision_cards (
     id                SERIAL PRIMARY KEY,
     title             TEXT NOT NULL,
     column_key        TEXT NOT NULL DEFAULT 'idea'
-                      CHECK (column_key IN ('idea', 'in_progress', 'offer_sent')),
+                      CHECK (column_key IN ('idea', 'in_progress', 'offer_sent', 'follow_up')),
     sort_order        INTEGER NOT NULL DEFAULT 0,
     artist_id         INTEGER REFERENCES artists(id),
     venue_id          INTEGER REFERENCES venues(id),  -- optional: file the idea under a specific room
@@ -365,6 +365,8 @@ CREATE TABLE todos (
     id            SERIAL PRIMARY KEY,
     title         TEXT NOT NULL,
     done          BOOLEAN NOT NULL DEFAULT FALSE,
+    completed_at  TIMESTAMPTZ,               -- set when done flips true, cleared if flipped back
+    venue_id      INTEGER REFERENCES venues(id),  -- NULL = general/office task, not tied to one venue
     assigned_to   INTEGER REFERENCES people(id),
     due_date      DATE,
     notes         TEXT,
@@ -383,6 +385,7 @@ CREATE INDEX idx_todos_assigned ON todos(assigned_to) WHERE NOT done;
 CREATE TABLE event_files (
     id              SERIAL PRIMARY KEY,
     event_id        INTEGER REFERENCES events(id) ON DELETE CASCADE,
+    venue_id        INTEGER REFERENCES venues(id),  -- stage plot/advance info/equipment list, not tied to one show
     filename        TEXT NOT NULL,
     storage_key     TEXT NOT NULL UNIQUE,
     content_type    TEXT,

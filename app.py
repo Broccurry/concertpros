@@ -1651,7 +1651,7 @@ def create_app():
         return {
             "id": row[0], "event_id": row[1], "filename": row[2], "content_type": row[3],
             "size_bytes": row[4], "uploaded_by": row[5], "uploaded_by_name": row[6],
-            "created_at": row[7].isoformat(),
+            "created_at": row[7].isoformat(), "venue_id": row[8],
         }
 
     @app.get("/api/files")
@@ -1659,14 +1659,14 @@ def create_app():
     def list_files():
         # ?event_id=X scopes to one show's folder (the show editor's Files
         # section); no filter returns everything, which is what the Files
-        # tab needs to build its folder-per-show view without a second
-        # round trip per folder.
+        # tab needs to build its folder-per-show (and per-venue) view
+        # without a second round trip per folder.
         event_id = request.args.get("event_id", type=int)
         cur = g.db.cursor()
         if "event_id" in request.args:
             cur.execute(
                 """SELECT f.id, f.event_id, f.filename, f.content_type, f.size_bytes,
-                          f.uploaded_by, p.name, f.created_at
+                          f.uploaded_by, p.name, f.created_at, f.venue_id
                    FROM event_files f LEFT JOIN people p ON p.id = f.uploaded_by
                    WHERE f.event_id IS NOT DISTINCT FROM %s
                    ORDER BY f.created_at DESC""",
@@ -1675,7 +1675,7 @@ def create_app():
         else:
             cur.execute(
                 """SELECT f.id, f.event_id, f.filename, f.content_type, f.size_bytes,
-                          f.uploaded_by, p.name, f.created_at
+                          f.uploaded_by, p.name, f.created_at, f.venue_id
                    FROM event_files f LEFT JOIN people p ON p.id = f.uploaded_by
                    ORDER BY f.created_at DESC"""
             )
@@ -1689,6 +1689,7 @@ def create_app():
         if not filename:
             return jsonify(error="filename_required"), 400
         event_id = body.get("event_id")
+        venue_id = body.get("venue_id") or None
         content_type = body.get("content_type") or "application/octet-stream"
         size_bytes = body.get("size_bytes")
 
@@ -1697,16 +1698,20 @@ def create_app():
             cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
             if cur.fetchone() is None:
                 return jsonify(error="event_not_found"), 404
+        if venue_id is not None:
+            cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_venue"), 400
 
-        storage_key = storage.new_storage_key(event_id, filename)
+        storage_key = storage.new_storage_key(event_id, filename, venue_id)
         cur.execute(
-            """INSERT INTO event_files (event_id, filename, storage_key, content_type, size_bytes, uploaded_by)
-               VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
-            (event_id, filename, storage_key, content_type, size_bytes, g.viewer.id),
+            """INSERT INTO event_files (event_id, venue_id, filename, storage_key, content_type, size_bytes, uploaded_by)
+               VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (event_id, venue_id, filename, storage_key, content_type, size_bytes, g.viewer.id),
         )
         file_id = cur.fetchone()[0]
         audit.record(g.db, g.viewer, "event" if event_id else "file", event_id or file_id,
-                     "upload_file", {"filename": filename, "file_id": file_id})
+                     "upload_file", {"filename": filename, "file_id": file_id, "venue_id": venue_id})
         upload_url = storage.presign_upload(storage_key, content_type)
         return jsonify(id=file_id, upload_url=upload_url), 201
 
@@ -1992,7 +1997,7 @@ def create_app():
         audit.record(g.db, g.viewer, "event", event_id, "delete_message", {"message_id": message_id})
         return jsonify(ok=True)
 
-    _VISION_COLUMNS = ("idea", "in_progress", "offer_sent")
+    _VISION_COLUMNS = ("idea", "in_progress", "offer_sent", "follow_up")
 
     @app.get("/api/vision_cards")
     @require_booker
@@ -2174,6 +2179,12 @@ def create_app():
             cur.execute("SELECT 1 FROM people WHERE id = %s AND active", (assigned_to,))
             if cur.fetchone() is None:
                 return jsonify(error="unknown_person"), 400
+        venue_id = body.get("venue_id") or None
+        if venue_id is not None:
+            cur = g.db.cursor()
+            cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_venue"), 400
         due_date = None
         if body.get("due_date"):
             try:
@@ -2182,9 +2193,9 @@ def create_app():
                 return jsonify(error="invalid_due_date"), 400
         cur = g.db.cursor()
         cur.execute(
-            "INSERT INTO todos (title, assigned_to, due_date, notes, created_by) "
-            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (title, assigned_to, due_date, (body.get("notes") or "").strip() or None, g.viewer.id),
+            "INSERT INTO todos (title, assigned_to, venue_id, due_date, notes, created_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (title, assigned_to, venue_id, due_date, (body.get("notes") or "").strip() or None, g.viewer.id),
         )
         todo_id = cur.fetchone()[0]
         audit.record(g.db, g.viewer, "todo", todo_id, "create", {"title": title, "assigned_to": assigned_to})
@@ -2214,6 +2225,7 @@ def create_app():
             crew_updates = {}
             if "done" in body:
                 crew_updates["done"] = bool(body["done"])
+                crew_updates["completed_at"] = datetime.now(timezone.utc) if crew_updates["done"] else None
             if "notes" in body:
                 crew_updates["notes"] = (body["notes"] or "").strip() or None
             if not crew_updates:
@@ -2233,6 +2245,7 @@ def create_app():
             updates["title"] = title
         if "done" in body:
             updates["done"] = bool(body["done"])
+            updates["completed_at"] = datetime.now(timezone.utc) if updates["done"] else None
         if "assigned_to" in body:
             assigned = body["assigned_to"] or None
             if assigned is not None:
@@ -2240,6 +2253,13 @@ def create_app():
                 if cur.fetchone() is None:
                     return jsonify(error="unknown_person"), 400
             updates["assigned_to"] = assigned
+        if "venue_id" in body:
+            venue = body["venue_id"] or None
+            if venue is not None:
+                cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue,))
+                if cur.fetchone() is None:
+                    return jsonify(error="unknown_venue"), 400
+            updates["venue_id"] = venue
         if "due_date" in body:
             val = body["due_date"]
             if val in (None, ""):

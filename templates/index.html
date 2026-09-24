@@ -147,12 +147,14 @@ select, textarea{background:#fff;color:#111;color-scheme:light}
 .filterbar{border-bottom:1px solid var(--line);background:var(--surface)}
 .filterbar-inner{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:8px;
                  display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.filterbar-left{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.artiststierrow{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .eyebrow{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-3);white-space:nowrap}
 .chip{border:1px solid var(--line);background:transparent;color:var(--ink-2);padding:3px 10px;
       border-radius:999px;font-size:12.5px;white-space:nowrap}
 .chip[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent);color:var(--accent);font-weight:600}
-.calsearch{position:relative;margin-left:auto;min-width:220px}
+.calsearch{position:relative;min-width:320px;flex:1 1 320px;max-width:460px}
 .calsearch input{width:100%;border:1px solid var(--line);border-radius:var(--radius);padding:5px 8px;font-size:12.5px}
 .calsearch-results{position:absolute;top:calc(100% + 6px);left:0;right:0;max-height:320px;overflow-y:auto;
                     background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
@@ -164,7 +166,7 @@ select, textarea{background:#fff;color:#111;color-scheme:light}
 .calsearch-date{color:var(--ink-3);white-space:nowrap;font-variant-numeric:tabular-nums}
 .calsearch-venue{margin-left:auto;color:var(--ink-3);white-space:nowrap;font-size:11.5px}
 .calsearch-empty{padding:8px 4px;font-size:12px;color:var(--ink-3)}
-.showdead-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);white-space:nowrap;cursor:pointer}
+.showdead-toggle{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--ink-3);white-space:nowrap;cursor:pointer;margin-left:auto}
 .showdead-toggle input{width:auto}
 
 main{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:16px 48px}
@@ -477,10 +479,8 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .todorow-notes{width:100%;margin-top:6px;font-size:12.5px;resize:vertical;min-height:22px;
                border:1px solid var(--line);background:#fff;color:#111;color-scheme:light;
                border-radius:var(--radius);padding:4px 6px}
-.tododone{margin-top:14px;border:1px solid var(--line-strong);border-radius:var(--radius);padding:10px 14px}
-.tododone summary{display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;
-                   list-style:none;font-family:var(--body);font-size:14.5px;color:var(--ink)}
-.tododone summary::-webkit-details-marker{display:none}
+.todoboard{padding-bottom:18px;margin-bottom:18px;border-bottom:1px solid var(--line)}
+.todoboard:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
 
 /* Files: offers/contracts/flyers, either in a show's own folder (event_id
    set) or the general library (event_id null) — same row markup, same
@@ -538,7 +538,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
   .visioncol{flex:none;min-width:0}
 }
 
-@media (max-width:860px){.calsearch{margin-left:0;width:100%}.monthnav h2{min-width:140px;font-size:17px}}
+@media (max-width:860px){.calsearch{max-width:none;width:100%}.showdead-toggle{margin-left:0}.monthnav h2{min-width:140px;font-size:17px}}
 @media (max-width:660px){
   .dow div{font-size:9px;letter-spacing:.05em}
   .grid{gap:3px}
@@ -604,9 +604,11 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 
   <div class="filterbar" id="filterbar" style="display:none">
     <div class="filterbar-inner">
-      <button class="btn btn-primary" id="bookBtn" style="display:none">+ Book a show</button>
-      <span class="eyebrow">Venue</span>
-      <div class="chips" id="venueChips"></div>
+      <div class="filterbar-left">
+        <button class="btn btn-primary" id="bookBtn" style="display:none">+ Book a show</button>
+        <span class="eyebrow">Venue</span>
+        <div class="chips" id="venueChips"></div>
+      </div>
       <span class="eyebrow" id="countLabel"></span>
       <div class="calsearch" id="calSearchWrap">
         <input type="search" id="calSearchInput" placeholder="Search shows...">
@@ -690,6 +692,11 @@ function shortDate(s){
   if(!s) return "";
   var p = parts(s);
   return DOW_SHORT[new Date(p.y,p.m,p.d).getDay()] + " " + MONTHS[p.m].slice(0,3) + " " + p.d;
+}
+// Search results span every year of history, not just the month/year
+// already showing on screen -- shortDate alone is ambiguous there.
+function shortDateWithYear(s){
+  return s ? shortDate(s) + ", " + parts(s).y : "";
 }
 // A day-by-day ticket count line, left-to-right by date so a spike (or a
 // day sales stalled) reads at a glance -- the alternative was a growing
@@ -861,7 +868,7 @@ function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace
 var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], todos:[], files:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
@@ -931,11 +938,15 @@ function renderAll(){
   document.getElementById("monthLabel").textContent = MONTHS[ui.cursor.m] + " " + ui.cursor.y;
   document.getElementById("monthnav").style.display = (ui.view === "calendar") ? "flex" : "none";
 
-  var all = visibleEvents();
-  var thisMonth = all.filter(function(ev){
+  // Active/confirmed, not-yet-passed only -- a hold isn't a real show yet
+  // and a show that already happened isn't "coming up," so neither belongs
+  // in a count meant to answer "how many shows do we actually have on"?
+  var today = todayISO();
+  var activeUpcoming = visibleEvents().filter(function(ev){ return ev.status === "confirmed" && ev.show_date >= today; });
+  var thisMonth = activeUpcoming.filter(function(ev){
     var p = parts(ev.show_date); return p.y === ui.cursor.y && p.m === ui.cursor.m;
   }).length;
-  document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + all.length + " total";
+  document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + activeUpcoming.length + " total";
 
   ["calendar","todo","list","artists","staff","people","vision","files","website","settings"].forEach(function(v){
     document.getElementById("view-" + v).hidden = (v !== ui.view);
@@ -975,7 +986,7 @@ function renderCalSearchResults(query){
     results.forEach(function(ev){
       var row = el("button","calsearch-row");
       row.type = "button";
-      row.appendChild(el("span","calsearch-date", shortDate(ev.show_date)));
+      row.appendChild(el("span","calsearch-date", shortDateWithYear(ev.show_date)));
       var nameSpan = el("span","name"); nameSpan.appendChild(actsNodes(ev));
       row.appendChild(nameSpan);
       row.appendChild(el("span","calsearch-venue", ev.venue));
@@ -1157,7 +1168,7 @@ function renderListResults(host){
       results.forEach(function(ev){
         var tr = document.createElement("tr");
         tr.onclick = function(){ openEvent(ev.id); };
-        tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
+        tr.appendChild(el("td","date-col", shortDateWithYear(ev.show_date)));
         tr.appendChild(el("td",null, ev.venue));
         var td = el("td","title-cell"); td.appendChild(actsNodes(ev)); tr.appendChild(td);
         var stc = document.createElement("td"); stc.appendChild(statusPill(ev)); tr.appendChild(stc);
@@ -1304,13 +1315,16 @@ function filteredArtists(){
 function renderArtistsView(){
   var host = document.getElementById("view-artists");
   host.innerHTML = "";
-  var addBtn = el("button","btn btn-primary","+ Add band");
-  addBtn.type = "button";
-  addBtn.style.marginBottom = "14px";
-  addBtn.onclick = function(){ openArtistForm(null); };
-  host.appendChild(addBtn);
+  function addBandBtn(){
+    var b = el("button","btn btn-primary","+ Add band");
+    b.type = "button";
+    b.onclick = function(){ openArtistForm(null); };
+    return b;
+  }
 
   if(!store.artists.length){
+    var topAddBtn = addBandBtn(); topAddBtn.style.marginBottom = "14px";
+    host.appendChild(topAddBtn);
     var e = el("div","empty");
     e.appendChild(el("h3",null,"No artists yet"));
     e.appendChild(el("p",null,"Add one above, or book a show and it's created automatically."));
@@ -1330,7 +1344,8 @@ function renderArtistsView(){
   // The filter bar's inputs are built ONCE — re-rendering just the results
   // below on every keystroke, rather than the whole view, so typing a
   // second letter doesn't destroy the input you're still focused in.
-  var tierBar = el("div","chips"); tierBar.style.marginBottom = "10px";
+  var tierRow = el("div","artiststierrow"); tierRow.style.marginBottom = "10px";
+  var tierBar = el("div","chips");
   TIER_OPTIONS.forEach(function(t){
     var chip = el("button","chip", t);
     chip.type = "button";
@@ -1338,7 +1353,9 @@ function renderArtistsView(){
     chip.onclick = function(){ artistFilter.tiers[t] = !artistFilter.tiers[t]; renderArtistsView(); };
     tierBar.appendChild(chip);
   });
-  host.appendChild(tierBar);
+  tierRow.appendChild(tierBar);
+  tierRow.appendChild(addBandBtn());
+  host.appendChild(tierRow);
 
   var bar = el("div","row","");
   var genreInput = input("text", artistFilter.genre, function(v){ artistFilter.genre = v; renderArtistsResults(); });
@@ -3061,115 +3078,144 @@ async function updateHoldDateStatus(eventId, newStatus, version){
 }
 
 /* ============================== to do ================================== */
+function renderTodoRow(list, t){
+  var row = el("div","todorow" + (t.done ? " todorow-done" : ""));
+  var cb = document.createElement("input");
+  cb.type = "checkbox"; cb.checked = t.done;
+  cb.onchange = async function(){
+    await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify({done: cb.checked})});
+    await loadTodos();
+    renderAll();
+  };
+  row.appendChild(cb);
+  var mainCol = el("div","todorow-main");
+  mainCol.appendChild(el("p","todorow-title", t.title));
+  var bits = [];
+  if(canBook()) bits.push(t.assigned_to_name || "Unassigned");
+  if(t.due_date) bits.push("Due " + shortDate(t.due_date));
+  if(t.done && t.completed_at) bits.push("Completed " + shortDate(t.completed_at.slice(0,10)));
+  if(bits.length) mainCol.appendChild(el("p","hint", bits.join(" · ")));
+  // Both booker/owner (any task) and crew (their own, which is every
+  // task they can even see) are allowed to write this — it's the
+  // lightweight "leave a status update" the checkbox alone can't say.
+  var notesTa = document.createElement("textarea");
+  notesTa.rows = 2; notesTa.className = "todorow-notes";
+  notesTa.placeholder = "Notes / progress...";
+  notesTa.value = t.notes || "";
+  notesTa.onblur = async function(){
+    if(notesTa.value === (t.notes || "")) return;
+    await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify({notes: notesTa.value.trim() || null})});
+    await loadTodos();
+  };
+  mainCol.appendChild(notesTa);
+  row.appendChild(mainCol);
+  if(canBook()){
+    var del = el("button","x","✕");
+    del.type = "button";
+    del.title = "Delete task";
+    del.onclick = async function(){
+      await api("/api/todos/" + t.id, {method:"DELETE"});
+      await loadTodos();
+      renderAll();
+    };
+    row.appendChild(del);
+  }
+  list.appendChild(row);
+}
 function renderTodoView(){
   var host = document.getElementById("view-todo");
   host.innerHTML = "";
-
-  if(canBook()){
-    var addRow = el("div","row-3");
-    var titleInput = input("text", "", function(){});
-    titleInput.placeholder = "New task";
-    var assigneeSel = selectKV([{value:"",label:"Unassigned"}].concat(
-      store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; })), "", function(){});
-    var dueInput = input("date", "", function(){});
-    addRow.appendChild(field("Task", titleInput));
-    addRow.appendChild(field("Assign to", assigneeSel));
-    addRow.appendChild(field("Due (optional)", dueInput));
-    host.appendChild(addRow);
-    var notesInput = document.createElement("textarea");
-    notesInput.rows = 2; notesInput.placeholder = "What needs to happen (optional)";
-    var notesField = field("Notes", notesInput); notesField.style.marginTop = "10px";
-    host.appendChild(notesField);
-    var addBtn = el("button","btn btn-primary","+ Add task");
-    addBtn.type = "button";
-    addBtn.style.marginTop = "8px"; addBtn.style.marginBottom = "18px";
-    addBtn.onclick = async function(){
-      var title = titleInput.value.trim();
-      if(!title) return;
-      await api("/api/todos", {method:"POST", body: JSON.stringify({
-        title: title, assigned_to: assigneeSel.value ? Number(assigneeSel.value) : null,
-        due_date: dueInput.value || null, notes: notesInput.value.trim() || null,
-      })});
-      await loadTodos();
-      renderAll();
-    };
-    host.appendChild(addBtn);
-  }
-
   var todos = store.todos || [];
-  if(!todos.length){
-    var e = el("div","empty");
-    e.appendChild(el("h3",null, canBook() ? "No tasks yet" : "Nothing assigned to you"));
-    e.appendChild(el("p",null, canBook() ? "Add one above." : "You're all caught up."));
-    host.appendChild(e);
-    return;
-  }
 
-  function renderTodoRow(list, t){
-    var row = el("div","todorow" + (t.done ? " todorow-done" : ""));
-    var cb = document.createElement("input");
-    cb.type = "checkbox"; cb.checked = t.done;
-    cb.onchange = async function(){
-      await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify({done: cb.checked})});
-      await loadTodos();
-      renderAll();
-    };
-    row.appendChild(cb);
-    var mainCol = el("div","todorow-main");
-    mainCol.appendChild(el("p","todorow-title", t.title));
-    var bits = [];
-    if(canBook()) bits.push(t.assigned_to_name || "Unassigned");
-    if(t.due_date) bits.push("Due " + shortDate(t.due_date));
-    if(bits.length) mainCol.appendChild(el("p","hint", bits.join(" · ")));
-    // Both booker/owner (any task) and crew (their own, which is every
-    // task they can even see) are allowed to write this — it's the
-    // lightweight "leave a status update" the checkbox alone can't say.
-    var notesTa = document.createElement("textarea");
-    notesTa.rows = 2; notesTa.className = "todorow-notes";
-    notesTa.placeholder = "Notes / progress...";
-    notesTa.value = t.notes || "";
-    notesTa.onblur = async function(){
-      if(notesTa.value === (t.notes || "")) return;
-      await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify({notes: notesTa.value.trim() || null})});
-      await loadTodos();
-    };
-    mainCol.appendChild(notesTa);
-    row.appendChild(mainCol);
+  // Same shape as the Vision Board's BOARDS array: one board per venue,
+  // plus a General board for anything not tied to a specific room. Broc's
+  // call (2026-09-24) over one board with a venue filter, on the theory
+  // each venue's list is short enough that switching tabs to check one
+  // room's tasks is more friction than it's worth.
+  var boards = [{key:"general", venueId:null, label:"General"}].concat(
+    store.venues.map(function(v){ return {key:String(v.id), venueId:v.id, label:v.name}; }));
+
+  var shownAny = false;
+  boards.forEach(function(b){
+    var boardTodos = todos.filter(function(t){ return (t.venue_id || null) === b.venueId; });
+    // Crew has no add-task form and nothing to do on a board with nothing
+    // assigned to them on it — showing it would just be empty chrome.
+    if(!boardTodos.length && !canBook()) return;
+    shownAny = true;
+
+    var group = el("div","todoboard");
+    group.appendChild(el("h3","section", b.label));
+
     if(canBook()){
-      var del = el("button","x","✕");
-      del.type = "button";
-      del.title = "Delete task";
-      del.onclick = async function(){
-        await api("/api/todos/" + t.id, {method:"DELETE"});
+      var addRow = el("div","row-3");
+      var titleInput = input("text", "", function(){});
+      titleInput.placeholder = "New task";
+      var assigneeSel = selectKV([{value:"",label:"Unassigned"}].concat(
+        store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; })), "", function(){});
+      var dueInput = input("date", "", function(){});
+      addRow.appendChild(field("Task", titleInput));
+      addRow.appendChild(field("Assign to", assigneeSel));
+      addRow.appendChild(field("Due (optional)", dueInput));
+      group.appendChild(addRow);
+      var notesInput = document.createElement("textarea");
+      notesInput.rows = 2; notesInput.placeholder = "What needs to happen (optional)";
+      var notesField = field("Notes", notesInput); notesField.style.marginTop = "10px";
+      group.appendChild(notesField);
+      var addBtn = el("button","btn btn-primary","+ Add task");
+      addBtn.type = "button";
+      addBtn.style.marginTop = "8px"; addBtn.style.marginBottom = "18px";
+      addBtn.onclick = async function(){
+        var title = titleInput.value.trim();
+        if(!title) return;
+        await api("/api/todos", {method:"POST", body: JSON.stringify({
+          title: title, assigned_to: assigneeSel.value ? Number(assigneeSel.value) : null,
+          due_date: dueInput.value || null, notes: notesInput.value.trim() || null,
+          venue_id: b.venueId,
+        })});
         await loadTodos();
         renderAll();
       };
-      row.appendChild(del);
+      group.appendChild(addBtn);
     }
-    list.appendChild(row);
-  }
 
-  var active = todos.filter(function(t){ return !t.done; });
-  var done = todos.filter(function(t){ return t.done; });
+    var active = boardTodos.filter(function(t){ return !t.done; });
+    var done = boardTodos.filter(function(t){ return t.done; });
 
-  var list = el("div","todolist");
-  active.forEach(function(t){ renderTodoRow(list, t); });
-  host.appendChild(list);
-  if(!active.length) host.appendChild(el("p","hint", canBook() ? "Nothing outstanding." : "You're all caught up."));
+    var list = el("div","todolist");
+    active.forEach(function(t){ renderTodoRow(list, t); });
+    group.appendChild(list);
+    if(!active.length) group.appendChild(el("p","hint","Nothing outstanding."));
 
-  if(done.length){
-    var det = document.createElement("details");
-    det.className = "tododone";
-    det.open = !!ui.openFolders["todo-done"];
-    det.addEventListener("toggle", function(){ ui.openFolders["todo-done"] = det.open; });
-    var sum = document.createElement("summary");
-    sum.appendChild(el("span",null, "Done"));
-    sum.appendChild(el("span","hint", String(done.length)));
-    det.appendChild(sum);
-    var doneList = el("div","todolist"); doneList.style.marginTop = "10px";
-    det.appendChild(doneList);
-    done.forEach(function(t){ renderTodoRow(doneList, t); });
-    host.appendChild(det);
+    if(done.length){
+      var doneWrap = el("label","checkfield"); doneWrap.style.margin = "10px 0";
+      var doneCb = document.createElement("input");
+      doneCb.type = "checkbox";
+      doneCb.checked = !!ui.todoShowDone[b.key];
+      doneCb.onchange = function(){ ui.todoShowDone[b.key] = doneCb.checked; renderAll(); };
+      doneWrap.appendChild(doneCb);
+      doneWrap.appendChild(document.createTextNode(" Show completed (" + done.length + ")"));
+      group.appendChild(doneWrap);
+
+      if(ui.todoShowDone[b.key]){
+        // Newest-completed first -- legacy rows finished before completed_at
+        // existed fall back to created_at rather than sorting as undated.
+        var doneSorted = done.slice().sort(function(x,y){
+          return (y.completed_at || y.created_at || "").localeCompare(x.completed_at || x.created_at || "");
+        });
+        var doneList = el("div","todolist");
+        doneSorted.forEach(function(t){ renderTodoRow(doneList, t); });
+        group.appendChild(doneList);
+      }
+    }
+
+    host.appendChild(group);
+  });
+
+  if(!shownAny){
+    var e = el("div","empty");
+    e.appendChild(el("h3",null, "Nothing assigned to you"));
+    e.appendChild(el("p",null, "You're all caught up."));
+    host.appendChild(e);
   }
 }
 
@@ -3179,10 +3225,10 @@ function renderTodoView(){
 // second, slightly different upload flow to drift out of sync with this
 // one. The app never proxies the bytes: the browser PUTs straight to the
 // presigned B2 URL the backend hands back.
-async function uploadFile(file, eventId){
+async function uploadFile(file, eventId, venueId){
   var r = await api("/api/files/upload-url", {method:"POST", body: JSON.stringify({
     filename: file.name, content_type: file.type || "application/octet-stream",
-    size_bytes: file.size, event_id: eventId || null,
+    size_bytes: file.size, event_id: eventId || null, venue_id: venueId || null,
   })});
   if(!r.ok) return false;
   try {
@@ -3253,14 +3299,14 @@ function renderFileList(host, files, onChanged){
 // One upload control, used both here and in a show's own Files section —
 // the failure handling (a failed upload gets alerted, not silently
 // dropped) lives here once instead of being copied at each call site.
-function fileUploadInput(eventId, onDone){
+function fileUploadInput(eventId, onDone, venueId){
   var inp = document.createElement("input");
   inp.type = "file"; inp.multiple = true; inp.className = "btn";
   inp.onchange = async function(){
     var chosen = Array.prototype.slice.call(inp.files || []);
     inp.disabled = true;
     var failed = 0;
-    for(var i = 0; i < chosen.length; i++){ if(!(await uploadFile(chosen[i], eventId))) failed++; }
+    for(var i = 0; i < chosen.length; i++){ if(!(await uploadFile(chosen[i], eventId, venueId))) failed++; }
     inp.disabled = false;
     inp.value = "";
     if(failed){
@@ -3297,8 +3343,14 @@ function headlinerName(ev){
 function folderLabel(ev){
   return folderDateLabel(ev.show_date) + " " + headlinerName(ev) + " " + ev.venue;
 }
-function renderFolder(host, key, label, eventId){
-  var files = (store.files||[]).filter(function(f){ return f.event_id === eventId; });
+function renderFolder(host, key, label, eventId, venueId){
+  var files = (store.files||[]).filter(function(f){
+    // A venue folder matches purely on venue_id. The General folder is
+    // event_id null AND venue_id null -- otherwise every venue folder's
+    // files (also event_id null) would double up into General too.
+    if(venueId) return f.venue_id === venueId;
+    return f.event_id === eventId && !f.venue_id;
+  });
   var det = document.createElement("details");
   det.className = "folder";
   det.open = !!ui.openFolders[key];
@@ -3323,7 +3375,7 @@ function renderFolder(host, key, label, eventId){
 
   var listHost = el("div","filelist"); listHost.style.marginTop = "10px";
   det.appendChild(listHost);
-  det.appendChild(fileUploadInput(eventId, refreshFiles));
+  det.appendChild(fileUploadInput(eventId, refreshFiles, venueId));
   host.appendChild(det);
   renderFileList(listHost, files, refreshFiles);
 }
@@ -3331,9 +3383,25 @@ function renderFilesView(){
   var host = document.getElementById("view-files");
   host.innerHTML = "";
   host.appendChild(el("p","hint",
-    "One folder per confirmed show, grouped by year, plus a general one for anything not tied to a specific show. " +
+    "One folder per confirmed show, grouped by year, plus a general one for anything not tied to a specific show, " +
+    "and a Venues folder for things like stage plots and equipment lists that belong to the room, not one date. " +
     "A show's folder here is the exact same thing as the Files section on its own editor."));
   renderFolder(host, "general", "General", null);
+
+  var venuesDet = document.createElement("details");
+  venuesDet.className = "yearfolder";
+  venuesDet.open = !!ui.openFolders["venues"];
+  venuesDet.addEventListener("toggle", function(){ ui.openFolders["venues"] = venuesDet.open; });
+  var venuesSum = document.createElement("summary");
+  venuesSum.appendChild(el("span",null, "Venues"));
+  venuesSum.appendChild(el("span","hint", store.venues.length + " venue" + (store.venues.length === 1 ? "" : "s")));
+  venuesDet.appendChild(venuesSum);
+  var venuesBody = el("div","yearfolder-body");
+  venuesDet.appendChild(venuesBody);
+  host.appendChild(venuesDet);
+  store.venues.forEach(function(v){
+    renderFolder(venuesBody, "venue-" + v.id, v.name, null, v.id);
+  });
 
   var byYear = {};
   foldersEvents().forEach(function(ev){
@@ -3453,7 +3521,8 @@ function renderWebsiteView(){
 var VISION_COLUMNS = [{key:"idea", label:"Idea"}];
 var PROGRESS_COLUMNS = [{key:"in_progress", label:"In Progress"}];
 var MAO_COLUMNS = [{key:"offer_sent", label:"Offer Sent"}];
-var ALL_VISION_COLUMNS = VISION_COLUMNS.concat(PROGRESS_COLUMNS).concat(MAO_COLUMNS);
+var FOLLOWUP_COLUMNS = [{key:"follow_up", label:"Follow Up"}];
+var ALL_VISION_COLUMNS = VISION_COLUMNS.concat(PROGRESS_COLUMNS).concat(MAO_COLUMNS).concat(FOLLOWUP_COLUMNS);
 function visionCardsByColumn(key){
   return (store.visionCards||[]).filter(function(c){ return c.column_key === key; })
     .slice().sort(function(a,b){ return a.sort_order - b.sort_order; });
@@ -3471,6 +3540,8 @@ var BOARDS = [
    emptyHint:"Drag a card here once it's more than just an idea — someone's actively working it."},
   {key:"mao", label:"MAO", columns: MAO_COLUMNS,
    emptyHint:"Log an outreach below once you've actually reached out to someone."},
+  {key:"followup", label:"Follow Up", columns: FOLLOWUP_COLUMNS,
+   emptyHint:"A local killed it opening a national show, or a regional date sold well — drop a card here so the follow-up actually happens instead of just being a good idea at the time."},
 ];
 function renderVisionBoard(){
   var host = document.getElementById("view-vision");
@@ -3615,7 +3686,7 @@ function openVisionCardForm(cardId){
   // Which board a card lives on is just whichever stage it's in — moving
   // it to a MAO stage here is how a plain idea gets promoted onto the
   // MAO board, no separate "board" concept to keep in sync with this.
-  var colOpts = [{value:"idea", label:"Idea (Vision Board)"}, {value:"in_progress", label:"In Progress"}, {value:"offer_sent", label:"Offer Sent (MAO)"}];
+  var colOpts = [{value:"idea", label:"Idea (Vision Board)"}, {value:"in_progress", label:"In Progress"}, {value:"offer_sent", label:"Offer Sent (MAO)"}, {value:"follow_up", label:"Follow Up"}];
   var artistOpts = [{value:"",label:"No band linked"}].concat(
     store.artists.slice().sort(function(a,b){ return a.name.localeCompare(b.name); })
       .map(function(a){ return {value:a.id, label:a.name}; }));

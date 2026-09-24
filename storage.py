@@ -32,8 +32,8 @@ def _client():
     )
 
 
-def new_storage_key(event_id, filename):
-    folder = f"event-{event_id}" if event_id else "general"
+def new_storage_key(event_id, filename, venue_id=None):
+    folder = f"event-{event_id}" if event_id else (f"venue-{venue_id}" if venue_id else "general")
     safe_name = filename.replace("/", "_").replace("\\", "_")
     return f"{folder}/{uuid.uuid4().hex}-{safe_name}"
 
