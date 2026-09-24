@@ -238,11 +238,18 @@ tr.staffrow-urgent:hover td{background:var(--dead-bg)}
 tr.staffrow-urgent td.sub{color:var(--dead);font-weight:600}
 .staffcell-clickable{cursor:pointer}
 .staffcell-clickable:hover{text-decoration:underline;text-decoration-style:dotted}
-.staffcell-editing{min-width:190px;white-space:normal;cursor:default;padding:6px}
+/* Stacked, not a wide side-by-side row -- the select+time+delete all in
+   one line was forcing this column (and the whole table, via
+   .tablewrap's overflow-x:auto) wider than the viewport, showing a
+   horizontal scrollbar Broc didn't want ("weird slider," 2026-09-24).
+   Capping the cell's width and stacking the controls keeps this editor
+   from ever needing more room than a normal column already has. */
+.staffcell-editing{width:168px;max-width:168px;white-space:normal;cursor:default;padding:6px}
 .staffcell-editlabel{font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:4px}
-.staffcell-editrow{display:flex;gap:4px;align-items:center;margin-bottom:4px}
-.staffcell-editrow select{font-size:12px;padding:3px 4px;flex:1;min-width:0}
-.staffcell-editrow input[type=time]{font-size:12px;padding:3px;width:90px}
+.staffcell-editrow{display:flex;flex-direction:column;gap:4px;margin-bottom:6px}
+.staffcell-editrow select{font-size:12px;padding:3px 4px;width:100%}
+.staffcell-edittimerow{display:flex;gap:4px;align-items:center}
+.staffcell-edittimerow input[type=time]{font-size:12px;padding:3px;flex:1;min-width:0}
 .emaillist{display:flex;flex-direction:column;gap:2px;margin-top:12px}
 .emailrow{display:block;width:100%;text-align:left;border:1px solid transparent;border-bottom-color:var(--line);
           background:transparent;padding:10px 4px;cursor:pointer;border-radius:var(--radius)}
@@ -902,7 +909,13 @@ function taskProgress(ev){
   var t = ev.tasks || [];
   return {done: t.filter(function(x){ return x.done; }).length, total: t.length};
 }
-function staffLabel(s){ return s.person_name || (s.person_id ? "(removed person)" : "TBA"); }
+// Includes the call time right in the label -- without it, "who's working"
+// answered the question but not "what time do I need to be there," which
+// was the actual point of the scheduled-time field (Broc, 2026-09-24).
+function staffLabel(s){
+  var name = s.person_name || (s.person_id ? "(removed person)" : "TBA");
+  return name + (s.scheduled_time ? " (" + time12(s.scheduled_time) + ")" : "");
+}
 function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
 
 /* ============================== state =============================== */
@@ -1836,15 +1849,17 @@ function renderStaffView(){
                 renderStaffView();
               });
             editRow.appendChild(personSel);
+            var timeRow = el("div","staffcell-edittimerow");
             var timeInput = document.createElement("input");
             timeInput.type = "time"; timeInput.value = s.scheduled_time || "";
+            timeInput.title = "What time this person needs to be there";
             timeInput.onchange = async function(){
               await api("/api/assignments/" + s.id, {method:"PATCH",
                 body: JSON.stringify({scheduled_time: timeInput.value || null})});
               await loadEvents();
               renderStaffView();
             };
-            editRow.appendChild(timeInput);
+            timeRow.appendChild(timeInput);
             var delBtn = el("button","rowdel","✕");
             delBtn.type = "button"; delBtn.title = "Remove this shift";
             delBtn.onclick = async function(){
@@ -1852,7 +1867,8 @@ function renderStaffView(){
               await loadEvents();
               renderStaffView();
             };
-            editRow.appendChild(delBtn);
+            timeRow.appendChild(delBtn);
+            editRow.appendChild(timeRow);
             td.appendChild(editRow);
           });
           var addAnotherBtn = el("button","btn btn-sm","+ Another " + role.name);
