@@ -166,8 +166,10 @@ class Files(unittest.TestCase):
         files = client.get("/api/files").get_json()["files"]
         self.assertNotIn(body["id"], [f["id"] for f in files])
 
-    def _create_folder(self, client, name="Insurance"):
-        r = client.post("/api/file_folders", json={"name": name})
+    def _create_folder(self, client, name="Insurance", **extra):
+        payload = {"name": name}
+        payload.update(extra)
+        r = client.post("/api/file_folders", json=payload)
         self.assertEqual(r.status_code, 201, r.get_json())
         folder_id = r.get_json()["id"]
         self.folder_ids.append(folder_id)
@@ -177,8 +179,20 @@ class Files(unittest.TestCase):
         client = self.app.test_client()
         self._login(client, self.booker_email)
         folder_id = self._create_folder(client)
-        names = [f["name"] for f in client.get("/api/file_folders").get_json()["folders"]]
-        self.assertIn("Insurance", names)
+        folders = client.get("/api/file_folders").get_json()["folders"]
+        mine = next(f for f in folders if f["id"] == folder_id)
+        self.assertEqual(mine["name"], "Insurance")
+        self.assertIsNone(mine["year"])
+
+    def test_a_folder_created_from_a_year_section_is_filed_under_that_year(self):
+        """"+ New folder" clicked from inside the 2027 section should land
+        there, not always at the top-level General list (Broc, 2026-09-24)."""
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        folder_id = self._create_folder(client, name="2027 riders", year=2027)
+        folders = client.get("/api/file_folders").get_json()["folders"]
+        mine = next(f for f in folders if f["id"] == folder_id)
+        self.assertEqual(mine["year"], 2027)
 
     def test_folder_name_is_required(self):
         client = self.app.test_client()

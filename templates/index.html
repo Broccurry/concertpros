@@ -130,7 +130,8 @@ select, textarea{background:#fff;color:#111;color-scheme:light}
    the WHOLE topbar onto a second line, which was shoving Log out down
    below Today once Email pushed this row past the available width. */
 .views{display:flex;gap:2px;background:var(--surface-2);padding:2px;border-radius:var(--radius);
-       overflow-x:auto;flex:0 1 auto;scrollbar-width:thin}
+       overflow-x:auto;flex:0 1 auto;scrollbar-width:none;-ms-overflow-style:none}
+.views::-webkit-scrollbar{display:none}
 .views button{border:0;background:transparent;color:var(--ink-3);padding:5px 12px;border-radius:4px;font-size:13px;font-weight:500;
               white-space:nowrap;flex:none}
 .views button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
@@ -922,7 +923,7 @@ function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace
 var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], offers:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[], fileFolders:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false, staffEditingCell:null, addingFileFolder:false};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false, staffEditingCell:null, addingFileFolderIn:null};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
@@ -3702,40 +3703,51 @@ function renderFolder(host, key, label, eventId, venueId, folderId){
   host.appendChild(det);
   renderFileList(listHost, files, refreshFiles);
 }
-function renderFilesView(){
-  var host = document.getElementById("view-files");
-  host.innerHTML = "";
-
-  if(ui.addingFileFolder){
+// "+ New folder" lives inside whichever section it's clicked from (General
+// or a specific year) and the folder it creates is filed there, not always
+// dumped at the top level regardless of where you were looking (Broc,
+// 2026-09-24: "if i need a new folder in 2027 folder it creates there").
+// contextKey is "general" or "year-2027"; year is null or that year number.
+function renderNewFolderControl(host, contextKey, year){
+  if(ui.addingFileFolderIn === contextKey){
     var newFolderRow = el("div","btnrow");
     var nameInp = document.createElement("input");
     nameInp.type = "text"; nameInp.placeholder = "Folder name"; nameInp.className = "visioncol-quickadd";
-    nameInp.style.width = "220px";
+    nameInp.style.width = "220px"; nameInp.style.marginBottom = "0";
     nameInp.onkeydown = async function(e){
       if(e.key !== "Enter") return;
       var name = nameInp.value.trim();
       if(!name) return;
-      await api("/api/file_folders", {method:"POST", body: JSON.stringify({name:name})});
-      ui.addingFileFolder = false;
+      await api("/api/file_folders", {method:"POST", body: JSON.stringify({name:name, year:year})});
+      ui.addingFileFolderIn = null;
       await loadBookerLookups();
       renderFilesView();
     };
     newFolderRow.appendChild(nameInp);
     var cancelFolderBtn = el("button","btn btn-sm","Cancel");
     cancelFolderBtn.type = "button";
-    cancelFolderBtn.onclick = function(){ ui.addingFileFolder = false; renderFilesView(); };
+    cancelFolderBtn.onclick = function(){ ui.addingFileFolderIn = null; renderFilesView(); };
     newFolderRow.appendChild(cancelFolderBtn);
     host.appendChild(newFolderRow);
   } else {
-    var newFolderBtn = el("button","btn","+ New folder");
+    var newFolderBtn = el("button","btn btn-sm","+ New folder");
     newFolderBtn.type = "button";
-    newFolderBtn.style.marginBottom = "12px";
-    newFolderBtn.onclick = function(){ ui.addingFileFolder = true; renderFilesView(); };
+    newFolderBtn.style.marginBottom = "8px";
+    newFolderBtn.onclick = function(e){
+      if(e) e.stopPropagation();
+      ui.addingFileFolderIn = contextKey;
+      renderFilesView();
+    };
     host.appendChild(newFolderBtn);
   }
+}
+function renderFilesView(){
+  var host = document.getElementById("view-files");
+  host.innerHTML = "";
 
+  renderNewFolderControl(host, "general", null);
   renderFolder(host, "general", "General", null);
-  (store.fileFolders||[]).forEach(function(f){
+  (store.fileFolders||[]).filter(function(f){ return f.year == null; }).forEach(function(f){
     renderFolder(host, "folder-" + f.id, f.name, null, null, f.id);
   });
 
@@ -3771,6 +3783,10 @@ function renderFilesView(){
     var yearBody = el("div","yearfolder-body");
     det.appendChild(yearBody);
     host.appendChild(det);
+    renderNewFolderControl(yearBody, "year-" + year, Number(year));
+    (store.fileFolders||[]).filter(function(f){ return f.year === Number(year); }).forEach(function(f){
+      renderFolder(yearBody, "folder-" + f.id, f.name, null, null, f.id);
+    });
     byYear[year].forEach(function(ev){
       renderFolder(yearBody, "event-" + ev.id, folderLabel(ev), ev.id);
     });

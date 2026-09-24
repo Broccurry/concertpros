@@ -2106,20 +2106,27 @@ def create_app():
     @require_booker
     def list_file_folders():
         cur = g.db.cursor()
-        cur.execute("SELECT id, name FROM file_folders ORDER BY name")
-        return jsonify(folders=[{"id": r[0], "name": r[1]} for r in cur.fetchall()])
+        cur.execute("SELECT id, name, year FROM file_folders ORDER BY name")
+        return jsonify(folders=[{"id": r[0], "name": r[1], "year": r[2]} for r in cur.fetchall()])
 
     @app.post("/api/file_folders")
     @require_booker
     def create_file_folder():
+        # "+ New folder" lives inside whichever section you're already
+        # looking at (General or a specific year) and files the new folder
+        # there -- not always at the top level regardless of context
+        # (Broc, 2026-09-24: "if i need a new folder in 2027 folder it
+        # creates there").
         body = request.get_json(silent=True) or {}
         name = (body.get("name") or "").strip()
         if not name:
             return jsonify(error="name_required"), 400
+        year = body.get("year") or None
         cur = g.db.cursor()
-        cur.execute("INSERT INTO file_folders (name, created_by) VALUES (%s, %s) RETURNING id", (name, g.viewer.id))
+        cur.execute("INSERT INTO file_folders (name, year, created_by) VALUES (%s, %s, %s) RETURNING id",
+                    (name, year, g.viewer.id))
         folder_id = cur.fetchone()[0]
-        audit.record(g.db, g.viewer, "file_folder", folder_id, "create", {"name": name})
+        audit.record(g.db, g.viewer, "file_folder", folder_id, "create", {"name": name, "year": year})
         return jsonify(id=folder_id), 201
 
     @app.delete("/api/file_folders/<int:folder_id>")

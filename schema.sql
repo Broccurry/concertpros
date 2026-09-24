@@ -428,6 +428,7 @@ CREATE INDEX idx_todos_assigned ON todos(assigned_to) WHERE NOT done;
 CREATE TABLE file_folders (
     id          SERIAL PRIMARY KEY,
     name        TEXT NOT NULL,
+    year        INTEGER,  -- NULL = lives in General; set = filed under that year's section, same place you clicked "+ New folder"
     created_by  INTEGER REFERENCES people(id),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
