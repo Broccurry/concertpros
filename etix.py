@@ -1,14 +1,18 @@
-"""Etix integration — currently just the public event feed via a
-client_credentials token, which is all our current Etix app is
-authorized for (see project memory: the password grant needed for
-ticket-count/settlement data is still waiting on Etix support).
+"""Etix integration.
 
-The client_credentials token is app-only, no per-user data, so it can
-only reach /public/events -- Etix's global public catalog, not a
-private "your venues" endpoint. We filter it by our own venueId per
-room instead.
+Real, user-bound API access as of 2026-09-24 -- ETIX_AUTH_CODE/
+ETIX_REFRESH_TOKEN (from Etix's "Manage API Key" screen, NOT the same
+thing as ETIX_CLIENT_ID/ETIX_CLIENT_SECRET, which only ever got
+client_credentials/app-only access to /public/events). Confirmed live
+against the real, previously-blocked /v3/events private endpoint before
+anything was built on it -- this is a materially different, non-standard
+OAuth flow: the "Authorization Code" goes directly in the Basic header
+(not base64(id:secret) -- Etix's own value already is opaque base64),
+and the "API Key" shown in their UI is passed as grant_type=refresh_token's
+refresh_token param. See Etix's "Manage API Keys" help doc for the exact
+shape; their client_credentials grant (still used nowhere in this file
+now) is a different, more limited registration type.
 """
-import base64
 import json
 import os
 import time as time_module
@@ -20,9 +24,9 @@ from zoneinfo import ZoneInfo
 TOKEN_URL = "https://authorization.etix.com/v1/token/authorize"
 API_BASE = "https://api.etix.com/v3"
 
-# Looked up by hand via the public events feed (see project memory) --
-# Etix has no endpoint to resolve "our" venues without the private,
-# user-bound API this app doesn't have access to yet.
+# Looked up by hand via the public events feed before private access
+# worked (see project memory) -- kept as the known-good mapping now that
+# /v3/events (private, real venue data) is reachable too.
 VENUE_IDS = {
     "Frankies": 13808,
     "Ottawa Tavern": 13807,
@@ -36,13 +40,13 @@ def _get_token():
     now = time_module.time()
     if _token_cache["token"] and now < _token_cache["expires_at"] - 60:
         return _token_cache["token"]
-    client_id = os.environ["ETIX_CLIENT_ID"]
-    client_secret = os.environ["ETIX_CLIENT_SECRET"]
-    basic = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-    body = urllib.parse.urlencode({"grant_type": "client_credentials"}).encode()
+    auth_code = os.environ["ETIX_AUTH_CODE"]
+    refresh_token = os.environ["ETIX_REFRESH_TOKEN"]
+    body = urllib.parse.urlencode({"grant_type": "refresh_token", "refresh_token": refresh_token}).encode()
     req = urllib.request.Request(
         TOKEN_URL, method="POST",
-        headers={"Authorization": f"Basic {basic}", "Content-Type": "application/x-www-form-urlencoded"},
+        headers={"Authorization": f"Basic {auth_code}", "Content-Type": "application/x-www-form-urlencoded",
+                 "Accept": "application/json"},
         data=body,
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
