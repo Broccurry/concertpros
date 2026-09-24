@@ -367,6 +367,7 @@ CREATE TABLE todos (
     done          BOOLEAN NOT NULL DEFAULT FALSE,
     completed_at  TIMESTAMPTZ,               -- set when done flips true, cleared if flipped back
     venue_id      INTEGER REFERENCES venues(id),  -- NULL = general/office task, not tied to one venue
+    sort_order    INTEGER NOT NULL DEFAULT 0,     -- position on its venue's board, same idea as vision_cards
     assigned_to   INTEGER REFERENCES people(id),
     due_date      DATE,
     notes         TEXT,

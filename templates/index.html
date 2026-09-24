@@ -480,8 +480,9 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .todorow-notes{width:100%;margin-top:6px;font-size:12.5px;resize:vertical;min-height:22px;
                border:1px solid var(--line);background:#fff;color:#111;color-scheme:light;
                border-radius:var(--radius);padding:4px 6px}
-.todoboard{padding-bottom:18px;margin-bottom:18px;border-bottom:1px solid var(--line)}
-.todoboard:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+.todocard-head{display:flex;align-items:flex-start;gap:6px}
+.todocard-head input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent);flex:none;margin-top:2px;cursor:pointer}
+.todocard-head .visioncard-title{flex:1}
 
 /* Files: offers/contracts/flyers, either in a show's own folder (event_id
    set) or the general library (event_id null) — same row markup, same
@@ -532,6 +533,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .visioncard-body{flex:1;min-width:0;cursor:pointer}
 .visioncard-title{margin:0 0 4px;font-size:13px;line-height:1.35;color:var(--ink)}
 .vision-followup-due{color:var(--dead);font-weight:600}
+.visioncol-empty{margin:0;font-size:12px;color:var(--ink-3);line-height:1.4}
 .visioncol-quickadd{width:100%;margin-bottom:10px;border:1px dashed var(--line-strong);background:transparent;
                      border-radius:var(--radius);padding:6px 8px;font-size:12.5px}
 @media (max-width:660px){
@@ -3125,101 +3127,139 @@ function renderTodoRow(list, t){
   }
   list.appendChild(row);
 }
+function renderTodoCardBody(t, body){
+  var head = el("div","todocard-head");
+  var cb = document.createElement("input");
+  cb.type = "checkbox"; cb.checked = t.done;
+  cb.onchange = async function(){
+    await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify({done: cb.checked})});
+    await loadTodos();
+    renderAll();
+  };
+  head.appendChild(cb);
+  head.appendChild(el("p","visioncard-title", t.title));
+  body.appendChild(head);
+
+  var bits = [t.assigned_to_name || "Unassigned"];
+  if(t.due_date) bits.push("Due " + shortDate(t.due_date));
+  body.appendChild(el("p","hint", bits.join(" · ")));
+
+  var notesTa = document.createElement("textarea");
+  notesTa.rows = 2; notesTa.className = "todorow-notes";
+  notesTa.placeholder = "Notes / progress...";
+  notesTa.value = t.notes || "";
+  notesTa.onblur = async function(){
+    if(notesTa.value === (t.notes || "")) return;
+    await api("/api/todos/" + t.id, {method:"PATCH", body: JSON.stringify({notes: notesTa.value.trim() || null})});
+    await loadTodos();
+  };
+  body.appendChild(notesTa);
+
+  var del = el("button","x","✕");
+  del.type = "button"; del.title = "Delete task";
+  del.onclick = async function(){
+    await api("/api/todos/" + t.id, {method:"DELETE"});
+    await loadTodos();
+    renderAll();
+  };
+  body.appendChild(del);
+}
+function todoBoards(){
+  return [{key:"general", venueId:null, label:"General"}].concat(
+    store.venues.map(function(v){ return {key:String(v.id), venueId:v.id, label:v.name}; }));
+}
+function todosByVenue(venueId){
+  return (store.todos||[]).filter(function(t){ return (t.venue_id||null) === venueId && !t.done; })
+    .slice().sort(function(a,b){ return a.sort_order - b.sort_order; });
+}
+async function moveTodo(todoId, boardKey, index){
+  // boardKey is the target column's key, exactly like moveVisionCard's
+  // columnKey -- it's whatever board the drop actually landed on, never
+  // the board the dragged card started in.
+  var venueId = boardKey === "general" ? null : Number(boardKey);
+  var ids = todosByVenue(venueId).map(function(t){ return t.id; }).filter(function(id){ return id !== todoId; });
+  ids.splice(index, 0, todoId);
+  await api("/api/todos/reorder", {method:"POST", body: JSON.stringify({venue_id: venueId, todo_ids: ids})});
+  await loadTodos();
+  renderAll();
+}
+function renderTodoDoneToggle(host, key, done){
+  if(!done.length) return;
+  var doneWrap = el("label","checkfield"); doneWrap.style.margin = "10px 0";
+  var doneCb = document.createElement("input");
+  doneCb.type = "checkbox";
+  doneCb.checked = !!ui.todoShowDone[key];
+  doneCb.onchange = function(){ ui.todoShowDone[key] = doneCb.checked; renderAll(); };
+  doneWrap.appendChild(doneCb);
+  doneWrap.appendChild(document.createTextNode(" Show completed (" + done.length + ")"));
+  host.appendChild(doneWrap);
+
+  if(ui.todoShowDone[key]){
+    // Newest-completed first -- legacy rows finished before completed_at
+    // existed fall back to created_at rather than sorting as undated.
+    var doneSorted = done.slice().sort(function(x,y){
+      return (y.completed_at || y.created_at || "").localeCompare(x.completed_at || x.created_at || "");
+    });
+    var doneList = el("div","todolist");
+    doneSorted.forEach(function(t){ renderTodoRow(doneList, t); });
+    host.appendChild(doneList);
+  }
+}
 function renderTodoView(){
   var host = document.getElementById("view-todo");
   host.innerHTML = "";
   var todos = store.todos || [];
 
-  // Same shape as the Vision Board's BOARDS array: one board per venue,
-  // plus a General board for anything not tied to a specific room. Broc's
-  // call (2026-09-24) over one board with a venue filter, on the theory
-  // each venue's list is short enough that switching tabs to check one
-  // room's tasks is more friction than it's worth.
-  var boards = [{key:"general", venueId:null, label:"General"}].concat(
-    store.venues.map(function(v){ return {key:String(v.id), venueId:v.id, label:v.name}; }));
+  if(!canBook()){
+    // Crew sees only their own tasks (already scoped server-side) as a
+    // plain checklist -- no boards to drag between, nothing to add, so
+    // the Vision-Board card treatment would just be overhead here.
+    var mine = todos.filter(function(t){ return !t.done; });
+    var mineDone = todos.filter(function(t){ return t.done; });
+    if(!mine.length && !mineDone.length){
+      var e = el("div","empty");
+      e.appendChild(el("h3",null,"Nothing assigned to you"));
+      e.appendChild(el("p",null,"You're all caught up."));
+      host.appendChild(e);
+      return;
+    }
+    var list = el("div","todolist");
+    mine.forEach(function(t){ renderTodoRow(list, t); });
+    host.appendChild(list);
+    if(!mine.length) host.appendChild(el("p","hint","You're all caught up."));
+    renderTodoDoneToggle(host, "mine", mineDone);
+    return;
+  }
 
-  var shownAny = false;
-  boards.forEach(function(b){
-    var boardTodos = todos.filter(function(t){ return (t.venue_id || null) === b.venueId; });
-    // Crew has no add-task form and nothing to do on a board with nothing
-    // assigned to them on it — showing it would just be empty chrome.
-    if(!boardTodos.length && !canBook()) return;
-    shownAny = true;
-
-    var group = el("div","todoboard");
+  // Booker/owner: the exact same board-of-cards structure as the Vision
+  // Board (renderCardBoard) -- a board per venue plus General, cards
+  // draggable within and across boards, quick-add at the top of each.
+  var row = el("div","boardsrow");
+  host.appendChild(row);
+  todoBoards().forEach(function(b){
+    var group = el("div","boardgroup");
     group.appendChild(el("h3","section", b.label));
+    var boardHost = el("div");
+    group.appendChild(boardHost);
+    row.appendChild(group);
 
-    if(canBook()){
-      var addRow = el("div","row-3");
-      var titleInput = input("text", "", function(){});
-      titleInput.placeholder = "New task";
-      var assigneeSel = selectKV([{value:"",label:"Unassigned"}].concat(
-        store.people.filter(function(p){ return p.active; }).map(function(p){ return {value:p.id, label:p.name}; })), "", function(){});
-      var dueInput = input("date", "", function(){});
-      addRow.appendChild(field("Task", titleInput));
-      addRow.appendChild(field("Assign to", assigneeSel));
-      addRow.appendChild(field("Due (optional)", dueInput));
-      group.appendChild(addRow);
-      var notesInput = document.createElement("textarea");
-      notesInput.rows = 2; notesInput.placeholder = "What needs to happen (optional)";
-      var notesField = field("Notes", notesInput); notesField.style.marginTop = "10px";
-      group.appendChild(notesField);
-      var addBtn = el("button","btn btn-primary","+ Add task");
-      addBtn.type = "button";
-      addBtn.style.marginTop = "8px"; addBtn.style.marginBottom = "18px";
-      addBtn.onclick = async function(){
-        var title = titleInput.value.trim();
-        if(!title) return;
-        await api("/api/todos", {method:"POST", body: JSON.stringify({
-          title: title, assigned_to: assigneeSel.value ? Number(assigneeSel.value) : null,
-          due_date: dueInput.value || null, notes: notesInput.value.trim() || null,
-          venue_id: b.venueId,
-        })});
+    renderCardBoard(boardHost, [{key:b.key, label:b.label}], {
+      allColumnsSelector: "#view-todo .visioncol",
+      itemsForColumn: function(){ return todosByVenue(b.venueId); },
+      quickAddPlaceholder: "+ Add a task",
+      emptyHint: "Nothing outstanding.",
+      onQuickAdd: async function(colKey, title){
+        await api("/api/todos", {method:"POST", body: JSON.stringify({title:title, venue_id: b.venueId})});
         await loadTodos();
         renderAll();
-      };
-      group.appendChild(addBtn);
-    }
+      },
+      onMove: moveTodo,
+      renderCardBody: renderTodoCardBody,
+    });
 
-    var active = boardTodos.filter(function(t){ return !t.done; });
-    var done = boardTodos.filter(function(t){ return t.done; });
-
-    var list = el("div","todolist");
-    active.forEach(function(t){ renderTodoRow(list, t); });
-    group.appendChild(list);
-    if(!active.length) group.appendChild(el("p","hint","Nothing outstanding."));
-
-    if(done.length){
-      var doneWrap = el("label","checkfield"); doneWrap.style.margin = "10px 0";
-      var doneCb = document.createElement("input");
-      doneCb.type = "checkbox";
-      doneCb.checked = !!ui.todoShowDone[b.key];
-      doneCb.onchange = function(){ ui.todoShowDone[b.key] = doneCb.checked; renderAll(); };
-      doneWrap.appendChild(doneCb);
-      doneWrap.appendChild(document.createTextNode(" Show completed (" + done.length + ")"));
-      group.appendChild(doneWrap);
-
-      if(ui.todoShowDone[b.key]){
-        // Newest-completed first -- legacy rows finished before completed_at
-        // existed fall back to created_at rather than sorting as undated.
-        var doneSorted = done.slice().sort(function(x,y){
-          return (y.completed_at || y.created_at || "").localeCompare(x.completed_at || x.created_at || "");
-        });
-        var doneList = el("div","todolist");
-        doneSorted.forEach(function(t){ renderTodoRow(doneList, t); });
-        group.appendChild(doneList);
-      }
-    }
-
-    host.appendChild(group);
+    var done = todos.filter(function(t){ return (t.venue_id||null) === b.venueId && t.done; });
+    renderTodoDoneToggle(group, b.key, done);
   });
-
-  if(!shownAny){
-    var e = el("div","empty");
-    e.appendChild(el("h3",null, "Nothing assigned to you"));
-    e.appendChild(el("p",null, "You're all caught up."));
-    host.appendChild(e);
-  }
 }
 
 /* ============================== files ================================ */
@@ -3689,6 +3729,21 @@ var BOARDS = [
   {key:"followup", label:"Follow Up", columns: FOLLOWUP_COLUMNS,
    emptyHint:"A local killed it opening a national show, or a regional date sold well — drop a card here so the follow-up actually happens instead of just being a good idea at the time."},
 ];
+function renderVisionCardBody(c, body){
+  body.onclick = function(){ openVisionCardForm(c.id); };
+  body.appendChild(el("p","visioncard-title", c.title));
+  if(c.artist_name) body.appendChild(el("span","pill s-complete", c.artist_name));
+  if(c.venue_name) body.appendChild(el("span","pill pill-muted", c.venue_name));
+  if(c.trigger_event_id){
+    body.appendChild(el("p","hint",
+      "From " + shortDate(c.trigger_show_date) + " · " + c.trigger_venue));
+  }
+  if(c.follow_up_date){
+    var due = c.follow_up_date <= todayISO();
+    var fuText = "Follow up " + shortDate(c.follow_up_date) + (c.follow_up_person_name ? " · " + c.follow_up_person_name : "");
+    body.appendChild(el("p", due ? "hint vision-followup-due" : "hint", fuText));
+  }
+}
 function renderVisionBoard(){
   var host = document.getElementById("view-vision");
   host.innerHTML = "";
@@ -3701,19 +3756,30 @@ function renderVisionBoard(){
     var boardHost = el("div");
     group.appendChild(boardHost);
     row.appendChild(group);
-    renderCardBoard(boardHost, b.columns, b.emptyHint);
+    renderCardBoard(boardHost, b.columns, {
+      allColumnsSelector: "#view-vision .visioncol",
+      itemsForColumn: visionCardsByColumn,
+      quickAddPlaceholder: "+ Add a card",
+      emptyHint: b.emptyHint,
+      onQuickAdd: async function(colKey, title){
+        await api("/api/vision_cards", {method:"POST", body: JSON.stringify({title:title, column_key:colKey})});
+        await loadBookerLookups();
+        renderAll();
+      },
+      onMove: moveVisionCard,
+      renderCardBody: renderVisionCardBody,
+    });
   });
 }
-function renderCardBoard(host, columns, emptyHint){
-
-  var anyCards = columns.some(function(col){ return visionCardsByColumn(col.key).length; });
-  if(!anyCards){
-    var e = el("div","empty");
-    e.appendChild(el("h3",null,"Nothing here yet"));
-    e.appendChild(el("p",null,emptyHint));
-    host.appendChild(e);
-  }
-
+// The one place every kanban-style board on this site is actually built --
+// Vision Board and To Do both call this with different data, so "why do
+// the boards look different" can't happen again by construction. Every
+// board renders the same shape no matter how many cards it holds: quick-add
+// on top, then either cards or (in place of them) a plain hint line.
+// opts: {allColumnsSelector, itemsForColumn(colKey), quickAddPlaceholder,
+//        onQuickAdd(colKey,title), onMove(itemId,colKey,index),
+//        renderCardBody(item, bodyEl), emptyHint}
+function renderCardBoard(host, columns, opts){
   var board = el("div","visionboard");
   columns.forEach(function(col){
     var colEl = el("div","visioncol");
@@ -3725,32 +3791,35 @@ function renderCardBoard(host, columns, emptyHint){
 
     var quickAdd = document.createElement("input");
     quickAdd.type = "text";
-    quickAdd.placeholder = "+ Add a card";
+    quickAdd.placeholder = opts.quickAddPlaceholder || "+ Add a card";
     quickAdd.className = "visioncol-quickadd";
     quickAdd.onkeydown = async function(e){
       if(e.key !== "Enter") return;
       var title = quickAdd.value.trim();
       if(!title) return;
       e.preventDefault();
-      await api("/api/vision_cards", {method:"POST", body: JSON.stringify({title:title, column_key:col.key})});
-      await loadBookerLookups();
-      renderAll();
+      quickAdd.disabled = true;
+      await opts.onQuickAdd(col.key, title);
+      quickAdd.disabled = false;
     };
     colEl.appendChild(quickAdd);
 
     var wrap = el("div","visioncol-notes");
     colEl.appendChild(wrap);
 
-    visionCardsByColumn(col.key).forEach(function(c){
+    var colItems = opts.itemsForColumn(col.key);
+    if(!colItems.length) wrap.appendChild(el("p","visioncol-empty", opts.emptyHint));
+
+    colItems.forEach(function(item){
       var card = el("div","visioncard");
-      card.dataset.cardId = c.id;
+      card.dataset.itemId = item.id;
       var grip = el("span","visioncard-grip","⠿");
       grip.title = "Drag to move";
       var dragState = null;
       grip.addEventListener("pointerdown", function(e){
         e.preventDefault();
         grip.setPointerCapture(e.pointerId);
-        dragState = {cardId: c.id, startY: e.clientY, startX: e.clientX};
+        dragState = {itemId: item.id, startY: e.clientY, startX: e.clientX};
         card.classList.add("visioncard-dragging");
       });
       grip.addEventListener("pointermove", function(e){
@@ -3763,11 +3832,10 @@ function renderCardBoard(host, columns, emptyHint){
         card.style.transform = ""; card.style.zIndex = "";
         card.classList.remove("visioncard-dragging");
         var from = dragState; dragState = null;
-
-        // Which column is the pointer over? Search every board on the page,
-        // not just this card's own board -- a card can be dragged from
-        // Ideas straight into In Progress or MAO, same gesture either way.
-        var cols = Array.prototype.slice.call(document.querySelectorAll("#view-vision .visioncol"));
+        // Which column is the pointer over? Search every board on the
+        // page, not just this card's own board -- a card can be dragged
+        // from one board straight into another, same gesture either way.
+        var cols = Array.prototype.slice.call(document.querySelectorAll(opts.allColumnsSelector));
         var targetCol = cols.find(function(ce){
           var r = ce.getBoundingClientRect();
           return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
@@ -3780,26 +3848,14 @@ function renderCardBoard(host, columns, emptyHint){
           var rect = siblings[i].getBoundingClientRect();
           if(e.clientY < rect.top + rect.height / 2){ targetIdx = i; break; }
         }
-        moveVisionCard(from.cardId, targetKey, targetIdx);
+        opts.onMove(from.itemId, targetKey, targetIdx);
       }
       grip.addEventListener("pointerup", endDrag);
       grip.addEventListener("pointercancel", endDrag);
       card.appendChild(grip);
 
       var body = el("div","visioncard-body");
-      body.onclick = function(){ openVisionCardForm(c.id); };
-      body.appendChild(el("p","visioncard-title", c.title));
-      if(c.artist_name) body.appendChild(el("span","pill s-complete", c.artist_name));
-      if(c.venue_name) body.appendChild(el("span","pill pill-muted", c.venue_name));
-      if(c.trigger_event_id){
-        body.appendChild(el("p","hint",
-          "From " + shortDate(c.trigger_show_date) + " · " + c.trigger_venue));
-      }
-      if(c.follow_up_date){
-        var due = c.follow_up_date <= todayISO();
-        var fuText = "Follow up " + shortDate(c.follow_up_date) + (c.follow_up_person_name ? " · " + c.follow_up_person_name : "");
-        body.appendChild(el("p", due ? "hint vision-followup-due" : "hint", fuText));
-      }
+      opts.renderCardBody(item, body);
       card.appendChild(body);
       wrap.appendChild(card);
     });

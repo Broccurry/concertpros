@@ -2405,14 +2405,39 @@ def create_app():
             except ValueError:
                 return jsonify(error="invalid_due_date"), 400
         cur = g.db.cursor()
+        cur.execute("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM todos WHERE venue_id IS NOT DISTINCT FROM %s", (venue_id,))
+        sort_order = cur.fetchone()[0]
         cur.execute(
-            "INSERT INTO todos (title, assigned_to, venue_id, due_date, notes, created_by) "
-            "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-            (title, assigned_to, venue_id, due_date, (body.get("notes") or "").strip() or None, g.viewer.id),
+            "INSERT INTO todos (title, assigned_to, venue_id, sort_order, due_date, notes, created_by) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (title, assigned_to, venue_id, sort_order, due_date, (body.get("notes") or "").strip() or None, g.viewer.id),
         )
         todo_id = cur.fetchone()[0]
         audit.record(g.db, g.viewer, "todo", todo_id, "create", {"title": title, "assigned_to": assigned_to})
         return jsonify(id=todo_id), 201
+
+    @app.post("/api/todos/reorder")
+    @require_booker
+    def reorder_todos():
+        """Same shape as /api/vision_cards/reorder -- the client sends the
+        full, final ordered list of ids for whichever board changed."""
+        body = request.get_json(silent=True) or {}
+        venue_id = body.get("venue_id") or None
+        todo_ids = body.get("todo_ids")
+        if venue_id is not None:
+            cur = g.db.cursor()
+            cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_venue"), 400
+        if not isinstance(todo_ids, list) or not todo_ids:
+            return jsonify(error="todo_ids_required"), 400
+        cur = g.db.cursor()
+        for i, todo_id in enumerate(todo_ids):
+            cur.execute(
+                "UPDATE todos SET venue_id = %s, sort_order = %s WHERE id = %s",
+                (venue_id, i, todo_id),
+            )
+        return jsonify(ok=True)
 
     @app.patch("/api/todos/<int:todo_id>")
     @require_auth
