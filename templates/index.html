@@ -79,26 +79,46 @@ select, textarea{background:#fff;color:#111;color-scheme:light}
 .brand{font-family:var(--display);font-weight:600;text-transform:uppercase;letter-spacing:.02em;margin:0}
 .brand span{color:var(--accent)}
 
-#loginCard{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:28px;
-           width:320px;box-shadow:var(--shadow);margin:80px auto}
-#loginCard h1{font-size:24px;text-align:center;margin-bottom:20px}
-#loginCard label{display:block;font-size:12px;color:var(--ink-3);margin:12px 0 4px}
+/* VIP-pass login screen (Broc's ask, 2026-09-23) -- a "for the moment"
+   fun treatment, not the permanent look, so it's kept self-contained
+   here rather than threaded through the theme variables. */
+#loginCard{min-height:100vh;width:auto;margin:0;box-shadow:none;border:0;border-radius:0;padding:32px 20px;
+           display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;
+           background:
+             radial-gradient(circle at 18% 15%, rgba(143,163,240,.38), transparent 45%),
+             radial-gradient(circle at 82% 5%, rgba(255,111,145,.3), transparent 42%),
+             radial-gradient(circle at 50% 105%, rgba(60,200,160,.28), transparent 48%),
+             #14161b}
+.loginhero{display:flex;flex-direction:column;align-items:center;text-align:center}
+.loginhero-photo{max-width:320px;width:72vw;filter:drop-shadow(0 18px 26px rgba(0,0,0,.55));margin-bottom:-14px}
+.loginhero-badge{display:inline-block;background:#ffd23f;color:#1a1400;font-weight:700;font-size:12px;
+                  letter-spacing:.14em;text-transform:uppercase;padding:4px 14px;border-radius:999px;
+                  transform:rotate(-3deg);box-shadow:0 3px 0 rgba(0,0,0,.25)}
+#loginCard h1{font-size:38px;text-align:center;margin:8px 0 0;color:#fff}
+.loginhero-live{color:#ffd23f!important;font-size:20px;vertical-align:3px;margin-left:2px}
+.loginhero-date{font-family:var(--display);font-size:15px;letter-spacing:.28em;color:#c7cbe0;margin-top:2px}
+.loginbox{background:#fff;border-radius:14px;padding:22px 28px 28px;width:320px;max-width:90vw;
+          box-shadow:0 20px 50px rgba(0,0,0,.45)}
+.loginbox::before{content:"";display:block;width:34px;height:10px;border-radius:6px;background:#e4e6ee;margin:0 auto 16px}
+.loginbox label{display:block;font-size:12px;color:var(--ink-3);margin:12px 0 4px}
 /* Plain white/black regardless of theme — simplest fix, and matches what
    most browsers force anyway once a saved password gets autofilled here
    (autofill's own background can't reliably be overridden, so fighting
    it with the dark theme's colors left light text on autofill's white). */
-#loginCard input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px;
+.loginbox input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;font-size:14px;
                   background:#fff;color:#111;color-scheme:light}
-#loginCard input:-webkit-autofill,
-#loginCard input:-webkit-autofill:hover,
-#loginCard input:-webkit-autofill:focus{
+.loginbox input:-webkit-autofill,
+.loginbox input:-webkit-autofill:hover,
+.loginbox input:-webkit-autofill:focus{
   -webkit-text-fill-color:#111;
   -webkit-box-shadow:0 0 0px 1000px #fff inset;
   box-shadow:0 0 0px 1000px #fff inset;
 }
-#loginCard button{width:100%;margin-top:18px;padding:10px;border:0;border-radius:6px;
+.loginbox button{width:100%;margin-top:18px;padding:10px;border:0;border-radius:6px;
                    background:var(--accent);color:#fff;font-size:14px;font-weight:600}
-#loginError{color:var(--dead);font-size:12.5px;margin-top:10px;min-height:1em}
+/* Hard-coded red, not var(--dead) -- the card is always white now regardless
+   of theme, and dark mode's pale-pink --dead value washed out on it. */
+#loginError{color:#b3261e;font-size:12.5px;margin-top:10px;min-height:1em;text-align:center}
 
 #app{display:none}
 .topbar{position:sticky;top:0;z-index:30;background:var(--surface);border-bottom:1px solid var(--line)}
@@ -524,15 +544,22 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 <body>
 
 <div id="loginCard">
-  <h1 class="brand">Concert<span>Pro</span></h1>
-  <form id="loginForm">
-    <label for="email">Email</label>
-    <input id="email" type="email" autocomplete="username" required>
-    <label for="password">Password</label>
-    <input id="password" type="password" autocomplete="current-password" required>
-    <button type="submit">Log in</button>
-    <div id="loginError"></div>
-  </form>
+  <div class="loginhero">
+    <img class="loginhero-photo" src="/static/img/team-cutout.png" alt="">
+    <span class="loginhero-badge">VIP Access</span>
+    <h1 class="brand">Concert<span>Pro</span><span class="loginhero-live">.Live</span></h1>
+    <div class="loginhero-date">9 &bull; 24 &bull; 26</div>
+  </div>
+  <div class="loginbox">
+    <form id="loginForm">
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Let's go</button>
+      <div id="loginError"></div>
+    </form>
+  </div>
 </div>
 
 <div id="app">
@@ -3799,7 +3826,7 @@ async function toggleMentionsPop(){
 
 async function boot(){
   var r = await api("/api/me");
-  if(!r.ok){ document.getElementById("loginCard").style.display = "block"; document.getElementById("app").style.display = "none"; return; }
+  if(!r.ok){ document.getElementById("loginCard").style.display = "flex"; document.getElementById("app").style.display = "none"; return; }
   me = r.body;
   document.getElementById("loginCard").style.display = "none";
   document.getElementById("app").style.display = "block";
@@ -3832,7 +3859,7 @@ document.getElementById("loginForm").addEventListener("submit", async function(e
 document.getElementById("logoutBtn").addEventListener("click", async function(){
   await api("/api/logout", {method:"POST"});
   document.getElementById("app").style.display = "none";
-  document.getElementById("loginCard").style.display = "block";
+  document.getElementById("loginCard").style.display = "flex";
 });
 document.getElementById("navTabs").addEventListener("click", function(e){
   var b = e.target.closest("button[data-view]");
