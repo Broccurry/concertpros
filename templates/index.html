@@ -41,7 +41,7 @@
     --dead:#f2c2c2; --dead-bg:#4d2b2b;
     --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
   }
-  :root:not([data-theme="light"]) .show.s-confirmed{color:#fff}
+  :root:not([data-theme="light"]) .show.s-confirmed{background:var(--confirm-bg);color:#fff;border-color:var(--confirm-bg)}
 }
 /* A manually-picked theme (Settings tab) overrides the system preference
    either direction — same variable values as the media query above,
@@ -55,7 +55,7 @@
   --dead:#f2c2c2; --dead-bg:#4d2b2b;
   --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
 }
-:root[data-theme="dark"] .show.s-confirmed{color:#fff}
+:root[data-theme="dark"] .show.s-confirmed{background:var(--confirm-bg);color:#fff;border-color:var(--confirm-bg)}
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
@@ -166,6 +166,12 @@ main{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:16px 48px}
          background:var(--surface);color:var(--ink);font-size:9.5px;font-weight:700;
          display:grid;place-items:center;line-height:1}
 .s-confirmed{background:var(--confirm-bg);color:var(--confirm);border-color:var(--confirm-bg)}
+/* The calendar's confirmed chip specifically gets a solid fill + white
+   text (Broc's call, after comparing white-on-pale-green and finding it
+   unreadable) -- other uses of s-confirmed (the Settled pill, etc.) keep
+   the soft badge look. Dark mode already had this look; the dark-mode
+   rules above/below now say so explicitly instead of leaning on this one. */
+.show.s-confirmed{background:var(--confirm);color:#fff;border-color:var(--confirm)}
 .s-complete{background:var(--done-bg);color:var(--done);border-color:var(--done-bg)}
 .s-dead{background:var(--dead-bg);color:var(--dead);border-color:var(--dead-bg)}
 .s-dead .name{text-decoration:line-through}
