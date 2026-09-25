@@ -28,6 +28,7 @@ import db
 import email_client
 import permissions
 import etix
+import resend_client
 import storage
 from permissions import Viewer
 
@@ -629,6 +630,182 @@ def create_app():
             return jsonify(error="not_found"), 404
         cur.execute("DELETE FROM contact_messages WHERE id = %s", (msg_id,))
         return jsonify(ok=True)
+
+    @app.get("/api/marketing/contacts")
+    @require_booker
+    def list_marketing_contacts():
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT c.id, c.email, c.name, c.phone, c.source, c.venue_id, v.name AS venue_name, "
+            "c.tags, c.email_opt_out, c.created_at "
+            "FROM marketing_contacts c LEFT JOIN venues v ON v.id = c.venue_id "
+            "ORDER BY c.created_at DESC"
+        )
+        cols = [col.name for col in cur.description]
+        return jsonify(contacts=[dict(zip(cols, row)) for row in cur.fetchall()])
+
+    @app.post("/api/marketing/contacts/import")
+    @require_booker
+    def import_marketing_contacts():
+        """v1 is deliberately a paste box, not a CSV file upload -- Broc's
+        source right now is a Mailchimp export he can paste in, and this
+        app has no CSV-parsing infra anywhere else to reuse (rule 2 cuts
+        both ways: don't invent a second import mechanism, but don't
+        build one at all before there's a real second use for it)."""
+        body = request.get_json(silent=True) or {}
+        raw = body.get("contacts")
+        if not isinstance(raw, list):
+            return jsonify(error="contacts_must_be_a_list"), 400
+        venue_id = body.get("venue_id") or None
+        if venue_id is not None:
+            cur = g.db.cursor()
+            cur.execute("SELECT 1 FROM venues WHERE id = %s", (venue_id,))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_venue"), 400
+        source = body.get("source") or "manual"
+
+        cur = g.db.cursor()
+        added, skipped = 0, 0
+        for entry in raw:
+            if isinstance(entry, str):
+                email, name = entry.strip(), None
+            elif isinstance(entry, dict):
+                email = (entry.get("email") or "").strip()
+                name = (entry.get("name") or "").strip() or None
+            else:
+                continue
+            if not email or "@" not in email:
+                skipped += 1
+                continue
+            cur.execute(
+                "INSERT INTO marketing_contacts (email, name, source, venue_id) VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (email) DO NOTHING",
+                (email.lower(), name, source, venue_id),
+            )
+            if cur.rowcount:
+                added += 1
+            else:
+                skipped += 1
+        audit.record(g.db, g.viewer, "marketing_contacts", 0, "import", {"added": added, "skipped": skipped})
+        return jsonify(added=added, skipped=skipped), 201
+
+    @app.delete("/api/marketing/contacts/<int:contact_id>")
+    @require_booker
+    def delete_marketing_contact(contact_id):
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM marketing_contacts WHERE id = %s", (contact_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        cur.execute("DELETE FROM marketing_contacts WHERE id = %s", (contact_id,))
+        return jsonify(ok=True)
+
+    def _marketing_audience(venue_id, tag):
+        """The one place a segment definition turns into a WHERE clause --
+        called by both the live count (while composing) and the actual
+        send, so they can't ever disagree about who's in the audience."""
+        where = ["NOT email_opt_out"]
+        params: list = []
+        if venue_id:
+            where.append("venue_id = %s")
+            params.append(venue_id)
+        if tag:
+            where.append("%s = ANY(tags)")
+            params.append(tag)
+        return " AND ".join(where), params
+
+    @app.get("/api/marketing/audience")
+    @require_booker
+    def marketing_audience():
+        venue_id = request.args.get("venue_id", type=int)
+        tag = request.args.get("tag") or None
+        where, params = _marketing_audience(venue_id, tag)
+        cur = g.db.cursor()
+        cur.execute(f"SELECT count(*) FROM marketing_contacts WHERE {where}", params)
+        count = cur.fetchone()[0]
+        cur.execute(f"SELECT email, name FROM marketing_contacts WHERE {where} ORDER BY created_at DESC LIMIT 5", params)
+        sample = [{"email": e, "name": n} for e, n in cur.fetchall()]
+        return jsonify(count=count, sample=sample)
+
+    @app.get("/api/marketing/campaigns")
+    @require_booker
+    def list_marketing_campaigns():
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT c.id, c.subject, c.segment, c.recipient_count, c.sent_count, c.fail_count, "
+            "c.created_at, c.sent_at, p.name AS created_by_name "
+            "FROM marketing_campaigns c LEFT JOIN people p ON p.id = c.created_by "
+            "ORDER BY c.created_at DESC"
+        )
+        cols = [col.name for col in cur.description]
+        return jsonify(campaigns=[dict(zip(cols, row)) for row in cur.fetchall()])
+
+    @app.post("/api/marketing/test")
+    @require_booker
+    def send_marketing_test():
+        if not resend_client.is_configured():
+            return jsonify(error="email_not_configured"), 400
+        body = request.get_json(silent=True) or {}
+        to = (body.get("to") or "").strip()
+        subject = (body.get("subject") or "").strip()
+        html_body = (body.get("body") or "").strip()
+        if not to or "@" not in to:
+            return jsonify(error="invalid_to"), 400
+        if not subject or not html_body:
+            return jsonify(error="subject_and_body_required"), 400
+        ok, err = resend_client.send(to, "[TEST] " + subject, html_body.replace("\n", "<br>"))
+        if not ok:
+            return jsonify(error="send_failed", detail=err), 502
+        return jsonify(ok=True)
+
+    @app.post("/api/marketing/send")
+    @require_booker
+    def send_marketing_campaign():
+        """Sends inline, synchronously -- fine at this contact-list size
+        (thousands, not tens of thousands); revisit with a background
+        job only if that stops being true. Still records the campaign
+        row even when email isn't configured yet, so composing/testing
+        the feature doesn't require a live Resend account first."""
+        body = request.get_json(silent=True) or {}
+        subject = (body.get("subject") or "").strip()
+        html_body = (body.get("body") or "").strip()
+        venue_id = body.get("venue_id") or None
+        tag = body.get("tag") or None
+        if not subject or not html_body:
+            return jsonify(error="subject_and_body_required"), 400
+
+        where, params = _marketing_audience(venue_id, tag)
+        cur = g.db.cursor()
+        cur.execute(f"SELECT email, name FROM marketing_contacts WHERE {where}", params)
+        recipients = cur.fetchall()
+
+        cur.execute(
+            "INSERT INTO marketing_campaigns (subject, body, segment, recipient_count, created_by) "
+            "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (subject, html_body, json.dumps({"venue_id": venue_id, "tag": tag}), len(recipients), g.viewer.id),
+        )
+        campaign_id = cur.fetchone()[0]
+
+        if not resend_client.is_configured():
+            audit.record(g.db, g.viewer, "marketing_campaign", campaign_id, "queued_unconfigured",
+                         {"recipient_count": len(recipients)})
+            return jsonify(id=campaign_id, recipient_count=len(recipients), sent_count=0,
+                           error="email_not_configured"), 200
+
+        sent, failed = 0, 0
+        for email, name in recipients:
+            personalized = html_body.replace("{{name}}", name or "there").replace("\n", "<br>")
+            ok, _ = resend_client.send(email, subject, personalized)
+            if ok:
+                sent += 1
+            else:
+                failed += 1
+        cur.execute(
+            "UPDATE marketing_campaigns SET sent_count = %s, fail_count = %s, sent_at = now() WHERE id = %s",
+            (sent, failed, campaign_id),
+        )
+        audit.record(g.db, g.viewer, "marketing_campaign", campaign_id, "sent",
+                     {"sent": sent, "failed": failed})
+        return jsonify(id=campaign_id, recipient_count=len(recipients), sent_count=sent, fail_count=failed)
 
     @app.post("/api/login")
     def login():

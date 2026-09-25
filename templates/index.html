@@ -659,6 +659,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         <button role="tab" data-view="hivemind" aria-selected="false">Hive Mind</button>
         <button role="tab" data-view="socials" aria-selected="false">Socials</button>
         <button role="tab" data-view="finals" aria-selected="false">Finals</button>
+        <button role="tab" data-view="marketing" aria-selected="false">Marketing</button>
         <button role="tab" data-view="settings" aria-selected="false">Settings</button>
       </div>
       <div class="spacer"></div>
@@ -716,6 +717,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
     <section id="view-hivemind" hidden></section>
     <section id="view-socials" hidden></section>
     <section id="view-finals" hidden></section>
+    <section id="view-marketing" hidden></section>
     <section id="view-settings" hidden></section>
     <p class="notice" id="storeNotice"></p>
   </main>
@@ -953,7 +955,7 @@ function staffLabel(s){
 function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
 
 /* ============================== state =============================== */
-var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], offers:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[], fileFolders:[], hivemindIdeas:[]};
+var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], offers:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[], fileFolders:[], hivemindIdeas:[], marketingContacts:[], marketingCampaigns:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
 var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), selectedVenues:null, showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false, staffEditingCell:null, addingFileFolderIn:null};
@@ -998,9 +1000,9 @@ async function loadEvents(){
 }
 async function loadBookerLookups(){
   if(!canBook()) return;
-  var [v, ro, pe, ar, vc, of, fl, ss, cm, ge, ff] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
+  var [v, ro, pe, ar, vc, of, fl, ss, cm, ge, ff, mc, mca] = await Promise.all([api("/api/venues"), api("/api/roles"), api("/api/people"),
     api("/api/artists"), api("/api/vision_cards"), api("/api/offers"), api("/api/files"), api("/api/site_settings"), api("/api/contact_messages"),
-    api("/api/genres"), api("/api/file_folders")]);
+    api("/api/genres"), api("/api/file_folders"), api("/api/marketing/contacts"), api("/api/marketing/campaigns")]);
   if(v.ok) store.venues = v.body.venues;
   if(ro.ok) store.roles = ro.body.roles;
   if(pe.ok) store.people = pe.body.people;
@@ -1012,6 +1014,14 @@ async function loadBookerLookups(){
   if(cm.ok) store.contactMessages = cm.body.messages;
   if(ge.ok) store.genres = ge.body.genres;
   if(ff.ok) store.fileFolders = ff.body.folders;
+  if(mc.ok) store.marketingContacts = mc.body.contacts;
+  if(mca.ok) store.marketingCampaigns = mca.body.campaigns;
+}
+async function refreshMarketing(){
+  var [mc, mca] = await Promise.all([api("/api/marketing/contacts"), api("/api/marketing/campaigns")]);
+  if(mc.ok) store.marketingContacts = mc.body.contacts;
+  if(mca.ok) store.marketingCampaigns = mca.body.campaigns;
+  renderAll();
 }
 async function loadTodos(){
   // Unlike vision/artists/etc., crew needs this too — the endpoint itself
@@ -1045,7 +1055,7 @@ function renderAll(){
   }).length;
   document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + activeUpcoming.length + " total";
 
-  ["calendar","todo","list","artists","staff","people","vision","offers","files","website","email","hivemind","socials","finals","settings"].forEach(function(v){
+  ["calendar","todo","list","artists","staff","people","vision","offers","files","website","email","hivemind","socials","finals","marketing","settings"].forEach(function(v){
     document.getElementById("view-" + v).hidden = (v !== ui.view);
   });
   if(ui.view === "calendar") renderCalendar();
@@ -1062,6 +1072,7 @@ function renderAll(){
   if(ui.view === "hivemind") renderHiveMindView();
   if(ui.view === "socials") renderComingSoonView("socials", "Socials");
   if(ui.view === "finals") renderComingSoonView("finals", "Finals");
+  if(ui.view === "marketing") renderMarketingView();
   if(ui.view === "settings") renderSettingsView();
 }
 
@@ -5140,6 +5151,178 @@ function renderComingSoonView(viewName, label){
   e.appendChild(el("h3",null,label));
   e.appendChild(el("p",null,"Not built yet — this tab is a placeholder for now."));
   host.appendChild(e);
+}
+
+function renderMarketingView(){
+  var host = document.getElementById("view-marketing");
+  host.innerHTML = "";
+  host.appendChild(el("p","hint","Contacts, audiences, and campaigns — the in-house version of what Mailchimp does today."));
+
+  // ---- Contacts ----
+  var fsContacts = document.createElement("fieldset");
+  fsContacts.appendChild(el("legend",null,"Contacts (" + (store.marketingContacts||[]).length + ")"));
+  var importToggle = el("button","btn","+ Import contacts");
+  importToggle.type = "button";
+  var importBox = el("div","field"); importBox.style.marginTop = "10px"; importBox.hidden = true;
+  importToggle.onclick = function(){ importBox.hidden = !importBox.hidden; };
+  fsContacts.appendChild(importToggle);
+
+  importBox.appendChild(el("label",null,"Paste emails, one per line (optionally \"email, name\")"));
+  var importWrap = expandableTextarea("", function(){}, 6);
+  var importTa = importWrap.querySelector("textarea");
+  importBox.appendChild(importWrap);
+  var importVenueRow = el("div","row"); importVenueRow.style.marginTop = "8px";
+  var importVenueSel = selectKV([{value:"",label:"No specific venue"}].concat(
+    store.venues.map(function(v){ return {value:v.id, label:v.name}; })), "", function(){});
+  importVenueRow.appendChild(field("Venue (optional)", importVenueSel));
+  importBox.appendChild(importVenueRow);
+  var importBtn = el("button","btn btn-primary","Import"); importBtn.type = "button";
+  importBtn.style.marginTop = "8px";
+  var importResult = el("span","hint"); importResult.style.marginLeft = "8px";
+  importBtn.onclick = async function(){
+    var lines = importTa.value.split("\n").map(function(l){ return l.trim(); }).filter(Boolean);
+    var contacts = lines.map(function(l){
+      var parts = l.split(",");
+      return {email: parts[0].trim(), name: parts[1] ? parts[1].trim() : null};
+    });
+    if(!contacts.length) return;
+    var venueId = importVenueSel.value ? Number(importVenueSel.value) : null;
+    var r = await api("/api/marketing/contacts/import", {method:"POST",
+      body: JSON.stringify({contacts: contacts, venue_id: venueId, source: "manual"})});
+    if(r.ok){
+      importResult.textContent = "Added " + r.body.added + ", skipped " + r.body.skipped + " (blank/duplicate/invalid).";
+      importTa.value = "";
+      await refreshMarketing();
+    } else {
+      importResult.textContent = r.body.error || "Import failed.";
+    }
+  };
+  importBox.appendChild(importBtn);
+  importBox.appendChild(importResult);
+  fsContacts.appendChild(importBox);
+
+  var contactsList = (store.marketingContacts||[]).slice(0, 50);
+  if(contactsList.length){
+    var table = el("div","contactstable"); table.style.marginTop = "10px";
+    contactsList.forEach(function(c){
+      var row = el("div","ticketsalerow");
+      row.appendChild(el("span",null, c.email));
+      row.appendChild(el("span","sub", c.name || ""));
+      row.appendChild(el("span","sub", c.venue_name || "any venue"));
+      row.appendChild(el("span","pill pill-muted", c.source));
+      if(c.email_opt_out) row.appendChild(el("span","pill", "Opted out"));
+      var del = el("button","x","✕"); del.type = "button"; del.title = "Remove contact";
+      del.onclick = async function(){
+        await api("/api/marketing/contacts/" + c.id, {method:"DELETE"});
+        await refreshMarketing();
+      };
+      row.appendChild(del);
+      table.appendChild(row);
+    });
+    fsContacts.appendChild(table);
+    if((store.marketingContacts||[]).length > 50){
+      fsContacts.appendChild(el("p","hint","Showing the 50 most recent of " + store.marketingContacts.length + "."));
+    }
+  } else {
+    fsContacts.appendChild(el("p","hint","No contacts yet — import some above."));
+  }
+  host.appendChild(fsContacts);
+
+  // ---- Audience + Compose ----
+  var fsSend = document.createElement("fieldset");
+  fsSend.appendChild(el("legend",null,"Audience & Compose"));
+  var audienceRow = el("div","row");
+  var audienceVenueSel = selectKV([{value:"",label:"All venues"}].concat(
+    store.venues.map(function(v){ return {value:v.id, label:v.name}; })), "", function(){});
+  audienceRow.appendChild(field("Venue", audienceVenueSel));
+  var tagInput = input("text", "", function(){});
+  tagInput.placeholder = "e.g. vip";
+  audienceRow.appendChild(field("Tag (optional)", tagInput));
+  fsSend.appendChild(audienceRow);
+
+  var audienceCount = el("p","hint","Checking audience size…");
+  fsSend.appendChild(audienceCount);
+  async function refreshAudienceCount(){
+    var qs = [];
+    if(audienceVenueSel.value) qs.push("venue_id=" + audienceVenueSel.value);
+    if(tagInput.value.trim()) qs.push("tag=" + encodeURIComponent(tagInput.value.trim()));
+    var r = await api("/api/marketing/audience" + (qs.length ? "?" + qs.join("&") : ""));
+    if(r.ok){
+      audienceCount.textContent = r.body.count + " contact" + (r.body.count === 1 ? "" : "s") + " would receive this.";
+    }
+  }
+  audienceVenueSel.onchange = refreshAudienceCount;
+  tagInput.oninput = refreshAudienceCount;
+  refreshAudienceCount();
+
+  var subjectInput = input("text", "", function(){});
+  subjectInput.placeholder = "Subject";
+  fsSend.appendChild(field("Subject", subjectInput));
+  var bodyWrap = expandableTextarea("", function(){}, 8);
+  var bodyTa = bodyWrap.querySelector("textarea");
+  bodyTa.placeholder = "Message — {{name}} inserts the contact's name";
+  fsSend.appendChild(field("Message", bodyWrap));
+
+  var sendRow = el("div","btnrow");
+  var testEmailInput = input("email", "", function(){});
+  testEmailInput.placeholder = "you@example.com";
+  testEmailInput.style.maxWidth = "220px";
+  sendRow.appendChild(testEmailInput);
+  var sendTestBtn = el("button","btn","Send test"); sendTestBtn.type = "button";
+  var sendStatus = el("span","hint");
+  sendTestBtn.onclick = async function(){
+    if(!testEmailInput.value.trim() || !subjectInput.value.trim() || !bodyTa.value.trim()){
+      sendStatus.textContent = "Fill in a test address, subject, and message first."; return;
+    }
+    var r = await api("/api/marketing/test", {method:"POST", body: JSON.stringify({
+      to: testEmailInput.value.trim(), subject: subjectInput.value.trim(), body: bodyTa.value,
+    })});
+    sendStatus.textContent = r.ok ? "Test sent." :
+      (r.body.error === "email_not_configured" ? "Email isn't connected yet (no Resend account set up)." : "Send failed.");
+  };
+  sendRow.appendChild(sendTestBtn);
+  var sendCampaignBtn = el("button","btn btn-primary","Send campaign"); sendCampaignBtn.type = "button";
+  sendCampaignBtn.onclick = async function(){
+    if(!subjectInput.value.trim() || !bodyTa.value.trim()){
+      sendStatus.textContent = "Add a subject and message first."; return;
+    }
+    var r = await api("/api/marketing/send", {method:"POST", body: JSON.stringify({
+      subject: subjectInput.value.trim(), body: bodyTa.value,
+      venue_id: audienceVenueSel.value ? Number(audienceVenueSel.value) : null,
+      tag: tagInput.value.trim() || null,
+    })});
+    if(r.ok && r.body.error === "email_not_configured"){
+      sendStatus.textContent = "Campaign recorded (" + r.body.recipient_count + " recipients) but not sent — email isn't connected yet.";
+    } else if(r.ok){
+      sendStatus.textContent = "Sent to " + r.body.sent_count + " of " + r.body.recipient_count + " (" + r.body.fail_count + " failed).";
+    } else {
+      sendStatus.textContent = r.body.error || "Send failed.";
+    }
+    await refreshMarketing();
+  };
+  sendRow.appendChild(sendCampaignBtn);
+  fsSend.appendChild(sendRow);
+  fsSend.appendChild(sendStatus);
+  host.appendChild(fsSend);
+
+  // ---- Recent campaigns ----
+  var fsCampaigns = document.createElement("fieldset");
+  fsCampaigns.appendChild(el("legend",null,"Recent campaigns"));
+  var campaigns = store.marketingCampaigns || [];
+  if(!campaigns.length){
+    fsCampaigns.appendChild(el("p","hint","Nothing sent yet."));
+  } else {
+    campaigns.forEach(function(c){
+      var row = el("div","ticketsalerow");
+      row.appendChild(el("span",null, c.subject));
+      row.appendChild(el("span","sub", shortDateWithYear(c.created_at.slice(0,10))));
+      row.appendChild(el("span","sub", c.recipient_count + " recipients"));
+      if(c.sent_at) row.appendChild(el("span","pill pill-muted", c.sent_count + " sent" + (c.fail_count ? ", " + c.fail_count + " failed" : "")));
+      else row.appendChild(el("span","pill","Not sent — email not configured"));
+      fsCampaigns.appendChild(row);
+    });
+  }
+  host.appendChild(fsCampaigns);
 }
 
 function renderSettingsView(){

@@ -513,6 +513,42 @@ CREATE TABLE contact_messages (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Fans/ticket-buyers, NOT staff -- deliberately a separate table from
+-- `people` (which is who works for Innovation Concerts), same split
+-- SellHQ draws between its customers and its staff logins. Sourced from
+-- wherever an email address for a real person came from: a pasted
+-- Mailchimp export today, later Etix order data or the public site's own
+-- signup, once those exist -- `source` just records which.
+CREATE TABLE marketing_contacts (
+    id             SERIAL PRIMARY KEY,
+    email          TEXT NOT NULL UNIQUE,
+    name           TEXT,
+    phone          TEXT,
+    source         TEXT NOT NULL DEFAULT 'manual',  -- 'manual' | 'mailchimp_import' | 'etix' | 'site'
+    venue_id       INTEGER REFERENCES venues(id),   -- which venue's list this came in on, if known
+    tags           TEXT[] NOT NULL DEFAULT '{}',
+    email_opt_out  BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_marketing_contacts_venue ON marketing_contacts(venue_id);
+
+-- One row per send, kept whether or not it actually went out (see
+-- resend_client.is_configured) -- the segment used is snapshotted as
+-- JSON so a past campaign's audience definition stays readable even
+-- after venues/tags change later.
+CREATE TABLE marketing_campaigns (
+    id               SERIAL PRIMARY KEY,
+    subject          TEXT NOT NULL,
+    body             TEXT NOT NULL,
+    segment          JSONB NOT NULL DEFAULT '{}',
+    recipient_count  INTEGER NOT NULL DEFAULT 0,
+    sent_count       INTEGER NOT NULL DEFAULT 0,
+    fail_count       INTEGER NOT NULL DEFAULT 0,
+    created_by       INTEGER REFERENCES people(id),
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    sent_at          TIMESTAMPTZ
+);
+
 -- Each booker/owner connects their OWN existing mailbox (e.g. their
 -- @innovationconcerts.com address hosted on Zoho) -- this is "read your
 -- own real email inside the app instead of POP-fetching it into personal
