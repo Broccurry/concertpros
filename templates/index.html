@@ -2126,7 +2126,7 @@ async function openEvent(id, dateHint){
       id:null, venue_id: store.venues[0] ? store.venues[0].id : null, venue: store.venues[0] ? store.venues[0].name : "",
       artists:[], status:"hold1", show_date: dateHint || todayISO(), doors:"19:00", show_time:"20:00",
       deal_type:NO_DEAL, guarantee:"", backend_pct:"", deal_notes:"",
-      event_types:[], promoters:["Innovation Concerts"],
+      event_types:["concert"], promoters:["Innovation Concerts"],
       ticket_tiers:[{label:"Advance",price:""},{label:"Day of show",price:""}], ticket_link:"",
       announce_date:"", onsale_date:"", notes:"", messages:[], files:[], extraDates:[], group_members:[],
       tasks:[], staff:[], settlement:{tickets_sold:"",gross:"",expenses:"",artist_payout:"",settled:false,notes:""}

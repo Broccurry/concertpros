@@ -134,7 +134,7 @@ CREATE TABLE events (
     -- Can be more than one at once (a concert that's also a private
     -- buyout, say) -- validated in app.py against a fixed set, not a DB
     -- CHECK, since Postgres can't easily constrain array element values.
-    event_types     TEXT[] NOT NULL DEFAULT '{}',
+    event_types     TEXT[] NOT NULL DEFAULT '{concert}',
     -- Free text, not a foreign key -- "Other" lets a booker type any name,
     -- and a co-pro show can list more than one. Defaults to the house
     -- promoter so a plain show never has to be told who's promoting it.
