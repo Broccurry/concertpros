@@ -123,21 +123,29 @@ select, textarea{background:#fff;color:#111;color-scheme:light}
 #app{display:none}
 .topbar{position:sticky;top:0;z-index:30;background:var(--surface);border-bottom:1px solid var(--line)}
 .topbar-inner{max-width:1500px;margin:0 auto;padding-inline:16px;padding-block:10px;
-              display:flex;align-items:center;gap:14px;flex-wrap:nowrap}
+              display:flex;align-items:center;gap:8px;flex-wrap:nowrap}
 .topbar .brand{font-size:22px;line-height:1;white-space:nowrap;flex:none}
-/* The nav tabs are the one thing that grows with the app (11 tabs now,
+/* The nav tabs are the one thing that grows with the app (14 tabs now,
    more later) -- it scrolls horizontally on overflow instead of wrapping
    the WHOLE topbar onto a second line, which was shoving Log out down
    onto its own line once enough tabs pushed this row past the available
-   width. */
+   width. min-width is a hard floor (an EXPLICIT min-width is honored as
+   real, unlike the "auto" default) so this never gets crushed to nothing
+   the way it did before .who below could also shrink -- overflow:auto
+   alone would otherwise make .views the only shrinkable sibling and it
+   would absorb 100% of any overflow on a narrow phone. */
 .views{display:flex;gap:2px;background:var(--surface-2);padding:2px;border-radius:var(--radius);
-       overflow-x:auto;flex:1 1 auto;scrollbar-width:none;-ms-overflow-style:none}
+       overflow-x:auto;flex:1 1 auto;min-width:100px;scrollbar-width:none;-ms-overflow-style:none}
 .views::-webkit-scrollbar{display:none}
 .views button{border:0;background:transparent;color:var(--ink-3);padding:5px 12px;border-radius:4px;font-size:13px;font-weight:500;
               white-space:nowrap;flex:none}
 .views button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
 .spacer{flex:1 1 auto}
-.who{color:var(--ink-3);font-size:13px;white-space:nowrap}
+/* overflow+ellipsis (not just white-space:nowrap) is what lets this
+   shrink at all on a narrow phone -- see the .views comment above --
+   sharing the squeeze with the tab strip instead of dumping all of it
+   there. */
+.who{color:var(--ink-3);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px;flex:0 1 auto}
 
 .monthnav{display:flex;align-items:center;gap:6px}
 .monthnav h2{font-family:var(--display);font-weight:500;font-size:19px;text-transform:uppercase;
@@ -146,7 +154,7 @@ select, textarea{background:#fff;color:#111;color-scheme:light}
           background:var(--surface);border-radius:var(--radius);color:var(--ink-2)}
 .icon-btn:hover{border-color:var(--line-strong);color:var(--ink)}
 .btn{border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:6px 12px;
-     border-radius:var(--radius);font-size:13px;font-weight:500}
+     border-radius:var(--radius);font-size:13px;font-weight:500;white-space:nowrap}
 .btn:hover{border-color:var(--line-strong)}
 .btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn-primary:hover{opacity:.9}
