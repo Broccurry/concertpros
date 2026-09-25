@@ -128,9 +128,10 @@ select, textarea{background:#fff;color:#111;color-scheme:light}
 /* The nav tabs are the one thing that grows with the app (11 tabs now,
    more later) -- it scrolls horizontally on overflow instead of wrapping
    the WHOLE topbar onto a second line, which was shoving Log out down
-   below Today once Email pushed this row past the available width. */
+   onto its own line once enough tabs pushed this row past the available
+   width. */
 .views{display:flex;gap:2px;background:var(--surface-2);padding:2px;border-radius:var(--radius);
-       overflow-x:auto;flex:0 1 auto;scrollbar-width:none;-ms-overflow-style:none}
+       overflow-x:auto;flex:1 1 auto;scrollbar-width:none;-ms-overflow-style:none}
 .views::-webkit-scrollbar{display:none}
 .views button{border:0;background:transparent;color:var(--ink-3);padding:5px 12px;border-radius:4px;font-size:13px;font-weight:500;
               white-space:nowrap;flex:none}
@@ -648,27 +649,24 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         <button role="tab" data-view="email" aria-selected="false">Email</button>
         <button role="tab" data-view="settings" aria-selected="false">Settings</button>
       </div>
+      <div class="spacer"></div>
+      <div class="mentionswrap" id="mentionsWrap" style="display:none">
+        <button class="btn" id="mentionsBtn">🔔 <span id="mentionsCount"></span></button>
+        <div class="mentionspop" id="mentionsPop" hidden></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="filterbar" id="filterbar" style="display:none">
+    <div class="filterbar-inner">
       <div class="monthnav" id="monthnav">
         <button class="icon-btn" id="prevMonth" aria-label="Previous month">&#8249;</button>
         <h2 id="monthLabel">&nbsp;</h2>
         <button class="icon-btn" id="nextMonth" aria-label="Next month">&#8250;</button>
         <button class="btn" id="todayBtn">Today</button>
       </div>
-      <div class="spacer"></div>
-      <div class="mentionswrap" id="mentionsWrap" style="display:none">
-        <button class="btn" id="mentionsBtn">🔔 <span id="mentionsCount"></span></button>
-        <div class="mentionspop" id="mentionsPop" hidden></div>
-      </div>
-      <span class="who" id="whoami"></span>
-      <button class="btn" id="logoutBtn">Log out</button>
-    </div>
-  </header>
-
-  <div class="filterbar" id="filterbar" style="display:none">
-    <div class="filterbar-inner">
       <div class="filterbar-left">
         <button class="btn btn-primary" id="bookBtn" style="display:none">+ Book a show</button>
-        <span class="eyebrow">Venue</span>
         <div class="chips" id="venueChips"></div>
       </div>
       <span class="eyebrow" id="countLabel"></span>
@@ -680,6 +678,9 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         <input type="checkbox" id="showDeadToggle">
         Show didn't work out
       </label>
+      <div class="spacer"></div>
+      <span class="who" id="whoami"></span>
+      <button class="btn" id="logoutBtn">Log out</button>
     </div>
   </div>
 
@@ -938,14 +939,17 @@ function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace
 var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], offers:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[], fileFolders:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), venue:"__all__", showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false, staffEditingCell:null, addingFileFolderIn:null};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), selectedVenues:null, showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false, staffEditingCell:null, addingFileFolderIn:null};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
 function eventById(id){ return store.events.find(function(e){ return e.id === id; }); }
+function allVenuesSelected(){
+  return !ui.selectedVenues || ui.selectedVenues.size >= store.venues.length;
+}
 function visibleEvents(){
   return store.events.filter(function(ev){
-    if(ev.venue !== ui.venue && ui.venue !== "__all__") return false;
+    if(ui.selectedVenues && !ui.selectedVenues.has(ev.venue)) return false;
     if(ev.status === "dead" && !ui.showDead) return false;
     return true;
   }).slice().sort(function(a,b){ return a.show_date < b.show_date ? -1 : a.show_date > b.show_date ? 1 : 0; });
@@ -1044,11 +1048,19 @@ function renderAll(){
 function renderVenueChips(){
   var box = document.getElementById("venueChips");
   box.innerHTML = "";
-  var opts = [{v:"__all__", label:"All venues"}].concat(store.venues.map(function(v){ return {v:v.name, label:v.name}; }));
-  opts.forEach(function(o){
-    var b = el("button","chip",o.label);
-    b.setAttribute("aria-pressed", ui.venue === o.v ? "true" : "false");
-    b.onclick = function(){ ui.venue = o.v; renderAll(); };
+  if(!ui.selectedVenues) ui.selectedVenues = new Set(store.venues.map(function(v){ return v.name; }));
+  store.venues.forEach(function(v){
+    var b = el("button","chip",v.name);
+    var on = ui.selectedVenues.has(v.name);
+    b.setAttribute("aria-pressed", on ? "true" : "false");
+    b.onclick = function(){
+      // never let the last selected venue be clicked off -- an empty
+      // filter would silently show nothing, which reads as a bug, not
+      // "no venues chosen"
+      if(on && ui.selectedVenues.size <= 1) return;
+      if(on) ui.selectedVenues.delete(v.name); else ui.selectedVenues.add(v.name);
+      renderAll();
+    };
     box.appendChild(b);
   });
 }
@@ -1093,7 +1105,7 @@ function showChip(ev){
   b.appendChild(name);
   var bits = [];
   if(ev.doors) bits.push(time12(ev.doors));
-  if(ui.venue === "__all__") bits.push(ev.venue);
+  if(allVenuesSelected()) bits.push(ev.venue);
   b.appendChild(el("span","meta", bits.join(" · ")));
   b.title = showName(ev) + " — " + st(ev).label + " — " + ev.venue;
   b.onclick = function(){ openEvent(ev.id); };
@@ -1163,7 +1175,7 @@ function openDay(ds, list){
   if(!list.length){
     var e = el("div","empty");
     e.appendChild(el("h3",null,"Open"));
-    e.appendChild(el("p",null,"Nothing on this date" + (ui.venue === "__all__" ? " at any venue." : " at " + ui.venue + ".")));
+    e.appendChild(el("p",null,"Nothing on this date" + (allVenuesSelected() ? " at any venue." : " at " + Array.from(ui.selectedVenues).join(" or ") + ".")));
     body.appendChild(e);
   } else {
     var wrap = el("div","daylist");
