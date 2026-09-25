@@ -174,9 +174,12 @@ class MarketingSending(unittest.TestCase):
         if self.contact_emails:
             cur.execute("DELETE FROM marketing_contacts WHERE email = ANY(%s)", (self.contact_emails,))
         if self.campaign_ids:
-            cur.execute("DELETE FROM audit_log WHERE entity_type = 'marketing_campaign' AND entity_id = ANY(%s)",
-                        (self.campaign_ids,))
             cur.execute("DELETE FROM marketing_campaigns WHERE id = ANY(%s)", (self.campaign_ids,))
+        # Covers both the campaign-send audit rows AND the contacts-import
+        # audit row each test writes on the way in (entity_type
+        # 'marketing_contacts', a fixed entity_id of 0 -- not worth
+        # tracking individually since person_id alone identifies them all).
+        cur.execute("DELETE FROM audit_log WHERE person_id = %s", (self.booker_id,))
         cur.execute("DELETE FROM sessions WHERE person_id = %s", (self.booker_id,))
         cur.execute("DELETE FROM people WHERE id = %s", (self.booker_id,))
         self.conn.commit()
