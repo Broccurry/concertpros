@@ -1968,10 +1968,14 @@ def create_app():
                 raise ValueError
         except (TypeError, ValueError):
             return jsonify(error="invalid_tickets_sold"), 400
+        # gross explicitly cleared on a manual entry -- it's the etix
+        # snapshot's own figure, tied to whatever count etix reported; a
+        # booker overriding that count by hand invalidates it, so it
+        # shouldn't keep sitting next to a now-different number.
         cur.execute(
-            "INSERT INTO ticket_sales (event_id, sale_date, tickets_sold, source) "
-            "VALUES (%s, %s, %s, 'manual') "
-            "ON CONFLICT (event_id, sale_date) DO UPDATE SET tickets_sold = %s, source = 'manual'",
+            "INSERT INTO ticket_sales (event_id, sale_date, tickets_sold, gross, source) "
+            "VALUES (%s, %s, %s, NULL, 'manual') "
+            "ON CONFLICT (event_id, sale_date) DO UPDATE SET tickets_sold = %s, gross = NULL, source = 'manual'",
             (event_id, sale_date, tickets_sold, tickets_sold),
         )
         audit.record(g.db, g.viewer, "event", event_id, "log_ticket_sale",

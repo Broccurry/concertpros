@@ -238,6 +238,7 @@ CREATE TABLE ticket_sales (
     event_id        INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
     sale_date       DATE NOT NULL,
     tickets_sold    INTEGER NOT NULL,
+    gross           NUMERIC,  -- only ever set on etix-sourced rows (the live snapshot's own total) -- a manual count has no revenue figure attached
     source          TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'etix')),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (event_id, sale_date)

@@ -117,22 +117,28 @@ def get_daily_sales(performance_id):
 
 
 def pull_and_store_snapshot(conn, event_id, venue_name, show_date, sale_date=None):
-    """Finds the matching Etix performance, pulls its live ticket count,
+    """Finds the matching Etix performance, pulls its live ticket count
+    (and gross, from the same snapshot call -- no second request needed),
     and upserts one ticket_sales row (source='etix') -- the one place
     this decision is made, called by both the manual "Pull from Etix"
     button and the daily scheduled script, so they can't drift. Returns
     the tickets_sold count on success, or None if no Etix match exists
-    for this show."""
+    for this show. Callers that also want the gross figure get it back
+    through the normal event refresh (ticket_sales.gross), not a second
+    return value -- keeps this function's contract unchanged for the
+    existing tickets_sold-only callers."""
     ev = _find_public_event(venue_name, show_date)
     if ev is None:
         return None
     snapshot = get_snapshot(ev["id"])
     tickets_sold = snapshot.get("revenueProducingTickets", 0)
+    sales_by_currency = snapshot.get("salesByCurrency") or []
+    gross = sum(s.get("price", 0) for s in sales_by_currency) if sales_by_currency else None
     sale_date = sale_date or date.today()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO ticket_sales (event_id, sale_date, tickets_sold, source) VALUES (%s, %s, %s, 'etix') "
-        "ON CONFLICT (event_id, sale_date) DO UPDATE SET tickets_sold = %s, source = 'etix'",
-        (event_id, sale_date, tickets_sold, tickets_sold),
+        "INSERT INTO ticket_sales (event_id, sale_date, tickets_sold, gross, source) VALUES (%s, %s, %s, %s, 'etix') "
+        "ON CONFLICT (event_id, sale_date) DO UPDATE SET tickets_sold = %s, gross = %s, source = 'etix'",
+        (event_id, sale_date, tickets_sold, gross, tickets_sold, gross),
     )
     return tickets_sold

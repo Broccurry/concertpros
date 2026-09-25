@@ -149,6 +149,31 @@ class EtixSnapshotStorage(unittest.TestCase):
         row = cur.fetchone()
         self.assertEqual(row, (77, "etix"))
 
+    def test_gross_is_summed_from_sales_by_currency(self):
+        with patch("etix._find_public_event", return_value={"id": 999}), \
+             patch("etix.get_snapshot", return_value={
+                 "revenueProducingTickets": 77,
+                 "salesByCurrency": [{"currency": "USD", "price": 1500.50}],
+             }):
+            etix.pull_and_store_snapshot(
+                self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
+        self.conn.commit()
+        cur = self.conn.cursor()
+        cur.execute("SELECT gross FROM ticket_sales WHERE event_id = %s AND sale_date = %s",
+                    (self.event_id, date(2027, 1, 1)))
+        self.assertEqual(cur.fetchone()[0], 1500.50)
+
+    def test_no_sales_by_currency_leaves_gross_null(self):
+        with patch("etix._find_public_event", return_value={"id": 999}), \
+             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 77}):
+            etix.pull_and_store_snapshot(
+                self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
+        self.conn.commit()
+        cur = self.conn.cursor()
+        cur.execute("SELECT gross FROM ticket_sales WHERE event_id = %s AND sale_date = %s",
+                    (self.event_id, date(2027, 1, 1)))
+        self.assertIsNone(cur.fetchone()[0])
+
     def test_no_match_returns_none_and_writes_nothing(self):
         with patch("etix._find_public_event", return_value=None):
             result = etix.pull_and_store_snapshot(

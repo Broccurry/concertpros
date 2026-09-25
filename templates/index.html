@@ -343,6 +343,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .ticketsalerow .x{margin-left:auto}
 .tixhero{display:flex;align-items:baseline;gap:10px;margin-bottom:6px}
 .tixhero-count{font-family:var(--display);font-size:32px;line-height:1;color:var(--ink)}
+.tixhero-gross{font-size:16px;font-weight:600;color:var(--ink-2)}
 .tixhero-label{color:var(--ink-3);font-size:13px}
 .tixchart{width:100%;height:76px;display:block;margin-bottom:8px}
 .tixmanage{margin-top:8px}
@@ -2730,6 +2731,10 @@ function renderSheet(){
     heroRow.style.alignItems = "center";
     var hero = el("div","tixhero"); hero.style.marginBottom = "0";
     hero.appendChild(el("div","tixhero-count", latest ? String(latest.tickets_sold) : "—"));
+    // gross is only ever set on an etix-sourced row (the live snapshot's
+    // own total) -- a manual count entry has no revenue figure attached,
+    // so there's nothing to show next to it.
+    if(latest && latest.gross != null) hero.appendChild(el("div","tixhero-gross", money(latest.gross) + " gross"));
     hero.appendChild(el("div","tixhero-label", latest ? "active as of " + shortDate(latest.sale_date) : "No counts logged yet"));
     heroRow.appendChild(hero);
     heroRow.appendChild(el("div","spacer"));
@@ -2779,6 +2784,7 @@ function renderSheet(){
         var row = el("div","ticketsalerow");
         row.appendChild(el("span","date-col", shortDate(s.sale_date)));
         row.appendChild(el("span",null, String(s.tickets_sold)));
+        if(s.gross != null) row.appendChild(el("span","sub", money(s.gross)));
         if(s.source === "etix") row.appendChild(el("span","pill pill-muted","Etix"));
         var del = el("button","x","✕");
         del.type = "button";

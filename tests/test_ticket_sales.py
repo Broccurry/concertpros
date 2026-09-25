@@ -71,7 +71,8 @@ class TicketSales(unittest.TestCase):
         self.assertEqual(r.status_code, 201, r.get_json())
         events = client.get("/api/events").get_json()["events"]
         mine = next(e for e in events if e["id"] == self.event_id)
-        self.assertEqual(mine["ticket_sales"], [{"sale_date": "2027-06-20", "tickets_sold": 45, "source": "manual"}])
+        self.assertEqual(mine["ticket_sales"],
+                         [{"sale_date": "2027-06-20", "tickets_sold": 45, "gross": None, "source": "manual"}])
         self.assertEqual(mine["latest_ticket_count"], 45)
 
     def test_relogging_the_same_date_corrects_it_not_duplicates(self):
@@ -92,6 +93,30 @@ class TicketSales(unittest.TestCase):
         events = client.get("/api/events").get_json()["events"]
         mine = next(e for e in events if e["id"] == self.event_id)
         self.assertEqual(mine["latest_ticket_count"], 80)
+
+    def test_manual_relog_clears_a_prior_etix_gross(self):
+        """A gross figure only ever means something tied to the etix count
+        it came with -- once a booker overrides that count by hand, the
+        old gross is stale and shouldn't keep showing next to a different
+        number."""
+        cur = self.conn.cursor()
+        cur.execute(
+            "INSERT INTO ticket_sales (event_id, sale_date, tickets_sold, gross, source) VALUES (%s, %s, %s, %s, 'etix')",
+            (self.event_id, "2027-06-20", 40, 900.00),
+        )
+        self.conn.commit()
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.post(f"/api/events/{self.event_id}/ticket_sales", json={
+            "sale_date": "2027-06-20", "tickets_sold": 45,
+        })
+        self.assertEqual(r.status_code, 201, r.get_json())
+        events = client.get("/api/events").get_json()["events"]
+        mine = next(e for e in events if e["id"] == self.event_id)
+        entry = mine["ticket_sales"][0]
+        self.assertEqual(entry["tickets_sold"], 45)
+        self.assertIsNone(entry["gross"])
+        self.assertEqual(entry["source"], "manual")
 
     def test_deleting_an_entry(self):
         client = self.app.test_client()

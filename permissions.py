@@ -286,7 +286,7 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
 
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT event_id, sale_date, tickets_sold, source FROM ticket_sales "
+            "SELECT event_id, sale_date, tickets_sold, gross, source FROM ticket_sales "
             "WHERE event_id = ANY(%(ids)s) ORDER BY sale_date",
             {"ids": ids},
         )
