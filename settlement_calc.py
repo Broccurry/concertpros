@@ -48,11 +48,17 @@ def compute_net_gross(gross, sales_tax_rate=0, facility_fee_per_ticket=0, ticket
     sales_tax_rate/ticketing_fee_rate are plain percentage numbers (6.75
     meaning 6.75%), same convention as events.backend_pct elsewhere in
     this app -- not 0-1 fractions. facility_fee_per_ticket is a flat
-    dollar amount per ticket, not a percentage."""
-    gross = gross or 0
-    sales_tax = gross * (sales_tax_rate or 0) / 100
-    facility_fee = (facility_fee_per_ticket or 0) * (tickets_sold or 0)
-    ticketing_fee = gross * (ticketing_fee_rate or 0) / 100
+    dollar amount per ticket, not a percentage.
+
+    Every input is coerced to float here -- psycopg hands back NUMERIC
+    columns as Decimal, which raises TypeError when mixed with a plain
+    float in arithmetic, and callers shouldn't have to know or care
+    which of guarantee/gross/etc. came from the database vs. a JSON
+    body."""
+    gross = float(gross or 0)
+    sales_tax = gross * float(sales_tax_rate or 0) / 100
+    facility_fee = float(facility_fee_per_ticket or 0) * float(tickets_sold or 0)
+    ticketing_fee = gross * float(ticketing_fee_rate or 0) / 100
     net_gross = gross - sales_tax - facility_fee - ticketing_fee
     return net_gross, {"sales_tax": sales_tax, "facility_fee": facility_fee, "ticketing_fee": ticketing_fee}
 
@@ -62,9 +68,13 @@ def compute_artist_payout(deal_type, guarantee, backend_pct, net_gross, net_afte
     """net_gross: revenue after tax/facility/ticketing deductions, before
     show expenses. net_after_expenses: net_gross minus show expenses
     (NOT including the guarantee -- the guarantee is combined with
-    expenses separately, only for the deal types where that matters)."""
-    guarantee = guarantee or 0
-    pct = (backend_pct or 0) / 100
+    expenses separately, only for the deal types where that matters).
+    All numeric inputs are coerced to float -- see compute_net_gross for
+    why (Decimal from the database vs. float from Python arithmetic)."""
+    guarantee = float(guarantee or 0)
+    pct = float(backend_pct or 0) / 100
+    net_gross = float(net_gross or 0)
+    net_after_expenses = float(net_after_expenses or 0)
 
     if deal_type == DEAL_GUARANTEE:
         return guarantee
