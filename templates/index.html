@@ -763,7 +763,22 @@ var EVENT_TYPES = [{value:"concert",label:"Concert"}, {value:"dance_party",label
                     {value:"rental",label:"Rental"}, {value:"private_event",label:"Private Event"}];
 var FIXED_PROMOTERS = ["Innovation Concerts", "Kickstand", "Bravo"];
 var NO_DEAL = "Not recorded";
-var DEAL_TYPES = [NO_DEAL,"Guarantee","Guarantee vs %","Door split","Flat rental","Free / promo"];
+var DEAL_TYPES = [NO_DEAL,"Guarantee","Guarantee vs %","Guarantee + %","Door split","Flat rental","Free / promo"];
+// Real categories from Innovation Concerts' own offer/settlement sheets
+// (2026-09-25), not generic placeholders -- a booker still freely adds,
+// renames, or removes lines either way.
+var SETTLEMENT_TEMPLATES = {
+  simple: ["Touring Support","Local Band","Hospitality","Production (Sound/Lights)","Security",
+    "Box Office","Marketing","Promoter Profit","Venue Rental","Miscellaneous"],
+  detailed: ["Touring Support","Local Band","Hospitality","Production (Sound/Lights)","Security",
+    "Box Office","Marketing","Promoter Profit","Venue Rental","Miscellaneous",
+    "Advert","Backline","Barricade","Catering","Chair Rental","Cleanup","Damage","Dress Room",
+    "Electrician","Electric Power","Equipment Rental","Firemen","Forklift","Furniture",
+    "Ground Transportation","Hotel","Insurance","Loaders","Package","Parking","Permits","Phone",
+    "Piano","Piano Tuner","Rental","Riggers","Runner","Security (Private)","Security T-shirt",
+    "Setup","Spot Operator","Spots","Staff","Stage","Stage Hands","Stage Manager","Ticket Print",
+    "Ticket Taker","Towels","Ushers","Age Differential"],
+};
 
 function pad(n){ return n < 10 ? "0" + n : "" + n; }
 function iso(y,m,d){ return y + "-" + pad(m+1) + "-" + pad(d); }
@@ -2140,7 +2155,10 @@ async function openEvent(id, dateHint){
       event_types:["concert"], promoters:["Innovation Concerts"],
       ticket_tiers:[{label:"Advance",price:""},{label:"Day of show",price:""}], ticket_link:"",
       announce_date:"", onsale_date:"", notes:"", messages:[], files:[], extraDates:[], group_members:[],
-      tasks:[], staff:[], settlement:{tickets_sold:"",gross:"",expenses:"",artist_payout:"",settled:false,notes:""}
+      tasks:[], staff:[],
+      settlement:{tickets_sold:"",gross:"",sales_tax_rate:"",facility_fee_per_ticket:"",ticketing_fee_rate:"",
+        expenses:0,door_split_from_dollar_one:false,template:"simple",artist_payout:0,settled:false,notes:""},
+      settlement_expenses:[]
     };
     draftIsNew = true;
   }
@@ -3030,18 +3048,110 @@ function renderSheet(){
   if(draft.status === "complete" && !draftIsNew){
     var fs7 = document.createElement("fieldset");
     fs7.appendChild(el("legend",null,"Finals & payout"));
-    if(!draft.settlement) draft.settlement = {tickets_sold:"",gross:"",expenses:"",artist_payout:"",settled:false,notes:""};
+    if(!draft.settlement) draft.settlement = {tickets_sold:"",gross:"",sales_tax_rate:"",facility_fee_per_ticket:"",
+      ticketing_fee_rate:"",expenses:0,door_split_from_dollar_one:false,template:"simple",artist_payout:0,
+      settled:false,notes:""};
+    if(!draft.settlement_expenses) draft.settlement_expenses = [];
     var s = draft.settlement;
-    var r7 = el("div","row");
-    r7.appendChild(field("Tickets sold", input("number", s.tickets_sold, function(v){ s.tickets_sold = v; renderSheetNet(); })));
-    r7.appendChild(field("Gross", input("number", s.gross, function(v){ s.gross = v; renderSheetNet(); })));
+
+    var templateField = el("div","field");
+    templateField.appendChild(el("label",null,"Expense template"));
+    var templateChips = el("div","chips");
+    [{v:"simple",label:"Simple"},{v:"detailed",label:"Detailed (bigger shows)"}].forEach(function(t){
+      var chip = el("button","chip",t.label);
+      chip.type = "button";
+      chip.setAttribute("aria-pressed", s.template === t.v ? "true" : "false");
+      chip.onclick = function(){
+        s.template = t.v;
+        // Only seed starter lines the first time -- switching templates
+        // on a show that already has real numbers typed in must never
+        // silently wipe them.
+        if(!draft.settlement_expenses.length){
+          draft.settlement_expenses = SETTLEMENT_TEMPLATES[t.v].map(function(label,i){
+            return {label:label, budget:"", actual:"", sort_order:i};
+          });
+        }
+        renderSheet();
+      };
+      templateChips.appendChild(chip);
+    });
+    templateField.appendChild(templateChips);
+    fs7.appendChild(templateField);
+
+    var pullBtn = el("button","btn","Pull latest ticket sale → tickets sold / gross");
+    pullBtn.type = "button";
+    pullBtn.style.marginTop = "10px";
+    pullBtn.onclick = function(){
+      var sales = draft.ticket_sales || [];
+      if(!sales.length){ window.alert("No ticket sales logged yet for this show."); return; }
+      var latest = sales[sales.length - 1];
+      s.tickets_sold = latest.tickets_sold;
+      if(latest.gross != null) s.gross = latest.gross;
+      renderSheet();
+    };
+    fs7.appendChild(pullBtn);
+
+    var r7 = el("div","row"); r7.style.marginTop = "10px";
+    r7.appendChild(field("Tickets sold", input("number", s.tickets_sold, function(v){ s.tickets_sold = v; })));
+    r7.appendChild(field("Gross (walk-up + presale)", input("number", s.gross, function(v){ s.gross = v; })));
     fs7.appendChild(r7);
-    var r7b = el("div","row"); r7b.style.marginTop = "10px";
-    r7b.appendChild(field("Expenses", input("number", s.expenses, function(v){ s.expenses = v; renderSheetNet(); })));
-    r7b.appendChild(field("Artist payout", input("number", s.artist_payout, function(v){ s.artist_payout = v; renderSheetNet(); })));
+
+    var r7b = el("div","row-3"); r7b.style.marginTop = "10px";
+    r7b.appendChild(field("Sales tax rate (%)", input("number", s.sales_tax_rate, function(v){ s.sales_tax_rate = v; })));
+    r7b.appendChild(field("Facility fee / ticket ($)", input("number", s.facility_fee_per_ticket, function(v){ s.facility_fee_per_ticket = v; })));
+    r7b.appendChild(field("Ticketing fee rate (%)", input("number", s.ticketing_fee_rate, function(v){ s.ticketing_fee_rate = v; })));
     fs7.appendChild(r7b);
-    var netLine = el("p","hint"); netLine.id = "netLine";
-    fs7.appendChild(netLine);
+
+    if(draft.deal_type === "Door split"){
+      var doorWrap = el("label","checkfield"); doorWrap.style.marginTop = "10px";
+      var doorCb = document.createElement("input");
+      doorCb.type = "checkbox"; doorCb.checked = !!s.door_split_from_dollar_one;
+      doorCb.onchange = function(){ s.door_split_from_dollar_one = doorCb.checked; };
+      doorWrap.appendChild(doorCb);
+      doorWrap.appendChild(document.createTextNode(" Split from dollar one (not just above expenses)"));
+      fs7.appendChild(doorWrap);
+    }
+
+    var expField = el("div","field"); expField.style.marginTop = "12px";
+    expField.appendChild(el("label",null,"Expenses"));
+    var expList = el("div","expenselist");
+    draft.settlement_expenses.forEach(function(line, idx){
+      var row = el("div","row-3");
+      var labelInput = input("text", line.label, function(v){ line.label = v; });
+      row.appendChild(labelInput);
+      row.appendChild(input("number", line.budget, function(v){ line.budget = v; }));
+      var actualInput = input("number", line.actual, function(v){ line.actual = v; });
+      row.appendChild(actualInput);
+      var del = el("button","x","✕"); del.type = "button"; del.title = "Remove line";
+      del.onclick = function(){ draft.settlement_expenses.splice(idx,1); renderSheet(); };
+      row.appendChild(del);
+      expList.appendChild(row);
+    });
+    if(!draft.settlement_expenses.length){
+      var expHead = el("div","row-3");
+      expHead.appendChild(el("span","eyebrow","Label")); expHead.appendChild(el("span","eyebrow","Budget")); expHead.appendChild(el("span","eyebrow","Actual"));
+      expList.insertBefore(expHead, expList.firstChild);
+    }
+    expField.appendChild(expList);
+    var addLineBtn = el("button","btn","+ Add expense line");
+    addLineBtn.type = "button";
+    addLineBtn.style.marginTop = "8px";
+    addLineBtn.onclick = function(){
+      draft.settlement_expenses.push({label:"", budget:"", actual:"", sort_order: draft.settlement_expenses.length});
+      renderSheet();
+    };
+    expField.appendChild(addLineBtn);
+    fs7.appendChild(expField);
+
+    var summary = el("div","hint"); summary.style.marginTop = "10px";
+    var expensesTotal = draft.settlement_expenses.reduce(function(sum,l){ return sum + (+l.actual || 0); }, 0);
+    summary.appendChild(el("p",null,"Expenses (actual): " + money(expensesTotal)));
+    summary.appendChild(el("p",null,"Artist payout (as of last save): " + money(+s.artist_payout || 0)));
+    summary.appendChild(el("p",null,"Deal: " + (draft.deal_type || NO_DEAL) +
+      (draft.guarantee ? " · guarantee " + money(draft.guarantee) : "") +
+      (draft.backend_pct ? " · " + draft.backend_pct + "%" : "")));
+    fs7.appendChild(summary);
+
     var settledWrap = el("div","taskitem");
     var scb = document.createElement("input");
     scb.type = "checkbox"; scb.id = "settledBox"; scb.checked = !!s.settled;
@@ -3051,16 +3161,23 @@ function renderSheet(){
     slab.setAttribute("for","settledBox");
     settledWrap.appendChild(slab);
     fs7.appendChild(settledWrap);
-    var saveSettle = el("button","btn","Save finals");
+
+    var saveSettle = el("button","btn btn-primary","Save finals");
     saveSettle.type = "button";
     saveSettle.style.marginTop = "8px";
+    var saveErr = el("span","hint"); saveErr.style.marginLeft = "8px"; saveErr.style.color = "var(--dead)";
     saveSettle.onclick = async function(){
-      var r = await api("/api/events/" + draft.id + "/settlement", {method:"PUT", body: JSON.stringify(s)});
-      if(r.ok){ await refreshDraft(); } else { window.alert(r.body.error || "Could not save finals."); }
+      saveErr.textContent = "";
+      var lines = draft.settlement_expenses.filter(function(l){ return (l.label||"").trim(); });
+      var r1 = await api("/api/events/" + draft.id + "/settlement_expenses", {method:"PUT", body: JSON.stringify({lines: lines})});
+      if(!r1.ok){ saveErr.textContent = r1.body.error || "Could not save expenses."; return; }
+      var r2 = await api("/api/events/" + draft.id + "/settlement", {method:"PUT", body: JSON.stringify(s)});
+      if(!r2.ok){ saveErr.textContent = r2.body.error || "Could not save finals."; return; }
+      await refreshDraft();
     };
     fs7.appendChild(saveSettle);
+    fs7.appendChild(saveErr);
     body.appendChild(fs7);
-    renderSheetNet();
   }
 
   var fs8 = document.createElement("fieldset");
@@ -3354,13 +3471,6 @@ function openSetTimeSheet(ev){
   );
   w.document.close();
 }
-function renderSheetNet(){
-  var line = document.getElementById("netLine");
-  if(!line || !draft) return;
-  var s = draft.settlement;
-  var net = (+s.gross||0) - (+s.expenses||0) - (+s.artist_payout||0);
-  line.textContent = "Net to the room: " + money(net) + "  (gross − expenses − artist payout)";
-}
 /* after a task/staff/settlement action, reload real data and re-open the
    same show so the sheet reflects the server, not a locally-guessed state */
 /* Fields the user edits in-place and that autosave may not have flushed
@@ -3368,7 +3478,7 @@ function renderSheetNet(){
    action must not silently wipe these out from under them mid-edit. */
 var UNSAVED_FIELDS = ["venue_id","artists","show_date","doors","show_time",
   "status","deal_type","guarantee","backend_pct","deal_notes","ticket_tiers",
-  "announce_date","onsale_date","notes","ticket_link"];
+  "announce_date","onsale_date","notes","ticket_link","settlement","settlement_expenses"];
 
 async function refreshDraft(){
   var id = draft.id;

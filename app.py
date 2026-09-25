@@ -29,6 +29,7 @@ import email_client
 import permissions
 import etix
 import resend_client
+import settlement_calc
 import storage
 from permissions import Viewer
 
@@ -248,7 +249,7 @@ def _parse_optional_event_fields(body):
 PER_DATE_EVENT_FIELDS = {"venue_id", "status", "show_date", "doors", "show_time"}
 
 _SHARED_CHILD_TABLES = ("event_artists", "ticket_tiers", "event_tasks", "assignments",
-                        "settlements", "event_messages")
+                        "settlements", "settlement_expenses", "event_messages")
 _SHARED_SCALAR_COLUMNS = ("deal_type", "guarantee", "backend_pct", "deal_notes",
                           "announce_date", "onsale_date", "notes", "ticket_link")
 
@@ -2024,6 +2025,40 @@ def create_app():
                      {"role_id": role_id, "person_id": person_id})
         return jsonify(ok=True)
 
+    def _recompute_settlement(conn, event_id, merged):
+        """The one place a settlement's artist_payout gets computed --
+        called after every settlement save and every expense-line save,
+        so the stored number can never drift from settlement_calc's
+        formula (see that module for the real, confirmed-against-real-
+        settlements deal math). Returns the final values dict, including
+        the freshly computed expenses total and artist_payout."""
+        cur = conn.cursor()
+        cur.execute("SELECT deal_type, guarantee, backend_pct FROM events WHERE id = %s", (event_id,))
+        deal_type, guarantee, backend_pct = cur.fetchone()
+
+        cur.execute("SELECT COALESCE(SUM(actual), 0) FROM settlement_expenses WHERE event_id = %s", (event_id,))
+        expenses = float(cur.fetchone()[0])
+
+        net_gross, _breakdown = settlement_calc.compute_net_gross(
+            gross=merged.get("gross") or 0,
+            sales_tax_rate=merged.get("sales_tax_rate") or 0,
+            facility_fee_per_ticket=merged.get("facility_fee_per_ticket") or 0,
+            tickets_sold=merged.get("tickets_sold") or 0,
+            ticketing_fee_rate=merged.get("ticketing_fee_rate") or 0,
+        )
+        net_after_expenses = net_gross - expenses
+        artist_payout = settlement_calc.compute_artist_payout(
+            deal_type, guarantee, backend_pct, net_gross, net_after_expenses,
+            door_split_from_dollar_one=merged.get("door_split_from_dollar_one") or False,
+        )
+        return {**merged, "expenses": expenses, "artist_payout": artist_payout}
+
+    _SETTLEMENT_DEFAULTS = {
+        "tickets_sold": None, "gross": None, "sales_tax_rate": None, "facility_fee_per_ticket": None,
+        "ticketing_fee_rate": None, "door_split_from_dollar_one": False, "template": "simple",
+        "settled": False, "notes": None,
+    }
+
     @app.put("/api/events/<int:event_id>/settlement")
     @require_booker
     def upsert_settlement(event_id):
@@ -2032,25 +2067,25 @@ def create_app():
         endpoints — there's no meaningful 'doesn't exist yet' state a
         caller needs to distinguish. Crew never reaches this at all
         (require_booker), and never sees the result either — events_for's
-        crew branch doesn't join settlements in the first place."""
+        crew branch doesn't join settlements in the first place.
+        expenses/artist_payout are NOT accepted from the client -- they're
+        always recomputed server-side (see _recompute_settlement) so a
+        stale or hand-edited number can never get stored."""
         cur = g.db.cursor()
         cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
         if cur.fetchone() is None:
             return jsonify(error="not_found"), 404
 
         cur.execute(
-            "SELECT tickets_sold, gross, expenses, artist_payout, settled, notes "
-            "FROM settlements WHERE event_id = %s",
+            "SELECT tickets_sold, gross, sales_tax_rate, facility_fee_per_ticket, ticketing_fee_rate, "
+            "door_split_from_dollar_one, template, settled, notes FROM settlements WHERE event_id = %s",
             (event_id,),
         )
         row = cur.fetchone()
-        before_cols = ["tickets_sold", "gross", "expenses", "artist_payout", "settled", "notes"]
-        # settled is NOT NULL DEFAULT FALSE on the table — default it the
-        # same way here for a first-ever save, or the INSERT below fails.
-        before = dict(zip(before_cols, row)) if row else {
-            "tickets_sold": None, "gross": None, "expenses": None,
-            "artist_payout": None, "settled": False, "notes": None,
-        }
+        before = dict(zip(
+            ["tickets_sold", "gross", "sales_tax_rate", "facility_fee_per_ticket", "ticketing_fee_rate",
+             "door_split_from_dollar_one", "template", "settled", "notes"], row,
+        )) if row else dict(_SETTLEMENT_DEFAULTS)
 
         body = request.get_json(silent=True) or {}
         values = {}
@@ -2063,16 +2098,18 @@ def create_app():
                     values["tickets_sold"] = int(v)
                 except (TypeError, ValueError):
                     return jsonify(error="invalid_tickets_sold"), 400
-        for key in ("gross", "expenses", "artist_payout"):
+        for key in ("gross", "sales_tax_rate", "facility_fee_per_ticket", "ticketing_fee_rate"):
             if key in body:
-                v = body[key]
-                if v in (None, ""):
-                    values[key] = None
-                else:
-                    try:
-                        values[key] = float(v)
-                    except (TypeError, ValueError):
-                        return jsonify(error=f"invalid_{key}"), 400
+                parsed, ok = _parse_number(body[key])
+                if not ok:
+                    return jsonify(error=f"invalid_{key}"), 400
+                values[key] = parsed
+        if "door_split_from_dollar_one" in body:
+            values["door_split_from_dollar_one"] = bool(body["door_split_from_dollar_one"])
+        if "template" in body:
+            if body["template"] not in ("simple", "detailed"):
+                return jsonify(error="invalid_template"), 400
+            values["template"] = body["template"]
         if "settled" in body:
             values["settled"] = bool(body["settled"])
         if "notes" in body:
@@ -2083,14 +2120,21 @@ def create_app():
 
         # Fill anything not sent this call from what's already stored, so a
         # partial save (just ticking "settled") doesn't null out the rest.
-        merged = {**before, **values}
+        merged = _recompute_settlement(g.db, event_id, {**before, **values})
         cur.execute(
-            """INSERT INTO settlements (event_id, tickets_sold, gross, expenses, artist_payout, settled, notes)
-               VALUES (%(event_id)s, %(tickets_sold)s, %(gross)s, %(expenses)s, %(artist_payout)s,
-                       %(settled)s, %(notes)s)
+            """INSERT INTO settlements (event_id, tickets_sold, gross, sales_tax_rate,
+                       facility_fee_per_ticket, ticketing_fee_rate, expenses, door_split_from_dollar_one,
+                       template, artist_payout, settled, notes)
+               VALUES (%(event_id)s, %(tickets_sold)s, %(gross)s, %(sales_tax_rate)s,
+                       %(facility_fee_per_ticket)s, %(ticketing_fee_rate)s, %(expenses)s,
+                       %(door_split_from_dollar_one)s, %(template)s, %(artist_payout)s, %(settled)s, %(notes)s)
                ON CONFLICT (event_id) DO UPDATE SET
                    tickets_sold = EXCLUDED.tickets_sold, gross = EXCLUDED.gross,
-                   expenses = EXCLUDED.expenses, artist_payout = EXCLUDED.artist_payout,
+                   sales_tax_rate = EXCLUDED.sales_tax_rate,
+                   facility_fee_per_ticket = EXCLUDED.facility_fee_per_ticket,
+                   ticketing_fee_rate = EXCLUDED.ticketing_fee_rate, expenses = EXCLUDED.expenses,
+                   door_split_from_dollar_one = EXCLUDED.door_split_from_dollar_one,
+                   template = EXCLUDED.template, artist_payout = EXCLUDED.artist_payout,
                    settled = EXCLUDED.settled, notes = EXCLUDED.notes, updated_at = now()""",
             {"event_id": event_id, **merged},
         )
@@ -2101,7 +2145,68 @@ def create_app():
                 "after": {k: audit.jsonable(v) for k, v in values.items()},
             },
         )
-        return jsonify(ok=True)
+        return jsonify(ok=True, expenses=merged["expenses"], artist_payout=merged["artist_payout"])
+
+    @app.put("/api/events/<int:event_id>/settlement_expenses")
+    @require_booker
+    def set_settlement_expenses(event_id):
+        """Replaces the whole set, same convention as set_ticket_tiers --
+        a booker re-sends the full expense list each time rather than
+        this endpoint tracking incremental add/remove/reorder. Triggers
+        a settlement recompute afterward since the expense total feeds
+        directly into the payout math."""
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+
+        body = request.get_json(silent=True) or {}
+        raw = body.get("lines")
+        if not isinstance(raw, list):
+            return jsonify(error="lines_must_be_a_list"), 400
+
+        lines = []
+        for entry in raw:
+            if not isinstance(entry, dict) or not (entry.get("label") or "").strip():
+                return jsonify(error="each_line_needs_a_label"), 400
+            budget, ok1 = _parse_number(entry.get("budget"))
+            actual, ok2 = _parse_number(entry.get("actual"))
+            if not ok1 or not ok2:
+                return jsonify(error="invalid_amount"), 400
+            lines.append((entry["label"].strip(), budget, actual))
+
+        cur.execute("DELETE FROM settlement_expenses WHERE event_id = %s", (event_id,))
+        for i, (label, budget, actual) in enumerate(lines):
+            cur.execute(
+                "INSERT INTO settlement_expenses (event_id, label, budget, actual, sort_order) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (event_id, label, budget, actual, i),
+            )
+
+        cur.execute(
+            "SELECT tickets_sold, gross, sales_tax_rate, facility_fee_per_ticket, ticketing_fee_rate, "
+            "door_split_from_dollar_one, template, settled, notes FROM settlements WHERE event_id = %s",
+            (event_id,),
+        )
+        row = cur.fetchone()
+        before = dict(zip(
+            ["tickets_sold", "gross", "sales_tax_rate", "facility_fee_per_ticket", "ticketing_fee_rate",
+             "door_split_from_dollar_one", "template", "settled", "notes"], row,
+        )) if row else dict(_SETTLEMENT_DEFAULTS)
+        merged = _recompute_settlement(g.db, event_id, before)
+        cur.execute(
+            """INSERT INTO settlements (event_id, tickets_sold, gross, sales_tax_rate,
+                       facility_fee_per_ticket, ticketing_fee_rate, expenses, door_split_from_dollar_one,
+                       template, artist_payout, settled, notes)
+               VALUES (%(event_id)s, %(tickets_sold)s, %(gross)s, %(sales_tax_rate)s,
+                       %(facility_fee_per_ticket)s, %(ticketing_fee_rate)s, %(expenses)s,
+                       %(door_split_from_dollar_one)s, %(template)s, %(artist_payout)s, %(settled)s, %(notes)s)
+               ON CONFLICT (event_id) DO UPDATE SET
+                   expenses = EXCLUDED.expenses, artist_payout = EXCLUDED.artist_payout, updated_at = now()""",
+            {"event_id": event_id, **merged},
+        )
+        audit.record(g.db, g.viewer, "event", event_id, "settlement_expenses", {"line_count": len(lines)})
+        return jsonify(ok=True, expenses=merged["expenses"], artist_payout=merged["artist_payout"])
 
     @app.put("/api/events/<int:event_id>/ticket_tiers")
     @require_booker

@@ -228,12 +228,26 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
 
     with conn.cursor() as cur:
         cur.execute(
-            "SELECT event_id, tickets_sold, gross, expenses, artist_payout, settled, notes "
+            "SELECT event_id, tickets_sold, gross, sales_tax_rate, facility_fee_per_ticket, "
+            "ticketing_fee_rate, expenses, door_split_from_dollar_one, template, artist_payout, "
+            "settled, notes "
             "FROM settlements WHERE event_id = ANY(%(ids)s)",
             {"ids": ids},
         )
         cols = [c.name for c in cur.description]
         settlements = {row[0]: dict(zip(cols, row)) for row in cur.fetchall()}
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT event_id, id, label, budget, actual, sort_order FROM settlement_expenses "
+            "WHERE event_id = ANY(%(ids)s) ORDER BY sort_order",
+            {"ids": ids},
+        )
+        cols = [c.name for c in cur.description]
+        expenses_by_event: dict[int, list[dict]] = {}
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            expenses_by_event.setdefault(d.pop("event_id"), []).append(d)
 
     with conn.cursor() as cur:
         cur.execute(
@@ -301,6 +315,7 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         eid = effective_id(e)
         e["artists"] = artists_by_event.get(eid, [])
         e["settlement"] = settlements.get(eid)
+        e["settlement_expenses"] = expenses_by_event.get(eid, [])
         e["ticket_tiers"] = tiers_by_event.get(eid, [])
         e["staff"] = staff_by_event.get(eid, [])
         e["tasks"] = tasks_by_event.get(eid, [])

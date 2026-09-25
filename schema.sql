@@ -253,16 +253,42 @@ CREATE TABLE ticket_sales (
     PRIMARY KEY (event_id, sale_date)
 );
 
+-- v2 (2026-09-25): real deal-math instead of a hand-typed artist_payout --
+-- see settlement_calc.py, the one place these numbers get computed.
+-- `expenses` stays as a synced total (SUM of settlement_expenses.actual)
+-- rather than being replaced by a live SUM everywhere, so a settled
+-- settlement's number is a frozen snapshot, not something that silently
+-- moves if an expense line is edited after the fact.
 CREATE TABLE settlements (
-    event_id        INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
-    tickets_sold    INTEGER,
-    gross           NUMERIC,
-    expenses        NUMERIC,
-    artist_payout   NUMERIC,
-    settled         BOOLEAN NOT NULL DEFAULT FALSE,
-    notes           TEXT,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    event_id                   INTEGER PRIMARY KEY REFERENCES events(id) ON DELETE CASCADE,
+    tickets_sold                INTEGER,
+    gross                        NUMERIC,
+    sales_tax_rate               NUMERIC,  -- fraction, e.g. 0.0675 -- defaults from the venue, editable per show
+    facility_fee_per_ticket      NUMERIC,
+    ticketing_fee_rate           NUMERIC,  -- e.g. a platform's % cut, deducted same as sales tax/facility fee
+    expenses                    NUMERIC,   -- synced total of settlement_expenses.actual
+    door_split_from_dollar_one  BOOLEAN NOT NULL DEFAULT FALSE,  -- only meaningful for deal_type 'Door split'
+    template                    TEXT NOT NULL DEFAULT 'simple' CHECK (template IN ('simple', 'detailed')),
+    artist_payout                NUMERIC,  -- computed by settlement_calc, frozen once settled
+    settled                     BOOLEAN NOT NULL DEFAULT FALSE,
+    notes                        TEXT,
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- One row per expense line -- replaces a single lump `expenses` number so
+-- a settlement can show real itemized costs (rule: don't record the same
+-- fact as one number in one place and a breakdown in another). budget vs
+-- actual matches how Innovation Concerts' own settlement sheet already
+-- tracks expenses, not a new convention invented here.
+CREATE TABLE settlement_expenses (
+    id          SERIAL PRIMARY KEY,
+    event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    label       TEXT NOT NULL,
+    budget      NUMERIC,
+    actual      NUMERIC,
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_settlement_expenses_event ON settlement_expenses(event_id, sort_order);
 
 -- Auth sessions. Long-lived on purpose (crew checking a schedule on their
 -- phone should not be re-logging-in constantly) — the opposite tradeoff

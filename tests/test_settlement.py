@@ -1,6 +1,8 @@
-"""Real database, real Flask test client: settling a show's finances,
-proving a partial save (just ticking 'settled') doesn't wipe out figures
-saved earlier, and that crew can't reach this at all.
+"""Real database, real Flask test client: settling a show's finances —
+now a real computed payout (settlement_calc.py) instead of a hand-typed
+number, itemized expense lines instead of one lump figure, proving a
+partial save doesn't wipe out earlier figures, and that crew can't reach
+any of this.
 """
 import unittest
 
@@ -60,73 +62,143 @@ class SettlingAShow(unittest.TestCase):
         r = client.post("/api/login", json={"email": email, "password": self.password})
         self.assertEqual(r.status_code, 200, r.get_json())
 
+    def _set_deal(self, client, deal_type, guarantee=None, backend_pct=None):
+        r = client.patch(f"/api/events/{self.event_id}", json={
+            "version": 1, "deal_type": deal_type, "guarantee": guarantee, "backend_pct": backend_pct,
+        })
+        self.assertEqual(r.status_code, 200, r.get_json())
+
+    def _get_settlement(self, client):
+        events = client.get("/api/events").get_json()["events"]
+        return next(e for e in events if e["id"] == self.event_id)
+
     def tearDown(self):
         cur = self.conn.cursor()
         cur.execute("DELETE FROM audit_log WHERE entity_type = 'event' AND entity_id = %s", (self.event_id,))
-        cur.execute("DELETE FROM settlements WHERE event_id = %s", (self.event_id,))
-        cur.execute("DELETE FROM events WHERE id = %s", (self.event_id,))
+        cur.execute("DELETE FROM events WHERE id = %s", (self.event_id,))  # cascades settlement + expense lines
         cur.execute("DELETE FROM artists WHERE id = %s", (self.artist_id,))
         cur.execute("DELETE FROM sessions WHERE person_id IN (%s, %s)", (self.booker_id, self.crew_id))
         cur.execute("DELETE FROM people WHERE id IN (%s, %s)", (self.booker_id, self.crew_id))
         self.conn.commit()
         self.conn.close()
 
-    def test_crew_cannot_touch_the_settlement(self):
+    def test_crew_cannot_touch_the_settlement_or_its_expenses(self):
         client = self.app.test_client()
         self._login(client, self.crew_email)
         r = client.put(f"/api/events/{self.event_id}/settlement", json={"gross": 1000})
         self.assertEqual(r.status_code, 403)
-
-    def test_booker_records_finals_and_they_show_up(self):
-        client = self.app.test_client()
-        self._login(client, self.booker_email)
-
-        r = client.put(f"/api/events/{self.event_id}/settlement", json={
-            "tickets_sold": 200, "gross": 4000, "expenses": 800, "artist_payout": 2000,
-        })
-        self.assertEqual(r.status_code, 200, r.get_json())
-
-        events = client.get("/api/events").get_json()["events"]
-        mine = next(e for e in events if e["id"] == self.event_id)
-        s = mine["settlement"]
-        self.assertEqual(s["tickets_sold"], 200)
-        self.assertAlmostEqual(float(s["gross"]), 4000.0)
-        self.assertAlmostEqual(float(s["artist_payout"]), 2000.0)
-        self.assertFalse(s["settled"])
-
-        cur = self.conn.cursor()
-        cur.execute(
-            "SELECT action, detail FROM audit_log WHERE entity_type = 'event' AND entity_id = %s AND action = 'settle'",
-            (self.event_id,),
-        )
-        action, detail = cur.fetchone()
-        self.assertEqual(detail["after"]["gross"], 4000.0)
-
-    def test_a_partial_save_does_not_null_out_earlier_figures(self):
-        """Ticking 'settled' later must not wipe the gross/expenses saved
-        in an earlier call — this is the whole point of merging with what's
-        already stored rather than overwriting the full row."""
-        client = self.app.test_client()
-        self._login(client, self.booker_email)
-
-        client.put(f"/api/events/{self.event_id}/settlement", json={
-            "tickets_sold": 150, "gross": 3000, "expenses": 500, "artist_payout": 1200,
-        })
-        r2 = client.put(f"/api/events/{self.event_id}/settlement", json={"settled": True})
-        self.assertEqual(r2.status_code, 200)
-
-        events = client.get("/api/events").get_json()["events"]
-        s = next(e for e in events if e["id"] == self.event_id)["settlement"]
-        self.assertTrue(s["settled"])
-        self.assertEqual(s["tickets_sold"], 150, "the earlier tickets_sold must survive a partial save")
-        self.assertAlmostEqual(float(s["gross"]), 3000.0, msg="the earlier gross must survive a partial save")
-        self.assertAlmostEqual(float(s["artist_payout"]), 1200.0)
+        r2 = client.put(f"/api/events/{self.event_id}/settlement_expenses", json={"lines": []})
+        self.assertEqual(r2.status_code, 403)
 
     def test_invalid_number_is_rejected(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)
         r = client.put(f"/api/events/{self.event_id}/settlement", json={"gross": "not a number"})
         self.assertEqual(r.status_code, 400)
+
+    def test_artist_payout_is_computed_not_hand_typed(self):
+        """Sending artist_payout/expenses directly does nothing -- the
+        server always recomputes from the deal type + expense lines."""
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._set_deal(client, "Guarantee vs %", guarantee=1000, backend_pct=70)
+
+        r = client.put(f"/api/events/{self.event_id}/settlement", json={
+            "tickets_sold": 200, "gross": 4000, "artist_payout": 999999,
+        })
+        self.assertEqual(r.status_code, 200, r.get_json())
+        # 70% of net-after-expenses (4000, no expense lines yet) = 2800, beats the $1000 guarantee
+        self.assertAlmostEqual(r.get_json()["artist_payout"], 2800.0)
+
+        s = self._get_settlement(client)["settlement"]
+        self.assertAlmostEqual(float(s["artist_payout"]), 2800.0)
+        self.assertNotAlmostEqual(float(s["artist_payout"]), 999999.0)
+
+    def test_expense_lines_feed_the_payout_calculation(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._set_deal(client, "Guarantee + %", guarantee=500, backend_pct=20)
+        client.put(f"/api/events/{self.event_id}/settlement", json={"gross": 3000})
+
+        r = client.put(f"/api/events/{self.event_id}/settlement_expenses", json={"lines": [
+            {"label": "Security", "budget": 300, "actual": 300},
+            {"label": "Marketing", "budget": 700, "actual": 700},
+        ]})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertAlmostEqual(r.get_json()["expenses"], 1000.0)
+        # guarantee($500) + 20% * (3000 - 1000 - 500) = 500 + 300 = 800
+        self.assertAlmostEqual(r.get_json()["artist_payout"], 800.0)
+
+        mine = self._get_settlement(client)
+        self.assertEqual(len(mine["settlement_expenses"]), 2)
+        labels = [line["label"] for line in mine["settlement_expenses"]]
+        self.assertEqual(labels, ["Security", "Marketing"])
+
+    def test_replacing_expense_lines_removes_ones_left_out(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        client.put(f"/api/events/{self.event_id}/settlement_expenses", json={"lines": [
+            {"label": "Security", "actual": 100}, {"label": "Marketing", "actual": 200},
+        ]})
+        client.put(f"/api/events/{self.event_id}/settlement_expenses", json={"lines": [
+            {"label": "Security", "actual": 100},
+        ]})
+        mine = self._get_settlement(client)
+        self.assertEqual([l["label"] for l in mine["settlement_expenses"]], ["Security"])
+
+    def test_a_blank_expense_label_is_rejected(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.put(f"/api/events/{self.event_id}/settlement_expenses", json={"lines": [
+            {"label": "  ", "actual": 100},
+        ]})
+        self.assertEqual(r.status_code, 400)
+
+    def test_a_partial_save_does_not_null_out_earlier_figures(self):
+        """Ticking 'settled' later must not wipe the gross saved in an
+        earlier call, and the payout must still reflect the deal — this
+        is the whole point of merging with what's already stored rather
+        than overwriting the full row."""
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._set_deal(client, "Guarantee", guarantee=1200)
+
+        client.put(f"/api/events/{self.event_id}/settlement", json={"tickets_sold": 150, "gross": 3000})
+        r2 = client.put(f"/api/events/{self.event_id}/settlement", json={"settled": True})
+        self.assertEqual(r2.status_code, 200)
+
+        s = self._get_settlement(client)["settlement"]
+        self.assertTrue(s["settled"])
+        self.assertEqual(s["tickets_sold"], 150, "the earlier tickets_sold must survive a partial save")
+        self.assertAlmostEqual(float(s["gross"]), 3000.0, msg="the earlier gross must survive a partial save")
+        self.assertAlmostEqual(float(s["artist_payout"]), 1200.0)
+
+    def test_door_split_toggle_changes_the_base(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._set_deal(client, "Door split", backend_pct=15)
+        client.put(f"/api/events/{self.event_id}/settlement", json={"gross": 5000})
+        client.put(f"/api/events/{self.event_id}/settlement_expenses", json={"lines": [
+            {"label": "Security", "actual": 2000},
+        ]})
+
+        r_above = client.put(f"/api/events/{self.event_id}/settlement",
+                              json={"door_split_from_dollar_one": False})
+        self.assertAlmostEqual(r_above.get_json()["artist_payout"], 0.15 * (5000 - 2000))
+
+        r_from_one = client.put(f"/api/events/{self.event_id}/settlement",
+                                 json={"door_split_from_dollar_one": True})
+        self.assertAlmostEqual(r_from_one.get_json()["artist_payout"], 0.15 * 5000)
+
+    def test_sales_tax_and_fees_are_deducted_before_the_split(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._set_deal(client, "Door split", backend_pct=100)
+        r = client.put(f"/api/events/{self.event_id}/settlement", json={
+            "gross": 1000, "sales_tax_rate": 10, "door_split_from_dollar_one": True,
+        })
+        # net_gross = 1000 - 10% = 900; door split from $1 at 100% = 900
+        self.assertAlmostEqual(r.get_json()["artist_payout"], 900.0)
 
 
 if __name__ == "__main__":
