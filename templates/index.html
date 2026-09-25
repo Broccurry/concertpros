@@ -757,6 +757,9 @@ var STATUS = {
 var STATUS_ORDER = ["hold1","hold2","hold3","confirmed","complete","dead"];
 var HOLD_NUMBER = {hold1:1, hold2:2, hold3:3};
 var BILL_ROLES = ["Touring","Direct Support","Support","Local"];
+var EVENT_TYPES = [{value:"concert",label:"Concert"}, {value:"dance_party",label:"Dance Party"},
+                    {value:"rental",label:"Rental"}, {value:"private_event",label:"Private Event"}];
+var FIXED_PROMOTERS = ["Innovation Concerts", "Kickstand", "Bravo"];
 var NO_DEAL = "Not recorded";
 var DEAL_TYPES = [NO_DEAL,"Guarantee","Guarantee vs %","Door split","Flat rental","Free / promo"];
 
@@ -2123,6 +2126,7 @@ async function openEvent(id, dateHint){
       id:null, venue_id: store.venues[0] ? store.venues[0].id : null, venue: store.venues[0] ? store.venues[0].name : "",
       artists:[], status:"hold1", show_date: dateHint || todayISO(), doors:"19:00", show_time:"20:00",
       deal_type:NO_DEAL, guarantee:"", backend_pct:"", deal_notes:"",
+      event_types:[], promoters:["Innovation Concerts"],
       ticket_tiers:[{label:"Advance",price:""},{label:"Day of show",price:""}], ticket_link:"",
       announce_date:"", onsale_date:"", notes:"", messages:[], files:[], extraDates:[], group_members:[],
       tasks:[], staff:[], settlement:{tickets_sold:"",gross:"",expenses:"",artist_payout:"",settled:false,notes:""}
@@ -2257,6 +2261,7 @@ async function doAutosave(){
     deal_type: draft.deal_type, guarantee: draft.guarantee, backend_pct: draft.backend_pct,
     deal_notes: draft.deal_notes, announce_date: draft.announce_date, onsale_date: draft.onsale_date,
     notes: draft.notes, ticket_link: draft.ticket_link, version: draft.version,
+    event_types: draft.event_types, promoters: draft.promoters,
   };
   var r = await api("/api/events/" + eventId, {method:"PATCH", body: JSON.stringify(payload)});
   if(!draft || draft.id !== eventId) return; // sheet moved on while this was in flight
@@ -2319,6 +2324,74 @@ function renderSheet(){
   r1.appendChild(field("Venue", selectKV(store.venues.map(function(v){ return {value:v.id, label:v.name}; }), draft.venue_id,
     function(v){ draft.venue_id = Number(v); })));
   fs1.appendChild(r1);
+
+  var r1b = el("div","row"); r1b.style.marginTop = "10px";
+
+  var eventTypeField = el("div","field");
+  eventTypeField.appendChild(el("label",null,"Event type"));
+  var eventTypeChips = el("div","chips");
+  var draftEventTypes = draft.event_types || [];
+  EVENT_TYPES.forEach(function(t){
+    var chip = el("button","chip", t.label);
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", draftEventTypes.indexOf(t.value) !== -1 ? "true" : "false");
+    chip.onclick = function(){
+      var i = draftEventTypes.indexOf(t.value);
+      if(i === -1) draftEventTypes.push(t.value); else draftEventTypes.splice(i, 1);
+      draft.event_types = draftEventTypes;
+      scheduleAutosave();
+      renderSheet();
+    };
+    eventTypeChips.appendChild(chip);
+  });
+  eventTypeField.appendChild(eventTypeChips);
+  r1b.appendChild(eventTypeField);
+
+  var promoterField = el("div","field");
+  promoterField.appendChild(el("label",null,"Promoter"));
+  var promoterChips = el("div","chips");
+  var draftPromoters = draft.promoters || [];
+  // Anything already on the show that isn't one of the fixed three is
+  // treated as the "Other" custom name -- at most one, so an existing
+  // custom promoter round-trips into that box instead of silently
+  // vanishing behind the fixed chips.
+  var customPromoter = draftPromoters.find(function(p){ return FIXED_PROMOTERS.indexOf(p) === -1; }) || "";
+  function syncPromoters(otherOn, otherText){
+    var list = FIXED_PROMOTERS.filter(function(name){ return draftPromoters.indexOf(name) !== -1; });
+    if(otherOn && otherText.trim()) list.push(otherText.trim());
+    draft.promoters = list;
+    scheduleAutosave();
+  }
+  FIXED_PROMOTERS.forEach(function(name){
+    var chip = el("button","chip", name);
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", draftPromoters.indexOf(name) !== -1 ? "true" : "false");
+    chip.onclick = function(){
+      var i = draftPromoters.indexOf(name);
+      if(i === -1) draftPromoters.push(name); else draftPromoters.splice(i, 1);
+      syncPromoters(!!customPromoter, customPromoter);
+      renderSheet();
+    };
+    promoterChips.appendChild(chip);
+  });
+  var otherChip = el("button","chip", "Other");
+  otherChip.type = "button";
+  var otherActive = !!customPromoter;
+  otherChip.setAttribute("aria-pressed", otherActive ? "true" : "false");
+  otherChip.onclick = function(){
+    if(otherActive){ syncPromoters(false, ""); } else { syncPromoters(true, ""); }
+    renderSheet();
+  };
+  promoterChips.appendChild(otherChip);
+  promoterField.appendChild(promoterChips);
+  if(otherActive){
+    var otherInput = input("text", customPromoter, function(v){ syncPromoters(true, v); });
+    otherInput.placeholder = "Promoter name";
+    otherInput.style.marginTop = "6px";
+    promoterField.appendChild(otherInput);
+  }
+  r1b.appendChild(promoterField);
+  fs1.appendChild(r1b);
 
   var isMultiDay = (draft.group_members||[]).length > 1 || draft.multiDayHoldChecked;
   var multiWrap = el("label","checkfield"); multiWrap.style.marginTop = "10px";
@@ -3169,6 +3242,7 @@ function renderSheet(){
         deal_type: draft.deal_type, guarantee: draft.guarantee, backend_pct: draft.backend_pct,
         deal_notes: draft.deal_notes, announce_date: draft.announce_date, onsale_date: draft.onsale_date,
         notes: draft.notes, ticket_link: draft.ticket_link,
+        event_types: draft.event_types, promoters: draft.promoters,
         acts: acts,
       };
       if((draft.extraDates||[]).length) payload.extra_dates = draft.extraDates;

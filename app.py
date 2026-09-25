@@ -182,6 +182,9 @@ def _replace_event_artists(conn, event_id, acts):
     )
 
 
+VALID_EVENT_TYPES = ("concert", "dance_party", "rental", "private_event")
+
+
 def _parse_optional_event_fields(body):
     """Every optional field an event can carry beyond venue/date/status/
     acts, with the coercion rules a date/time/number field needs — used
@@ -218,6 +221,22 @@ def _parse_optional_event_fields(body):
             if not ok:
                 return None, f"invalid_{key}"
             updates[key] = parsed
+    if "event_types" in body:
+        raw = body["event_types"]
+        if not isinstance(raw, list) or any(v not in VALID_EVENT_TYPES for v in raw):
+            return None, "invalid_event_types"
+        updates["event_types"] = list(dict.fromkeys(raw))  # de-dupe, keep order
+    if "promoters" in body:
+        raw = body["promoters"]
+        if not isinstance(raw, list):
+            return None, "promoters_must_be_a_list"
+        seen, promoters = set(), []
+        for p in raw:
+            p = (p or "").strip() if isinstance(p, str) else ""
+            if p and p.lower() not in seen:
+                seen.add(p.lower())
+                promoters.append(p)
+        updates["promoters"] = promoters
     return updates, None
 
 
@@ -1248,14 +1267,14 @@ def create_app():
         cur.execute(
             """SELECT venue_id, show_date, doors, show_time, status,
                       deal_type, guarantee, backend_pct, deal_notes, announce_date, onsale_date,
-                      ticket_link, notes
+                      ticket_link, notes, event_types, promoters
                FROM events WHERE id = %s""",
             (event_id,),
         )
         row = cur.fetchone()
         before_cols = ["venue_id", "show_date", "doors", "show_time", "status",
                        "deal_type", "guarantee", "backend_pct", "deal_notes", "announce_date",
-                       "onsale_date", "ticket_link", "notes"]
+                       "onsale_date", "ticket_link", "notes", "event_types", "promoters"]
         before = dict(zip(before_cols, row))
 
         updates, err = _parse_optional_event_fields(body)

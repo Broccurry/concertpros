@@ -183,7 +183,8 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         SELECT e.id, e.venue_id, v.name AS venue,
                e.show_date, e.doors, e.show_time, e.status,
                e.deal_type, e.guarantee, e.backend_pct, e.deal_notes,
-               e.announce_date, e.onsale_date, e.notes, e.ticket_link, e.version, e.hold_group_id
+               e.announce_date, e.onsale_date, e.notes, e.ticket_link, e.version, e.hold_group_id,
+               e.event_types, e.promoters
         FROM events e
         JOIN venues v ON v.id = e.venue_id
         WHERE {' AND '.join(where)}
