@@ -658,7 +658,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         <button role="tab" data-view="email" aria-selected="false">Email</button>
         <button role="tab" data-view="hivemind" aria-selected="false">Hive Mind</button>
         <button role="tab" data-view="socials" aria-selected="false">Socials</button>
-        <button role="tab" data-view="finals" aria-selected="false">Finals</button>
+        <button role="tab" data-view="settlements" aria-selected="false">Settlements</button>
         <button role="tab" data-view="marketing" aria-selected="false">Marketing</button>
         <button role="tab" data-view="settings" aria-selected="false">Settings</button>
       </div>
@@ -716,7 +716,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
     <section id="view-email" hidden></section>
     <section id="view-hivemind" hidden></section>
     <section id="view-socials" hidden></section>
-    <section id="view-finals" hidden></section>
+    <section id="view-settlements" hidden></section>
     <section id="view-marketing" hidden></section>
     <section id="view-settings" hidden></section>
     <p class="notice" id="storeNotice"></p>
@@ -1070,7 +1070,7 @@ function renderAll(){
   }).length;
   document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + activeUpcoming.length + " total";
 
-  ["calendar","todo","list","artists","staff","people","vision","offers","files","website","email","hivemind","socials","finals","marketing","settings"].forEach(function(v){
+  ["calendar","todo","list","artists","staff","people","vision","offers","files","website","email","hivemind","socials","settlements","marketing","settings"].forEach(function(v){
     document.getElementById("view-" + v).hidden = (v !== ui.view);
   });
   if(ui.view === "calendar") renderCalendar();
@@ -1086,7 +1086,7 @@ function renderAll(){
   if(ui.view === "email") renderEmailView();
   if(ui.view === "hivemind") renderHiveMindView();
   if(ui.view === "socials") renderComingSoonView("socials", "Socials");
-  if(ui.view === "finals") renderComingSoonView("finals", "Finals");
+  if(ui.view === "settlements") renderSettlementsView();
   if(ui.view === "marketing") renderMarketingView();
   if(ui.view === "settings") renderSettingsView();
 }
@@ -1364,68 +1364,87 @@ function renderListResults(host){
   });
   t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
   }
+}
 
-  if(canBook()){
-    // Past its date but still sitting at "confirmed" — nobody closed it
-    // out. Pulled into its own section instead of a special color on the
-    // calendar/main table, which is the one thing this app is trying not
-    // to do (one fact, one place, not a color you have to remember the
-    // meaning of).
-    var needsSettling = visibleEvents().filter(isUnsettled);
-    if(needsSettling.length){
-      host.appendChild(el("h3","section","Needs settled (" + needsSettling.length + ")"));
-      var w0 = el("div","tablewrap"), t0 = document.createElement("table");
-      var h0 = document.createElement("thead"), hr0 = document.createElement("tr");
-      ["Date","Venue","Show"].forEach(function(h){ hr0.appendChild(el("th",null,h)); });
-      h0.appendChild(hr0); t0.appendChild(h0);
-      var tb0 = document.createElement("tbody");
-      needsSettling.forEach(function(ev){
-        var tr = document.createElement("tr");
-        tr.onclick = function(){ openEvent(ev.id); };
-        tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
-        tr.appendChild(el("td",null, ev.venue));
-        var td = el("td","title-cell"); td.appendChild(actsNodes(ev)); tr.appendChild(td);
-        tb0.appendChild(tr);
-      });
-      t0.appendChild(tb0); w0.appendChild(t0); host.appendChild(w0);
-    }
+/* ============================== settlements view ======================= */
+// Was two sections buried at the bottom of the List view -- moved into
+// its own tab (2026-09-25, Broc: "we do all settlements in that tab")
+// since that's the one workflow booker/owner actually go looking for on
+// its own, not as a scroll-past on the way to the upcoming-shows list.
+function renderSettlementsView(){
+  var host = document.getElementById("view-settlements");
+  host.innerHTML = "";
 
-    // Complete-but-unsettled only — once the finals are filled in and
-    // marked settled, a show is done needing attention here and just
-    // lives on the calendar as history from then on.
-    var done = visibleEvents().filter(function(e){ return e.status === "complete" && !(e.settlement && e.settlement.settled); });
-    if(done.length){
-      host.appendChild(el("h3","section","Finals & payouts"));
-      var w2 = el("div","tablewrap"), t2 = document.createElement("table");
-      var h2 = document.createElement("thead"), hr2 = document.createElement("tr");
-      ["Date","Venue","Show","Tickets sold","Gross","Expenses","Artist payout","Net","Settled"].forEach(function(h){
-        var th = el("th",null,h);
-        if(["Tickets sold","Gross","Expenses","Artist payout","Net"].indexOf(h) >= 0) th.className = "num";
-        hr2.appendChild(th);
-      });
-      h2.appendChild(hr2); t2.appendChild(h2);
-      var tb2 = document.createElement("tbody");
-      done.forEach(function(ev){
-        var s = ev.settlement || {};
-        var net = (+s.gross||0) - (+s.expenses||0) - (+s.artist_payout||0);
-        var tr = document.createElement("tr");
-        tr.onclick = function(){ openEvent(ev.id); };
-        tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
-        tr.appendChild(el("td",null, ev.venue));
-        tr.appendChild(el("td","title-cell", showName(ev)));
-        tr.appendChild(el("td","num", (s.tickets_sold===""||s.tickets_sold==null) ? "—" : (+s.tickets_sold).toLocaleString("en-US")));
-        tr.appendChild(el("td","num", money(s.gross) || "—"));
-        tr.appendChild(el("td","num", money(s.expenses) || "—"));
-        tr.appendChild(el("td","num", money(s.artist_payout) || "—"));
-        tr.appendChild(el("td","num", (s.gross===""||s.gross==null) ? "—" : money(net)));
-        var stc2 = document.createElement("td");
-        stc2.appendChild(el("span","pill " + (s.settled ? "s-confirmed" : "pill-muted"), s.settled ? "Settled" : "Open"));
-        tr.appendChild(stc2);
-        tb2.appendChild(tr);
-      });
-      t2.appendChild(tb2); w2.appendChild(t2); host.appendChild(w2);
-    }
+  // Past its date but still sitting at "confirmed" — nobody closed it
+  // out. Pulled into its own section instead of a special color on the
+  // calendar/main table, which is the one thing this app is trying not
+  // to do (one fact, one place, not a color you have to remember the
+  // meaning of).
+  var needsSettling = visibleEvents().filter(isUnsettled);
+  if(needsSettling.length){
+    host.appendChild(el("h3","section","Needs settled (" + needsSettling.length + ")"));
+    host.appendChild(el("p","hint","Happened, but never marked Complete — mark it complete before its finals can be filled in."));
+    var w0 = el("div","tablewrap"), t0 = document.createElement("table");
+    var h0 = document.createElement("thead"), hr0 = document.createElement("tr");
+    ["Date","Venue","Show"].forEach(function(h){ hr0.appendChild(el("th",null,h)); });
+    h0.appendChild(hr0); t0.appendChild(h0);
+    var tb0 = document.createElement("tbody");
+    needsSettling.forEach(function(ev){
+      var tr = document.createElement("tr");
+      tr.onclick = function(){ openEvent(ev.id); };
+      tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
+      tr.appendChild(el("td",null, ev.venue));
+      var td = el("td","title-cell"); td.appendChild(actsNodes(ev)); tr.appendChild(td);
+      tb0.appendChild(tr);
+    });
+    t0.appendChild(tb0); w0.appendChild(t0); host.appendChild(w0);
   }
+
+  function settlementsTable(title, events, emptyHint){
+    host.appendChild(el("h3","section", title + " (" + events.length + ")"));
+    if(!events.length){
+      if(emptyHint) host.appendChild(el("p","hint", emptyHint));
+      return;
+    }
+    var w2 = el("div","tablewrap"), t2 = document.createElement("table");
+    var h2 = document.createElement("thead"), hr2 = document.createElement("tr");
+    ["Date","Venue","Show","Tickets sold","Gross","Expenses","Artist payout","Net","Settled"].forEach(function(h){
+      var th = el("th",null,h);
+      if(["Tickets sold","Gross","Expenses","Artist payout","Net"].indexOf(h) >= 0) th.className = "num";
+      hr2.appendChild(th);
+    });
+    h2.appendChild(hr2); t2.appendChild(h2);
+    var tb2 = document.createElement("tbody");
+    events.forEach(function(ev){
+      var s = ev.settlement || {};
+      var net = (+s.gross||0) - (+s.expenses||0) - (+s.artist_payout||0);
+      var tr = document.createElement("tr");
+      tr.onclick = function(){ openEvent(ev.id); };
+      tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
+      tr.appendChild(el("td",null, ev.venue));
+      tr.appendChild(el("td","title-cell", showName(ev)));
+      tr.appendChild(el("td","num", (s.tickets_sold===""||s.tickets_sold==null) ? "—" : (+s.tickets_sold).toLocaleString("en-US")));
+      tr.appendChild(el("td","num", money(s.gross) || "—"));
+      tr.appendChild(el("td","num", money(s.expenses) || "—"));
+      tr.appendChild(el("td","num", money(s.artist_payout) || "—"));
+      tr.appendChild(el("td","num", (s.gross===""||s.gross==null) ? "—" : money(net)));
+      var stc2 = document.createElement("td");
+      stc2.appendChild(el("span","pill " + (s.settled ? "s-confirmed" : "pill-muted"), s.settled ? "Settled" : "Open"));
+      tr.appendChild(stc2);
+      tb2.appendChild(tr);
+    });
+    t2.appendChild(tb2); w2.appendChild(t2); host.appendChild(w2);
+  }
+
+  // Complete-but-unsettled — the actual work queue. Once the finals are
+  // filled in and marked settled, a show drops out of here and into the
+  // "Settled" history table below instead.
+  var open = visibleEvents().filter(function(e){ return e.status === "complete" && !(e.settlement && e.settlement.settled); });
+  settlementsTable("Needs finals", open, "Nothing waiting on a settlement right now.");
+
+  var settled = visibleEvents().filter(function(e){ return e.status === "complete" && e.settlement && e.settlement.settled; })
+    .sort(function(a,b){ return a.show_date < b.show_date ? 1 : -1; });
+  if(settled.length) settlementsTable("Settled", settled);
 }
 
 /* ============================== artists view =========================== */

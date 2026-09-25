@@ -2051,7 +2051,84 @@ def create_app():
             deal_type, guarantee, backend_pct, net_gross, net_after_expenses,
             door_split_from_dollar_one=merged.get("door_split_from_dollar_one") or False,
         )
-        return {**merged, "expenses": expenses, "artist_payout": artist_payout}
+        return {
+            **merged, "expenses": expenses, "artist_payout": artist_payout,
+            "_deal_type": deal_type, "_guarantee": guarantee, "_backend_pct": backend_pct,
+            "_net_gross": net_gross, "_net_after_expenses": net_after_expenses,
+        }
+
+    SETTLEMENT_FILENAME = "Settlement Summary.txt"
+
+    def _write_settlement_file(conn, viewer, event_id, merged):
+        """Auto-files a plain-text settlement snapshot into the show's own
+        Files section on every save (2026-09-25, Broc: "they save on the
+        show card and the show file folder") -- replaces any prior
+        snapshot for this event rather than piling up duplicates, so
+        there's always exactly one, current settlement document per show."""
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT e.show_date, v.name FROM events e JOIN venues v ON v.id = e.venue_id WHERE e.id = %s",
+            (event_id,),
+        )
+        show_date, venue_name = cur.fetchone()
+        cur.execute(
+            "SELECT a.name FROM event_artists ea JOIN artists a ON a.id = ea.artist_id "
+            "WHERE ea.event_id = %s AND NOT ea.declined ORDER BY ea.sort_order",
+            (event_id,),
+        )
+        acts = [row[0] for row in cur.fetchall()]
+        cur.execute(
+            "SELECT label, actual FROM settlement_expenses WHERE event_id = %s ORDER BY sort_order", (event_id,)
+        )
+        expense_lines = cur.fetchall()
+
+        def fmt(n):
+            return f"${float(n):,.2f}" if n is not None else "—"
+
+        lines = [
+            f"Settlement — {', '.join(acts) or 'Untitled show'}",
+            f"{venue_name} · {show_date}",
+            "",
+            f"Deal: {merged['_deal_type']}"
+            + (f" · Guarantee {fmt(merged['_guarantee'])}" if merged.get("_guarantee") else "")
+            + (f" · {merged['_backend_pct']}%" if merged.get("_backend_pct") else ""),
+            "",
+            f"Tickets sold: {merged.get('tickets_sold') if merged.get('tickets_sold') is not None else '—'}",
+            f"Gross: {fmt(merged.get('gross'))}",
+            f"Net gross (after tax/fees): {fmt(merged['_net_gross'])}",
+            "",
+            "Expenses:",
+        ]
+        for label, actual in expense_lines:
+            if actual is not None:
+                lines.append(f"  {label} ...... {fmt(actual)}")
+        lines += [
+            f"Total expenses: {fmt(merged['expenses'])}",
+            f"Net after expenses: {fmt(merged['_net_after_expenses'])}",
+            "",
+            f"Artist payout: {fmt(merged['artist_payout'])}",
+            "",
+            f"Settled: {'Yes' if merged.get('settled') else 'No'}",
+        ]
+        text = "\n".join(lines)
+
+        cur.execute(
+            "SELECT id, storage_key FROM event_files WHERE event_id = %s AND filename = %s",
+            (event_id, SETTLEMENT_FILENAME),
+        )
+        existing = cur.fetchone()
+        if existing:
+            file_id, storage_key = existing
+            storage.put_text(storage_key, text)
+            cur.execute("UPDATE event_files SET size_bytes = %s WHERE id = %s", (len(text.encode("utf-8")), file_id))
+        else:
+            storage_key = storage.new_storage_key(event_id, SETTLEMENT_FILENAME)
+            storage.put_text(storage_key, text)
+            cur.execute(
+                "INSERT INTO event_files (event_id, filename, storage_key, content_type, size_bytes, uploaded_by) "
+                "VALUES (%s, %s, %s, 'text/plain', %s, %s)",
+                (event_id, SETTLEMENT_FILENAME, storage_key, len(text.encode("utf-8")), viewer.id),
+            )
 
     _SETTLEMENT_DEFAULTS = {
         "tickets_sold": None, "gross": None, "sales_tax_rate": None, "facility_fee_per_ticket": None,
@@ -2145,6 +2222,7 @@ def create_app():
                 "after": {k: audit.jsonable(v) for k, v in values.items()},
             },
         )
+        _write_settlement_file(g.db, g.viewer, event_id, merged)
         return jsonify(ok=True, expenses=merged["expenses"], artist_payout=merged["artist_payout"])
 
     @app.put("/api/events/<int:event_id>/settlement_expenses")

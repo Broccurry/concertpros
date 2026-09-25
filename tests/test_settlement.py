@@ -5,6 +5,7 @@ partial save doesn't wipe out earlier figures, and that crew can't reach
 any of this.
 """
 import unittest
+from unittest.mock import patch
 
 import app as app_module
 import auth
@@ -53,6 +54,12 @@ class SettlingAShow(unittest.TestCase):
         self.app = app_module.create_app()
         self.app.config["TESTING"] = True
 
+        # Real B2 credentials aren't available/wanted in tests -- only the
+        # network-calling half of storage needs mocking; new_storage_key
+        # is pure string logic and stays real.
+        self.put_text_patcher = patch("storage.put_text", return_value=None)
+        self.mock_put_text = self.put_text_patcher.start()
+
     def _email(self, person_id):
         cur = self.conn.cursor()
         cur.execute("SELECT email FROM people WHERE id = %s", (person_id,))
@@ -73,9 +80,10 @@ class SettlingAShow(unittest.TestCase):
         return next(e for e in events if e["id"] == self.event_id)
 
     def tearDown(self):
+        self.put_text_patcher.stop()
         cur = self.conn.cursor()
         cur.execute("DELETE FROM audit_log WHERE entity_type = 'event' AND entity_id = %s", (self.event_id,))
-        cur.execute("DELETE FROM events WHERE id = %s", (self.event_id,))  # cascades settlement + expense lines
+        cur.execute("DELETE FROM events WHERE id = %s", (self.event_id,))  # cascades settlement + expense lines + event_files
         cur.execute("DELETE FROM artists WHERE id = %s", (self.artist_id,))
         cur.execute("DELETE FROM sessions WHERE person_id IN (%s, %s)", (self.booker_id, self.crew_id))
         cur.execute("DELETE FROM people WHERE id IN (%s, %s)", (self.booker_id, self.crew_id))
@@ -199,6 +207,36 @@ class SettlingAShow(unittest.TestCase):
         })
         # net_gross = 1000 - 10% = 900; door split from $1 at 100% = 900
         self.assertAlmostEqual(r.get_json()["artist_payout"], 900.0)
+
+    def test_saving_a_settlement_files_a_summary_in_the_shows_files(self):
+        """2026-09-25: Broc wants a settlement's finished numbers to land
+        in the show's own Files section automatically, not just in the
+        settlement fields -- one summary doc, replaced on each save, not
+        a pile of duplicates."""
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._set_deal(client, "Guarantee", guarantee=750)
+
+        client.put(f"/api/events/{self.event_id}/settlement", json={"gross": 2000})
+        self.mock_put_text.assert_called_once()
+        text_written = self.mock_put_text.call_args[0][1]
+        self.assertIn("Settlement Test Band", text_written)
+        self.assertIn("Artist payout: $750.00", text_written)
+
+        cur = self.conn.cursor()
+        cur.execute(
+            "SELECT count(*) FROM event_files WHERE event_id = %s AND filename = 'Settlement Summary.txt'",
+            (self.event_id,),
+        )
+        self.assertEqual(cur.fetchone()[0], 1)
+
+        # Saving again updates the same file rather than adding a second one.
+        client.put(f"/api/events/{self.event_id}/settlement", json={"gross": 3000})
+        cur.execute(
+            "SELECT count(*) FROM event_files WHERE event_id = %s AND filename = 'Settlement Summary.txt'",
+            (self.event_id,),
+        )
+        self.assertEqual(cur.fetchone()[0], 1)
 
 
 if __name__ == "__main__":
