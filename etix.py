@@ -118,22 +118,31 @@ def get_daily_sales(performance_id):
 
 def pull_and_store_snapshot(conn, event_id, venue_name, show_date, sale_date=None):
     """Finds the matching Etix performance, pulls its live ticket count
-    (and gross, from the same snapshot call -- no second request needed),
-    and upserts one ticket_sales row (source='etix') -- the one place
-    this decision is made, called by both the manual "Pull from Etix"
-    button and the daily scheduled script, so they can't drift. Returns
-    the tickets_sold count on success, or None if no Etix match exists
-    for this show. Callers that also want the gross figure get it back
-    through the normal event refresh (ticket_sales.gross), not a second
-    return value -- keeps this function's contract unchanged for the
-    existing tickets_sold-only callers."""
+    and real sales revenue, and upserts one ticket_sales row (source=
+    'etix') -- the one place this decision is made, called by both the
+    manual "Pull from Etix" button and the daily scheduled script, so
+    they can't drift. Returns the tickets_sold count on success, or None
+    if no Etix match exists for this show. Callers that also want the
+    gross figure get it back through the normal event refresh
+    (ticket_sales.gross), not a second return value -- keeps this
+    function's contract unchanged for the existing tickets_sold-only
+    callers.
+
+    Gross comes from get_daily_sales, NOT the snapshot's own
+    salesByCurrency -- confirmed against real production data (2026-09-24)
+    that the snapshot's total includes the face value of pulledTickets
+    (comps/kills taken out of inventory, not real sales): one real show
+    had 0 revenueProducingTickets and a $320 snapshot total, entirely
+    from 40 pulled tickets, while its real daily-sales revenue was $0.
+    Daily sales is per-day historical revenue and doesn't carry that
+    contamination, so summing it gives the real cumulative sales total."""
     ev = _find_public_event(venue_name, show_date)
     if ev is None:
         return None
     snapshot = get_snapshot(ev["id"])
     tickets_sold = snapshot.get("revenueProducingTickets", 0)
-    sales_by_currency = snapshot.get("salesByCurrency") or []
-    gross = sum(s.get("price", 0) for s in sales_by_currency) if sales_by_currency else None
+    daily_sales = get_daily_sales(ev["id"])
+    gross = sum(p.get("price", 0) for day in daily_sales for p in (day.get("salesByCurrency") or []))
     sale_date = sale_date or date.today()
     cur = conn.cursor()
     cur.execute(

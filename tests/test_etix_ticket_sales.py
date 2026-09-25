@@ -138,7 +138,8 @@ class EtixSnapshotStorage(unittest.TestCase):
 
     def test_a_real_match_upserts_a_ticket_sales_row(self):
         with patch("etix._find_public_event", return_value={"id": 999}), \
-             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 77}):
+             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 77}), \
+             patch("etix.get_daily_sales", return_value=[]):
             result = etix.pull_and_store_snapshot(
                 self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
         self.conn.commit()
@@ -149,12 +150,23 @@ class EtixSnapshotStorage(unittest.TestCase):
         row = cur.fetchone()
         self.assertEqual(row, (77, "etix"))
 
-    def test_gross_is_summed_from_sales_by_currency(self):
+    def test_gross_is_summed_from_daily_sales_not_the_snapshot(self):
+        """Confirmed against real production data (2026-09-24): the
+        snapshot's own salesByCurrency includes the face value of pulled
+        tickets (comps/kills), not just real sales -- one real show had 0
+        revenueProducingTickets and a $320 snapshot total, entirely from
+        40 pulled tickets, while its real daily-sales revenue was $0. So
+        gross must come from get_daily_sales, and a snapshot total is
+        ignored even when present."""
         with patch("etix._find_public_event", return_value={"id": 999}), \
              patch("etix.get_snapshot", return_value={
                  "revenueProducingTickets": 77,
-                 "salesByCurrency": [{"currency": "USD", "price": 1500.50}],
-             }):
+                 "salesByCurrency": [{"currency": "USD", "price": 999999.00}],
+             }), \
+             patch("etix.get_daily_sales", return_value=[
+                 {"date": "09/20/2026", "salesByCurrency": [{"currency": "USD", "price": 900.00}]},
+                 {"date": "09/24/2026", "salesByCurrency": [{"currency": "USD", "price": 600.50}]},
+             ]):
             etix.pull_and_store_snapshot(
                 self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
         self.conn.commit()
@@ -163,16 +175,17 @@ class EtixSnapshotStorage(unittest.TestCase):
                     (self.event_id, date(2027, 1, 1)))
         self.assertEqual(cur.fetchone()[0], 1500.50)
 
-    def test_no_sales_by_currency_leaves_gross_null(self):
+    def test_no_daily_sales_yet_is_a_real_zero_not_null(self):
         with patch("etix._find_public_event", return_value={"id": 999}), \
-             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 77}):
+             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 0}), \
+             patch("etix.get_daily_sales", return_value=[]):
             etix.pull_and_store_snapshot(
                 self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
         self.conn.commit()
         cur = self.conn.cursor()
         cur.execute("SELECT gross FROM ticket_sales WHERE event_id = %s AND sale_date = %s",
                     (self.event_id, date(2027, 1, 1)))
-        self.assertIsNone(cur.fetchone()[0])
+        self.assertEqual(cur.fetchone()[0], 0)
 
     def test_no_match_returns_none_and_writes_nothing(self):
         with patch("etix._find_public_event", return_value=None):
@@ -185,11 +198,13 @@ class EtixSnapshotStorage(unittest.TestCase):
 
     def test_re_pulling_the_same_date_corrects_it_not_duplicates(self):
         with patch("etix._find_public_event", return_value={"id": 999}), \
-             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 10}):
+             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 10}), \
+             patch("etix.get_daily_sales", return_value=[]):
             etix.pull_and_store_snapshot(
                 self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
         with patch("etix._find_public_event", return_value={"id": 999}), \
-             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 25}):
+             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 25}), \
+             patch("etix.get_daily_sales", return_value=[]):
             etix.pull_and_store_snapshot(
                 self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
         self.conn.commit()
@@ -209,7 +224,8 @@ class EtixSnapshotStorage(unittest.TestCase):
         )
         self.conn.commit()
         with patch("etix._find_public_event", return_value={"id": 999}), \
-             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 12}):
+             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 12}), \
+             patch("etix.get_daily_sales", return_value=[]):
             etix.pull_and_store_snapshot(
                 self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
         self.conn.commit()

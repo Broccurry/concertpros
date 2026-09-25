@@ -2489,6 +2489,73 @@ def create_app():
         audit.record(g.db, g.viewer, "event", event_id, "delete_message", {"message_id": message_id})
         return jsonify(ok=True)
 
+    @app.get("/api/hivemind")
+    @require_auth
+    def list_hivemind_ideas():
+        """The one board in this app open to every access level — no
+        pricing/hold/deal data lives here, so there's nothing for rule 1
+        to gate. Top-level ideas newest first (most recent suggestion at
+        the top of the board); each idea's own replies nested underneath
+        it in normal oldest-first conversation order."""
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT i.id, i.body, i.created_at, i.person_id, p.name AS person_name, i.parent_idea_id "
+            "FROM hivemind_ideas i LEFT JOIN people p ON p.id = i.person_id "
+            "ORDER BY i.created_at"
+        )
+        cols = [c.name for c in cur.description]
+        rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+        by_id = {r["id"]: r for r in rows}
+        for r in rows:
+            r["replies"] = []
+        ideas = []
+        for r in rows:
+            parent_id = r.pop("parent_idea_id")
+            if parent_id is None:
+                ideas.append(r)
+            elif parent_id in by_id:
+                by_id[parent_id]["replies"].append(r)
+        ideas.sort(key=lambda i: i["created_at"], reverse=True)
+        return jsonify(ideas=ideas)
+
+    @app.post("/api/hivemind")
+    @require_auth
+    def create_hivemind_idea():
+        body = request.get_json(silent=True) or {}
+        text = (body.get("body") or "").strip()
+        if not text:
+            return jsonify(error="body_required"), 400
+        parent_idea_id = body.get("parent_idea_id") or None
+        cur = g.db.cursor()
+        if parent_idea_id is not None:
+            cur.execute("SELECT 1 FROM hivemind_ideas WHERE id = %s", (parent_idea_id,))
+            if cur.fetchone() is None:
+                return jsonify(error="unknown_parent_idea"), 400
+        cur.execute(
+            "INSERT INTO hivemind_ideas (person_id, body, parent_idea_id) VALUES (%s, %s, %s) RETURNING id",
+            (g.viewer.id, text, parent_idea_id),
+        )
+        idea_id = cur.fetchone()[0]
+        audit.record(g.db, g.viewer, "hivemind", idea_id, "post", {})
+        return jsonify(id=idea_id), 201
+
+    @app.delete("/api/hivemind/<int:idea_id>")
+    @require_auth
+    def delete_hivemind_idea(idea_id):
+        """Same moderation shape as event messages: you can remove your
+        own idea/reply; only the owner can remove someone else's."""
+        cur = g.db.cursor()
+        cur.execute("SELECT person_id FROM hivemind_ideas WHERE id = %s", (idea_id,))
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        author_id = row[0]
+        if author_id != g.viewer.id and g.viewer.access_level != "owner":
+            return jsonify(error="forbidden"), 403
+        cur.execute("DELETE FROM hivemind_ideas WHERE id = %s", (idea_id,))
+        audit.record(g.db, g.viewer, "hivemind", idea_id, "delete", {})
+        return jsonify(ok=True)
+
     _VISION_COLUMNS = ("idea", "in_progress", "follow_up")
 
     @app.get("/api/vision_cards")

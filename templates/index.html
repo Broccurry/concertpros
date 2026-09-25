@@ -398,6 +398,7 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .holddaterow>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px}
 
 .msgthread{display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:10px}
+.hivemindfeed{display:flex;flex-direction:column;gap:8px;margin-top:16px}
 .msgrow{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--radius);padding:8px 10px}
 .msgrow-reply{margin-left:24px;border-left:2px solid var(--accent-soft)}
 .msghead{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink-3);margin-bottom:4px}
@@ -647,6 +648,9 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         <button role="tab" data-view="files" aria-selected="false">Files</button>
         <button role="tab" data-view="website" aria-selected="false">Website</button>
         <button role="tab" data-view="email" aria-selected="false">Email</button>
+        <button role="tab" data-view="hivemind" aria-selected="false">Hive Mind</button>
+        <button role="tab" data-view="socials" aria-selected="false">Socials</button>
+        <button role="tab" data-view="finals" aria-selected="false">Finals</button>
         <button role="tab" data-view="settings" aria-selected="false">Settings</button>
       </div>
       <div class="spacer"></div>
@@ -654,6 +658,8 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         <button class="btn" id="mentionsBtn">🔔 <span id="mentionsCount"></span></button>
         <div class="mentionspop" id="mentionsPop" hidden></div>
       </div>
+      <span class="who" id="whoami"></span>
+      <button class="btn" id="logoutBtn">Log out</button>
     </div>
   </header>
 
@@ -678,9 +684,6 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
         <input type="checkbox" id="showDeadToggle">
         Show didn't work out
       </label>
-      <div class="spacer"></div>
-      <span class="who" id="whoami"></span>
-      <button class="btn" id="logoutBtn">Log out</button>
     </div>
   </div>
 
@@ -702,6 +705,9 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
     <section id="view-files" hidden></section>
     <section id="view-website" hidden></section>
     <section id="view-email" hidden></section>
+    <section id="view-hivemind" hidden></section>
+    <section id="view-socials" hidden></section>
+    <section id="view-finals" hidden></section>
     <section id="view-settings" hidden></section>
     <p class="notice" id="storeNotice"></p>
   </main>
@@ -936,7 +942,7 @@ function staffLabel(s){
 function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace(/[^a-z0-9]/g,""); }
 
 /* ============================== state =============================== */
-var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], offers:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[], fileFolders:[]};
+var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], offers:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[], fileFolders:[], hivemindIdeas:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
 var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), selectedVenues:null, showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false, staffEditingCell:null, addingFileFolderIn:null};
@@ -1028,7 +1034,7 @@ function renderAll(){
   }).length;
   document.getElementById("countLabel").textContent = thisMonth + " in " + MONTHS[ui.cursor.m].slice(0,3) + " · " + activeUpcoming.length + " total";
 
-  ["calendar","todo","list","artists","staff","people","vision","offers","files","website","email","settings"].forEach(function(v){
+  ["calendar","todo","list","artists","staff","people","vision","offers","files","website","email","hivemind","socials","finals","settings"].forEach(function(v){
     document.getElementById("view-" + v).hidden = (v !== ui.view);
   });
   if(ui.view === "calendar") renderCalendar();
@@ -1042,6 +1048,9 @@ function renderAll(){
   if(ui.view === "files") renderFilesView();
   if(ui.view === "website") renderWebsiteView();
   if(ui.view === "email") renderEmailView();
+  if(ui.view === "hivemind") renderHiveMindView();
+  if(ui.view === "socials") renderComingSoonView("socials", "Socials");
+  if(ui.view === "finals") renderComingSoonView("finals", "Finals");
   if(ui.view === "settings") renderSettingsView();
 }
 
@@ -4934,6 +4943,116 @@ function renderEmailView(){
   host.appendChild(list);
 }
 
+async function loadHivemind(){
+  // Open to crew too (there's no pricing/hold/deal data on this board),
+  // so this loads for every logged-in user, same as loadTodos -- not
+  // gated behind canBook() like loadBookerLookups.
+  var r = await api("/api/hivemind");
+  if(r.ok) store.hivemindIdeas = r.body.ideas;
+}
+async function refreshHivemind(){
+  await loadHivemind();
+  renderAll();
+}
+
+function renderHiveMindView(){
+  var host = document.getElementById("view-hivemind");
+  host.innerHTML = "";
+  host.appendChild(el("p","hint","Bands to book, event ideas, drink ideas — post it here for everyone to see and riff on."));
+
+  var compose = el("div","msgcompose");
+  var composeRow = el("div","msgcomposerow");
+  var wrap = expandableTextarea("", function(){}, 2);
+  var input = wrap.querySelector("textarea");
+  input.placeholder = "Got an idea?";
+  composeRow.appendChild(wrap);
+  var postBtn = el("button","btn btn-primary","Post");
+  postBtn.type = "button";
+  postBtn.onclick = async function(){
+    var text = input.value.trim();
+    if(!text) return;
+    await api("/api/hivemind", {method:"POST", body: JSON.stringify({body:text})});
+    input.value = "";
+    await refreshHivemind();
+  };
+  composeRow.appendChild(postBtn);
+  compose.appendChild(composeRow);
+  host.appendChild(compose);
+
+  var ideas = store.hivemindIdeas || [];
+  if(!ideas.length){
+    host.appendChild(el("p","hint","No ideas yet — be the first."));
+    return;
+  }
+
+  var feed = el("div","hivemindfeed");
+  function renderIdeaRow(idea, isReply, replyHost){
+    var row = el("div","msgrow" + (isReply ? " msgrow-reply" : ""));
+    var head = el("div","msghead");
+    head.appendChild(el("span","msgauthor", idea.person_name || "(removed person)"));
+    head.appendChild(el("span",null, messageTime(idea.created_at)));
+    if(idea.person_id === me.id || me.access_level === "owner"){
+      var del = el("button","x","✕");
+      del.type = "button";
+      del.title = "Delete";
+      del.onclick = async function(){
+        await api("/api/hivemind/" + idea.id, {method:"DELETE"});
+        await refreshHivemind();
+      };
+      head.appendChild(del);
+    }
+    row.appendChild(head);
+    var bodyP = el("p","msgbody", idea.body);
+    row.appendChild(bodyP);
+
+    if(!isReply){
+      var actions = el("div","msgactions");
+      var replyBtn = el("button","btn btn-sm","Reply");
+      replyBtn.type = "button";
+      replyBtn.onclick = function(){
+        replyForm.hidden = !replyForm.hidden;
+        if(!replyForm.hidden) replyInput.focus();
+      };
+      actions.appendChild(replyBtn);
+      row.appendChild(actions);
+
+      var replyForm = el("div","msgcomposerow");
+      replyForm.hidden = true;
+      var replyWrap = expandableTextarea("", function(){}, 1);
+      var replyInput = replyWrap.querySelector("textarea");
+      replyInput.placeholder = "Reply...";
+      replyForm.appendChild(replyWrap);
+      var replySend = el("button","btn btn-sm","Reply");
+      replySend.type = "button";
+      replySend.onclick = async function(){
+        var text = replyInput.value.trim();
+        if(!text) return;
+        await api("/api/hivemind", {method:"POST", body: JSON.stringify({body:text, parent_idea_id: idea.id})});
+        replyInput.value = "";
+        replyForm.hidden = true;
+        await refreshHivemind();
+      };
+      replyForm.appendChild(replySend);
+      row.appendChild(replyForm);
+    }
+    (replyHost || feed).appendChild(row);
+  }
+  ideas.forEach(function(idea){
+    renderIdeaRow(idea, false);
+    (idea.replies || []).forEach(function(r){ renderIdeaRow(r, true); });
+  });
+  host.appendChild(feed);
+}
+
+function renderComingSoonView(viewName, label){
+  var host = document.getElementById("view-" + viewName);
+  host.innerHTML = "";
+  var e = el("div","empty");
+  e.appendChild(el("h3",null,label));
+  e.appendChild(el("p",null,"Not built yet — this tab is a placeholder for now."));
+  host.appendChild(e);
+}
+
 function renderSettingsView(){
   var host = document.getElementById("view-settings");
   host.innerHTML = "";
@@ -5102,15 +5221,17 @@ async function boot(){
   document.getElementById("bookBtn").style.display = canBook() ? "inline-block" : "none";
   document.getElementById("filterbar").style.display = "flex";
   if(!canBook()){
-    // Crew gets the calendar, their own to-dos, and their theme
-    // preference — booking, staffing, and admin views are booker/owner-
-    // only screens.
+    // Crew gets the calendar, their own to-dos, Hive Mind (no pricing/
+    // hold/deal data lives there, so there's nothing to gate), and their
+    // theme preference — booking, staffing, and admin views are
+    // booker/owner-only screens.
     document.querySelectorAll("#navTabs button").forEach(function(b){
-      if(["calendar","todo","settings"].indexOf(b.dataset.view) < 0) b.remove();
+      if(["calendar","todo","hivemind","settings"].indexOf(b.dataset.view) < 0) b.remove();
     });
   }
   await loadBookerLookups();
   await loadTodos();
+  await loadHivemind();
   await loadEvents();
 }
 

@@ -392,6 +392,24 @@ CREATE TABLE event_message_acks (
     PRIMARY KEY (message_id, person_id)
 );
 
+-- "Hive Mind" — a shared suggestion board (bands to book, event ideas,
+-- drink ideas). Unlike event_messages (booker/owner coordinating on one
+-- show), this is a live board EVERYONE sees and can post/reply to,
+-- including crew — there's no pricing/hold/deal data here for rule 1 to
+-- worry about, so it's the one board in this app open to every access
+-- level. Same self-referencing thread shape as event_messages (a reply
+-- is just a row with parent_idea_id set) rather than inventing a second
+-- comment-thread pattern.
+CREATE TABLE hivemind_ideas (
+    id              SERIAL PRIMARY KEY,
+    person_id       INTEGER REFERENCES people(id),
+    body            TEXT NOT NULL,
+    parent_idea_id  INTEGER REFERENCES hivemind_ideas(id) ON DELETE CASCADE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_hivemind_ideas_created ON hivemind_ideas(created_at);
+CREATE INDEX idx_hivemind_ideas_parent ON hivemind_ideas(parent_idea_id) WHERE parent_idea_id IS NOT NULL;
+
 -- General operational to-dos ("order ticket stock", "fix the marquee
 -- sign") — deliberately separate from event_tasks, which is the per-show
 -- booking checklist and stays scoped to one show. A todo is not tied to
