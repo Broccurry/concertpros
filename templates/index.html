@@ -2356,6 +2356,13 @@ function renderSheet(){
   // custom promoter round-trips into that box instead of silently
   // vanishing behind the fixed chips.
   var customPromoter = draftPromoters.find(function(p){ return FIXED_PROMOTERS.indexOf(p) === -1; }) || "";
+  // Whether the "Other" box is open is its own bit of UI state, separate
+  // from whether it currently holds text -- otherwise clicking "Other" to
+  // reveal an empty box has nothing to distinguish it from "closed" once
+  // syncPromoters runs (an empty custom name never makes it into
+  // draft.promoters), and the box would never actually appear.
+  if(draft._otherPromoterOpen === undefined) draft._otherPromoterOpen = !!customPromoter;
+  var otherActive = draft._otherPromoterOpen;
   function syncPromoters(otherOn, otherText){
     var list = FIXED_PROMOTERS.filter(function(name){ return draftPromoters.indexOf(name) !== -1; });
     if(otherOn && otherText.trim()) list.push(otherText.trim());
@@ -2369,17 +2376,17 @@ function renderSheet(){
     chip.onclick = function(){
       var i = draftPromoters.indexOf(name);
       if(i === -1) draftPromoters.push(name); else draftPromoters.splice(i, 1);
-      syncPromoters(!!customPromoter, customPromoter);
+      syncPromoters(otherActive, customPromoter);
       renderSheet();
     };
     promoterChips.appendChild(chip);
   });
   var otherChip = el("button","chip", "Other");
   otherChip.type = "button";
-  var otherActive = !!customPromoter;
   otherChip.setAttribute("aria-pressed", otherActive ? "true" : "false");
   otherChip.onclick = function(){
-    if(otherActive){ syncPromoters(false, ""); } else { syncPromoters(true, ""); }
+    draft._otherPromoterOpen = !otherActive;
+    if(!draft._otherPromoterOpen) syncPromoters(false, "");
     renderSheet();
   };
   promoterChips.appendChild(otherChip);
