@@ -1713,8 +1713,6 @@ function renderSettlementEditor(host){
   var totalExpensesTotal = settleRowTotal("TOTAL EXPENSES");
   totalExpensesTotal.row.style.marginTop = "10px";
   expSection.appendChild(totalExpensesTotal.row);
-  var netAfterExpensesTotal = settleRowTotal("NET AFTER EXPENSES");
-  expSection.appendChild(netAfterExpensesTotal.row);
   colsWrap.appendChild(expSection);
 
   // ---- Ticket Sales -- Advance / Day of Advance / Walk Up by default
@@ -1862,10 +1860,15 @@ function renderSettlementEditor(host){
   };
   artistSection.appendChild(addArtistBtn);
 
-  var totalPaidTotal = settleRowTotal("TOTAL PAID TO ARTISTS", "settlerow-payout");
+  var totalPaidTotal = settleRowTotal("TOTAL PAID TO ARTISTS");
   totalPaidTotal.row.style.marginTop = "10px";
   artistSection.appendChild(totalPaidTotal.row);
-  var netToRoomTotal = settleRowTotal("NET TO ROOM");
+  // The one number that should read as "what's left," full stop --
+  // expenses AND artist pay both already netted out (2026-09-26, Broc:
+  // "just keep it net after total show expense at the bottom which
+  // includes the artist pay") -- so it carries the visual weight ARTIST
+  // PAYOUT used to have before per-artist payout replaced one lump total.
+  var netToRoomTotal = settleRowTotal("NET AFTER TOTAL SHOW EXPENSES", "settlerow-payout");
   artistSection.appendChild(netToRoomTotal.row);
   sheet.appendChild(artistSection);
 
@@ -1907,8 +1910,16 @@ function renderSettlementEditor(host){
 
     var expensesTotal = sd.expenses.reduce(function(sum,l){ return sum + (+l.actual || 0); }, 0);
     totalExpensesTotal.setValue(money(expensesTotal));
+    // Not shown as its own row -- it's an intermediate figure the deal
+    // math needs (some deal types split on whatever clears expenses),
+    // but showing it as a headline total mid-sheet reads like a
+    // checkpoint profit number when artist pay -- often the bigger
+    // expense -- hasn't come out yet (2026-09-26, Broc, looking at a real
+    // show: $988 "net after expenses" looked fine until $1,300 of artist
+    // pay turned it into an actual $312 loss). The one number that
+    // should read as "what's left" is NET AFTER TOTAL SHOW EXPENSES,
+    // below, which nets out expenses AND artist pay together.
     var netAfterExpenses = ng.netGross - expensesTotal;
-    netAfterExpensesTotal.setValue(money(netAfterExpenses));
 
     var totalPaid = sd.artists.reduce(function(sum,a){ return a.declined ? sum : sum + (+a.paid || 0); }, 0);
     totalPaidTotal.setValue(money(totalPaid));
@@ -1932,31 +1943,47 @@ function renderSettlementEditor(host){
   saveSettle.style.marginTop = "8px";
   var saveErr = el("span","hint"); saveErr.style.marginLeft = "8px"; saveErr.style.color = "var(--dead)";
   saveSettle.onclick = async function(){
+    saveErr.style.color = "var(--dead)";
     saveErr.textContent = "";
+    saveSettle.disabled = true;
+    saveSettle.textContent = "Saving…";
+    function fail(msg){
+      saveSettle.disabled = false;
+      saveSettle.textContent = "Save finals";
+      saveErr.textContent = msg;
+    }
     var dealChanged = sd.dealType !== (ev.deal_type || NO_DEAL) || String(sd.guarantee||"") !== String(ev.guarantee||"")
       || String(sd.backendPct||"") !== String(ev.backend_pct||"");
     if(dealChanged){
       var rDeal = await api("/api/events/" + ev.id, {method:"PATCH", body: JSON.stringify({
         version: sd.version, deal_type: sd.dealType, guarantee: sd.guarantee, backend_pct: sd.backendPct,
       })});
-      if(!rDeal.ok){ saveErr.textContent = rDeal.body.error || "Could not save the deal terms."; return; }
+      if(!rDeal.ok){ fail(rDeal.body.error || "Could not save the deal terms."); return; }
       sd.version = rDeal.body.version;
     }
     if(sd.artists.length){
       var rArtists = await api("/api/events/" + ev.id + "/artists", {method:"PUT", body: JSON.stringify({artists: sd.artists})});
-      if(!rArtists.ok){ saveErr.textContent = rArtists.body.error || "Could not save artist payouts."; return; }
+      if(!rArtists.ok){ fail(rArtists.body.error || "Could not save artist payouts."); return; }
     }
     var lines = sd.expenses.filter(function(l){ return (l.label||"").trim(); });
     var r1 = await api("/api/events/" + ev.id + "/settlement_expenses", {method:"PUT", body: JSON.stringify({lines: lines})});
-    if(!r1.ok){ saveErr.textContent = r1.body.error || "Could not save expenses."; return; }
+    if(!r1.ok){ fail(r1.body.error || "Could not save expenses."); return; }
     var tiers = sd.tiers.filter(function(t){ return (t.label||"").trim(); });
     var rTiers = await api("/api/events/" + ev.id + "/settlement_ticket_tiers", {method:"PUT", body: JSON.stringify({tiers: tiers})});
-    if(!rTiers.ok){ saveErr.textContent = rTiers.body.error || "Could not save ticket tiers."; return; }
+    if(!rTiers.ok){ fail(rTiers.body.error || "Could not save ticket tiers."); return; }
     var r2 = await api("/api/events/" + ev.id + "/settlement", {method:"PUT", body: JSON.stringify(s)});
-    if(!r2.ok){ saveErr.textContent = r2.body.error || "Could not save finals."; return; }
+    if(!r2.ok){ fail(r2.body.error || "Could not save finals."); return; }
     await loadEvents();
     await loadBookerLookups();
     ui.settlementDraft = null;
+    // A successful save used to just re-render the SAME editor with the
+    // same-looking values reloaded from the server -- indistinguishable
+    // from nothing having happened at all (2026-09-26, Broc, on a real
+    // save that had actually worked: "i dont think anything happened").
+    // Closing back to the list is a real, visible state change: the show
+    // moves out of "Needs finals" (or into the settled-but-check-pending
+    // section if settled with an uncleared Check/Venmo).
+    ui.settlementEditingEventId = null;
     renderSettlementsView();
   };
   host.appendChild(saveSettle);
