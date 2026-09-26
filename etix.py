@@ -165,16 +165,20 @@ def get_daily_sales(performance_id):
         return json.loads(resp.read()).get("dailySales", [])
 
 
+def _price_label(price):
+    price = float(price or 0)
+    return f"${int(price)}" if price == int(price) else f"${price:.2f}"
+
+
 def get_price_breakdown(performance_id):
-    """Ticket counts and prices broken out by Etix price code (e.g.
-    "ADVANCED", "DAY OF") for a performance, built from real per-ticket
-    order data -- NOT Etix's "Settlement API" (/settlements/{id}), which
-    would be the more obvious source but needs a VIEW_SETTLEMENT_DATA
-    scope this app's API key doesn't have (confirmed live: a real call
-    returned 406 invalid_scope). This uses GET /organizations/{id}/orders
-    instead, which only needs VIEW_ORDERS -- already granted -- and
-    returns every ticket in every order for the event, each carrying its
-    own priceCode/price.
+    """Ticket counts broken out by real price point (a settlement-sheet
+    tier), built from real per-ticket order data -- NOT Etix's
+    "Settlement API" (/settlements/{id}), which would be the more obvious
+    source but needs a VIEW_SETTLEMENT_DATA scope this app's API key
+    doesn't have (confirmed live: a real call returned 406 invalid_scope).
+    This uses GET /organizations/{id}/orders instead, which only needs
+    VIEW_ORDERS -- already granted -- and returns every ticket in every
+    order for the event, each carrying its own priceCode/price.
 
     Excludes box-office-pulled comp/kill tickets (Broc: "do not include
     pre prints in the numbers") by dropping any order whose salesChannel
@@ -186,15 +190,22 @@ def get_price_breakdown(performance_id):
     exact figure get_daily_sales already independently produces. Real,
     cross-checked, not a guess.
 
-    Groups by (priceCode, price), NOT priceCode alone -- confirmed on a
-    real reserved-seating show (Crystal Bowersox, Cla-Zel) that a single
-    priceCode is not always one uniform price: "Floor D seats" carried
-    both $35 and $50 tickets under the identical code, so grouping on the
-    code name alone and reporting only the first price seen understated
-    real revenue by hundreds of dollars once the settlement sheet does
-    price*sold. A price code that turns out to have more than one real
-    price gets its distinct prices as separate rows, each with its own
-    price appended to the label so they don't collide."""
+    Groups by real price alone -- NOT by Etix's priceCode/seat section.
+    On a reserved-seating show (Crystal Bowersox, Cla-Zel) grouping by
+    section produced 11 rows, several of them the same price under
+    different section names (Floor A/B/C/D, several table tiers) --
+    Broc: "no need to have it as section d row 1-4 $50," a settlement
+    tier is a price point, not a seat section. This also fixed a real
+    correctness bug along the way: a single priceCode isn't always one
+    uniform price ("Floor D seats" carried both $35 and $50 tickets under
+    the identical code), so the old code-based grouping understated real
+    revenue by hundreds of dollars once the sheet does price*sold; price-
+    only grouping can't have that problem since every group IS one price.
+    The label here is a plain "$X" -- pull_etix_ticket_tiers's caller (the
+    settlement editor) matches an incoming price against an EXISTING
+    tier's own price first, so a pre-priced "Advance" tier keeps its name
+    and just gets its sold count filled in; only a price with no matching
+    planned tier falls back to this plain label."""
     token = _get_token()
     qs = urllib.parse.urlencode({"eventId": performance_id, "pageSize": 1000, "excludeVoidTickets": "true"})
     req = urllib.request.Request(
@@ -208,22 +219,10 @@ def get_price_breakdown(performance_id):
         if order.get("salesChannel") == "SALES_CHANNEL.INTERNAL":
             continue
         for ticket in order.get("tickets", []):
-            code = ticket.get("priceCode") or "Unknown"
             price = ticket.get("price")
-            key = (code, price)
-            entry = tiers.setdefault(key, {"label": code, "price": price, "sold": 0})
+            entry = tiers.setdefault(price, {"label": _price_label(price), "price": price, "sold": 0})
             entry["sold"] += 1
-    # Disambiguate a price code that came back with more than one real
-    # price, so two rows don't render with the same label.
-    codes_seen = {}
-    for (code, _price) in tiers:
-        codes_seen[code] = codes_seen.get(code, 0) + 1
-    result = []
-    for (code, price), entry in tiers.items():
-        if codes_seen[code] > 1:
-            entry = {**entry, "label": f"{code} (${price:g})"}
-        result.append(entry)
-    return result
+    return list(tiers.values())
 
 
 def pull_and_store_snapshot(conn, event_id, venue_name, show_date, sale_date=None):

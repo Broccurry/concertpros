@@ -306,9 +306,9 @@ class PriceBreakdownFromOrders(unittest.TestCase):
         with patch("urllib.request.urlopen", return_value=self._fake_response(payload)), \
              patch("etix._get_token", return_value="fake-token"):
             tiers = etix.get_price_breakdown(87567148)
-        self.assertEqual(sorted(tiers, key=lambda t: t["label"]), [
-            {"label": "ADVANCED", "price": 30.0, "sold": 2},
-            {"label": "DAY OF", "price": 35.0, "sold": 1},
+        self.assertEqual(sorted(tiers, key=lambda t: t["price"]), [
+            {"label": "$30", "price": 30.0, "sold": 2},
+            {"label": "$35", "price": 35.0, "sold": 1},
         ])
 
     def test_no_orders_is_an_empty_list_not_a_crash(self):
@@ -316,24 +316,26 @@ class PriceBreakdownFromOrders(unittest.TestCase):
              patch("etix._get_token", return_value="fake-token"):
             self.assertEqual(etix.get_price_breakdown(87567148), [])
 
-    def test_a_price_code_with_more_than_one_real_price_splits_and_labels_each(self):
-        """Confirmed 2026-09-26 against a real reserved-seating show
-        (Crystal Bowersox, Cla-Zel): a single priceCode ("Floor D seats")
-        is NOT always one uniform price -- it carried both $35 and $50
-        tickets. Grouping by code name alone and reporting only the first
-        price seen understated real revenue once the settlement sheet
-        does price*sold (was off by hundreds of dollars on that real
-        show). Each distinct price under a shared code becomes its own
-        row, labeled to disambiguate."""
+    def test_groups_by_price_alone_not_by_seat_section(self):
+        """2026-09-26, Broc, after seeing a real reserved-seating show
+        (Crystal Bowersox, Cla-Zel) come back as 11 section-named rows:
+        "no need to have it as section d row 1-4 $50" -- a settlement
+        tier is a price point, not a seat section. Different sections
+        selling at the identical price collapse into one tier; a single
+        section that happens to sell at two different prices (a real
+        thing on that show -- "Floor D seats" had both $35 and $50
+        tickets) correctly lands in two different price groups, never
+        both folded into one wrong price."""
         payload = {
             "createdOrders": [
                 {
                     "salesChannel": "SALES_CHANNEL.ONLINE",
                     "tickets": [
-                        {"priceCode": "Floor D seats", "price": 35.0},
+                        {"priceCode": "Floor A seats", "price": 35.0},
+                        {"priceCode": "Floor B seats", "price": 35.0},
                         {"priceCode": "Floor D seats", "price": 35.0},
                         {"priceCode": "Floor D seats", "price": 50.0},
-                        {"priceCode": "Floor A seats", "price": 35.0},
+                        {"priceCode": "Upper Level 4 Pack Seated Table", "price": 50.0},
                     ],
                 },
             ],
@@ -341,13 +343,16 @@ class PriceBreakdownFromOrders(unittest.TestCase):
         with patch("urllib.request.urlopen", return_value=self._fake_response(payload)), \
              patch("etix._get_token", return_value="fake-token"):
             tiers = etix.get_price_breakdown(87567148)
-        by_label = {t["label"]: t for t in tiers}
-        self.assertEqual(by_label["Floor D seats ($35)"], {"label": "Floor D seats ($35)", "price": 35.0, "sold": 2})
-        self.assertEqual(by_label["Floor D seats ($50)"], {"label": "Floor D seats ($50)", "price": 50.0, "sold": 1})
-        # A code with only one real price is left with its plain name.
-        self.assertEqual(by_label["Floor A seats"], {"label": "Floor A seats", "price": 35.0, "sold": 1})
+        self.assertEqual(sorted(tiers, key=lambda t: t["price"]), [
+            {"label": "$35", "price": 35.0, "sold": 3},
+            {"label": "$50", "price": 50.0, "sold": 2},
+        ])
         total_gross = sum(t["sold"] * t["price"] for t in tiers)
-        self.assertAlmostEqual(total_gross, 2 * 35.0 + 1 * 50.0 + 1 * 35.0)
+        self.assertAlmostEqual(total_gross, 3 * 35.0 + 2 * 50.0)
+
+    def test_price_label_drops_trailing_cents_for_a_whole_dollar_amount(self):
+        self.assertEqual(etix._price_label(30.0), "$30")
+        self.assertEqual(etix._price_label(62.5), "$62.50")
 
 
 if __name__ == "__main__":

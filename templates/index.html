@@ -1737,13 +1737,20 @@ function renderSettlementEditor(host){
         : (r.body.detail || r.body.error || "Could not pull ticket tiers."));
       return;
     }
-    // Update a tier we already have by matching label; anything Etix
-    // returns that isn't already one of our tiers gets appended as a new
-    // one (Broc: "if etix returns extra tiers as well it should auto add
-    // those tiers").
+    // Match an incoming price against a tier that ALREADY has that price
+    // set (e.g. "Advance" pre-priced from the show card) and just fill in
+    // its sold count -- keeps the friendly name instead of overwriting it
+    // with Etix's plain "$30" label. Etix's own price codes/seat sections
+    // aren't used as the match key at all (Broc: "no need to have it as
+    // section... $50" -- a tier is a price point). A price with no
+    // matching planned tier gets appended as its own new row, labeled by
+    // price (Broc: "if etix returns extra tiers as well it should auto
+    // add those tiers").
     r.body.tiers.forEach(function(t){
-      var existing = sd.tiers.find(function(x){ return x.label.toLowerCase() === (t.label||"").toLowerCase(); });
-      if(existing){ existing.price = t.price; existing.sold = t.sold; existing.source = "etix"; }
+      var existing = sd.tiers.find(function(x){
+        return x.price !== "" && x.price != null && Math.abs(Number(x.price) - Number(t.price)) < 0.005;
+      });
+      if(existing){ existing.sold = t.sold; existing.source = "etix"; }
       else sd.tiers.push({label: t.label, price: t.price, sold: t.sold, source: "etix", sort_order: sd.tiers.length});
     });
     renderSettlementsView();
