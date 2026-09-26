@@ -347,6 +347,26 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .error{color:#b3261e;font-size:12.5px}
 .card{border:1px solid var(--line);border-radius:var(--radius);padding:16px;background:var(--surface)}
 
+/* A real settlement sheet, not a stack of labeled boxes -- ledger-style
+   rows (label left, number right, tabular-nums so digits line up column
+   to column like a real spreadsheet) with running totals visibly bolder
+   at each step, matching the real paper/Excel settlement sheet this was
+   modeled on. Computed values are plain text, never inputs -- only the
+   handful of real source numbers (gross, tax rate, expense actuals...)
+   are editable; everything else visibly derives from them live. */
+.settlementsheet{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+                  padding:20px;font-variant-numeric:tabular-nums}
+.settlementsheet-section{margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+.settlementsheet-section:first-child{margin-top:0;padding-top:0;border-top:none}
+.settlerow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 0;font-size:13.5px}
+.settlerow-input input{width:140px;text-align:right}
+.settlerow-computed{color:var(--ink-2)}
+.settlerow-computed .settlerow-value{color:var(--ink-3)}
+.settlerow-total{font-weight:700;font-size:15px;padding-top:10px;margin-top:4px;border-top:1.5px solid var(--ink-2)}
+.settlerow-total.settlerow-payout{font-size:19px;color:var(--accent);border-top:2px solid var(--accent)}
+.settlerow-value{font-family:var(--display);white-space:nowrap}
+.settlesheet-explain{font-size:12px;color:var(--ink-3);margin:2px 0 8px}
+
 .ticketsaleslist{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
 .ticketsalerow{display:flex;align-items:center;gap:10px;font-size:13.5px;padding:4px 0}
 .ticketsalerow .x{margin-left:auto}
@@ -779,6 +799,29 @@ var SETTLEMENT_TEMPLATES = {
     "Setup","Spot Operator","Spots","Staff","Stage","Stage Hands","Stage Manager","Ticket Print",
     "Ticket Taker","Towels","Ushers","Age Differential"],
 };
+// Live-preview mirror of settlement_calc.py's math, so the sheet updates
+// as you type instead of only after a save round-trip (2026-09-25, Broc:
+// "i am not seeing any sort of math going on when i enter numbers"). The
+// SAVED number always comes from the server's own recompute -- this is
+// UX only, and if it ever drifts from settlement_calc.py the worst case
+// is a wrong PREVIEW, never a wrong saved figure. Keep the two in sync
+// by hand; there's no shared source between Python and JS to enforce it.
+function settlementNetGross(gross, salesTaxPct, facilityFeePerTicket, ticketsSold, ticketingFeePct){
+  gross = +gross || 0;
+  var salesTax = gross * (+salesTaxPct||0) / 100;
+  var facilityFee = (+facilityFeePerTicket||0) * (+ticketsSold||0);
+  var ticketingFee = gross * (+ticketingFeePct||0) / 100;
+  return {netGross: gross - salesTax - facilityFee - ticketingFee, salesTax:salesTax, facilityFee:facilityFee, ticketingFee:ticketingFee};
+}
+function settlementArtistPayout(dealType, guarantee, backendPct, netGross, netAfterExpenses, fromDollarOne){
+  guarantee = +guarantee || 0;
+  var pct = (+backendPct || 0) / 100;
+  if(dealType === "Guarantee") return guarantee;
+  if(dealType === "Guarantee vs %") return Math.max(guarantee, pct * netAfterExpenses);
+  if(dealType === "Guarantee + %") return guarantee + pct * Math.max(0, netAfterExpenses - guarantee);
+  if(dealType === "Door split") return pct * Math.max(0, fromDollarOne ? netGross : netAfterExpenses);
+  return 0; // Flat rental / Free-promo / Not recorded -- no artist split
+}
 
 function pad(n){ return n < 10 ? "0" + n : "" + n; }
 function iso(y,m,d){ return y + "-" + pad(m+1) + "-" + pad(d); }
@@ -1515,11 +1558,17 @@ function renderSettlementEditor(host){
   host.appendChild(el("h3","section", showName(ev)));
   host.appendChild(el("p","hint", ev.venue + " · " + shortDateWithYear(ev.show_date)));
 
-  var dealRow = el("div","row-3"); dealRow.style.marginTop = "10px";
+  var sheet = el("div","settlementsheet");
+
+  // ---- Deal terms ----
+  var dealSection = el("div","settlementsheet-section");
+  var dealRow = el("div","row-3");
   dealRow.appendChild(field("Deal type", select(DEAL_TYPES, sd.dealType, function(v){ sd.dealType = v; renderSettlementsView(); })));
-  dealRow.appendChild(field("Guarantee", input("number", sd.guarantee, function(v){ sd.guarantee = v; })));
-  dealRow.appendChild(field("Backend %", input("number", sd.backendPct, function(v){ sd.backendPct = v; })));
-  host.appendChild(dealRow);
+  var guaranteeInput = input("number", sd.guarantee, function(v){ sd.guarantee = v; recalc(); });
+  dealRow.appendChild(field("Guarantee", guaranteeInput));
+  var backendInput = input("number", sd.backendPct, function(v){ sd.backendPct = v; recalc(); });
+  dealRow.appendChild(field("Backend %", backendInput));
+  dealSection.appendChild(dealRow);
 
   var templateField = el("div","field"); templateField.style.marginTop = "10px";
   templateField.appendChild(el("label",null,"Expense template"));
@@ -1541,11 +1590,37 @@ function renderSettlementEditor(host){
     templateChips.appendChild(chip);
   });
   templateField.appendChild(templateChips);
-  host.appendChild(templateField);
+  dealSection.appendChild(templateField);
+  sheet.appendChild(dealSection);
 
-  var pullBtn = el("button","btn","Pull latest ticket sale → tickets sold / gross");
+  // ---- Ticket sales ----
+  function settleRowInput(label, value, onChange){
+    var row = el("div","settlerow settlerow-input");
+    row.appendChild(el("span",null,label));
+    var inp = input("number", value, onChange);
+    row.appendChild(inp);
+    return {row:row, input:inp};
+  }
+  function settleRowComputed(label){
+    var row = el("div","settlerow settlerow-computed");
+    row.appendChild(el("span",null,label));
+    var valueEl = el("span","settlerow-value","$0");
+    row.appendChild(valueEl);
+    return {row:row, setValue:function(v){ valueEl.textContent = v; }};
+  }
+  function settleRowTotal(label, extraClass){
+    var row = el("div","settlerow settlerow-total" + (extraClass ? " " + extraClass : ""));
+    row.appendChild(el("span",null,label));
+    var valueEl = el("span","settlerow-value","$0");
+    row.appendChild(valueEl);
+    return {row:row, setValue:function(v){ valueEl.textContent = v; }};
+  }
+
+  var ticketingSection = el("div","settlementsheet-section");
+  ticketingSection.appendChild(el("div","eyebrow","Ticket Sales"));
+  var pullBtn = el("button","btn btn-sm","Pull latest ticket sale");
   pullBtn.type = "button";
-  pullBtn.style.marginTop = "10px";
+  pullBtn.style.margin = "6px 0 10px";
   pullBtn.onclick = function(){
     var sales = ev.ticket_sales || [];
     if(!sales.length){ window.alert("No ticket sales logged yet for this show."); return; }
@@ -1554,65 +1629,114 @@ function renderSettlementEditor(host){
     if(latest.gross != null) s.gross = latest.gross;
     renderSettlementsView();
   };
-  host.appendChild(pullBtn);
+  ticketingSection.appendChild(pullBtn);
+  var ticketsRow = settleRowInput("Tickets sold", s.tickets_sold, function(v){ s.tickets_sold = v; recalc(); });
+  var grossRow = settleRowInput("Gross (walk-up + presale)", s.gross, function(v){ s.gross = v; recalc(); });
+  ticketingSection.appendChild(ticketsRow.row);
+  ticketingSection.appendChild(grossRow.row);
+  sheet.appendChild(ticketingSection);
 
-  var r7 = el("div","row"); r7.style.marginTop = "10px";
-  r7.appendChild(field("Tickets sold", input("number", s.tickets_sold, function(v){ s.tickets_sold = v; })));
-  r7.appendChild(field("Gross (walk-up + presale)", input("number", s.gross, function(v){ s.gross = v; })));
-  host.appendChild(r7);
+  // ---- Deductions -> Net Gross ----
+  var dedSection = el("div","settlementsheet-section");
+  dedSection.appendChild(el("div","eyebrow","Deductions"));
+  var taxRow = settleRowInput("Sales tax rate (%)", s.sales_tax_rate, function(v){ s.sales_tax_rate = v; recalc(); });
+  var feeRow = settleRowInput("Facility fee / ticket ($)", s.facility_fee_per_ticket, function(v){ s.facility_fee_per_ticket = v; recalc(); });
+  var ticketingFeeRow = settleRowInput("Ticketing fee rate (%)", s.ticketing_fee_rate, function(v){ s.ticketing_fee_rate = v; recalc(); });
+  dedSection.appendChild(taxRow.row); dedSection.appendChild(feeRow.row); dedSection.appendChild(ticketingFeeRow.row);
+  var salesTaxComputed = settleRowComputed("− Sales tax");
+  var facilityFeeComputed = settleRowComputed("− Facility fee");
+  var ticketingFeeComputed = settleRowComputed("− Ticketing fee");
+  dedSection.appendChild(salesTaxComputed.row); dedSection.appendChild(facilityFeeComputed.row); dedSection.appendChild(ticketingFeeComputed.row);
+  var netGrossTotal = settleRowTotal("NET GROSS");
+  dedSection.appendChild(netGrossTotal.row);
+  sheet.appendChild(dedSection);
 
-  var r7b = el("div","row-3"); r7b.style.marginTop = "10px";
-  r7b.appendChild(field("Sales tax rate (%)", input("number", s.sales_tax_rate, function(v){ s.sales_tax_rate = v; })));
-  r7b.appendChild(field("Facility fee / ticket ($)", input("number", s.facility_fee_per_ticket, function(v){ s.facility_fee_per_ticket = v; })));
-  r7b.appendChild(field("Ticketing fee rate (%)", input("number", s.ticketing_fee_rate, function(v){ s.ticketing_fee_rate = v; })));
-  host.appendChild(r7b);
-
+  // ---- Expenses -> Net After Expenses ----
+  var expSection = el("div","settlementsheet-section");
+  expSection.appendChild(el("div","eyebrow","Expenses"));
   if(sd.dealType === "Door split"){
-    var doorWrap = el("label","checkfield"); doorWrap.style.marginTop = "10px";
+    var doorWrap = el("label","checkfield"); doorWrap.style.margin = "4px 0 10px";
     var doorCb = document.createElement("input");
     doorCb.type = "checkbox"; doorCb.checked = !!s.door_split_from_dollar_one;
-    doorCb.onchange = function(){ s.door_split_from_dollar_one = doorCb.checked; };
+    doorCb.onchange = function(){ s.door_split_from_dollar_one = doorCb.checked; recalc(); };
     doorWrap.appendChild(doorCb);
     doorWrap.appendChild(document.createTextNode(" Split from dollar one (not just above expenses)"));
-    host.appendChild(doorWrap);
+    expSection.appendChild(doorWrap);
   }
-
-  var expField = el("div","field"); expField.style.marginTop = "12px";
-  expField.appendChild(el("label",null,"Expenses"));
   var expList = el("div","expenselist");
+  if(sd.expenses.length){
+    var expHead = el("div","row-3");
+    expHead.appendChild(el("span","eyebrow","Label")); expHead.appendChild(el("span","eyebrow","Budget")); expHead.appendChild(el("span","eyebrow","Actual"));
+    expList.appendChild(expHead);
+  }
   sd.expenses.forEach(function(line, idx){
     var row = el("div","row-3");
     row.appendChild(input("text", line.label, function(v){ line.label = v; }));
     row.appendChild(input("number", line.budget, function(v){ line.budget = v; }));
-    row.appendChild(input("number", line.actual, function(v){ line.actual = v; }));
+    row.appendChild(input("number", line.actual, function(v){ line.actual = v; recalc(); }));
     var del = el("button","x","✕"); del.type = "button"; del.title = "Remove line";
     del.onclick = function(){ sd.expenses.splice(idx,1); renderSettlementsView(); };
     row.appendChild(del);
     expList.appendChild(row);
   });
-  if(sd.expenses.length){
-    var expHead = el("div","row-3");
-    expHead.appendChild(el("span","eyebrow","Label")); expHead.appendChild(el("span","eyebrow","Budget")); expHead.appendChild(el("span","eyebrow","Actual"));
-    expList.insertBefore(expHead, expList.firstChild);
-  }
-  expField.appendChild(expList);
-  var addLineBtn = el("button","btn","+ Add expense line");
+  expSection.appendChild(expList);
+  var addLineBtn = el("button","btn btn-sm","+ Add expense line");
   addLineBtn.type = "button";
   addLineBtn.style.marginTop = "8px";
   addLineBtn.onclick = function(){
     sd.expenses.push({label:"", budget:"", actual:"", sort_order: sd.expenses.length});
     renderSettlementsView();
   };
-  expField.appendChild(addLineBtn);
-  host.appendChild(expField);
+  expSection.appendChild(addLineBtn);
+  var totalExpensesTotal = settleRowTotal("TOTAL EXPENSES");
+  totalExpensesTotal.row.style.marginTop = "10px";
+  expSection.appendChild(totalExpensesTotal.row);
+  var netAfterExpensesTotal = settleRowTotal("NET AFTER EXPENSES");
+  expSection.appendChild(netAfterExpensesTotal.row);
+  sheet.appendChild(expSection);
 
-  var summary = el("div","hint"); summary.style.marginTop = "10px";
-  var expensesTotal = sd.expenses.reduce(function(sum,l){ return sum + (+l.actual || 0); }, 0);
-  summary.appendChild(el("p",null,"Expenses (actual): " + money(expensesTotal)));
-  summary.appendChild(el("p",null,"Artist payout (as of last save): " + money(+s.artist_payout || 0)));
-  host.appendChild(summary);
+  // ---- Artist settlement ----
+  var artistSection = el("div","settlementsheet-section");
+  artistSection.appendChild(el("div","eyebrow","Artist Settlement"));
+  var explainEl = el("p","settlesheet-explain");
+  artistSection.appendChild(explainEl);
+  var payoutTotal = settleRowTotal("ARTIST PAYOUT", "settlerow-payout");
+  artistSection.appendChild(payoutTotal.row);
+  var netToRoomTotal = settleRowTotal("NET TO ROOM");
+  artistSection.appendChild(netToRoomTotal.row);
+  sheet.appendChild(artistSection);
 
-  var settledWrap = el("div","taskitem");
+  host.appendChild(sheet);
+
+  function dealExplainText(dealType, guarantee, backendPct, netGross, netAfterExpenses){
+    guarantee = +guarantee || 0; backendPct = +backendPct || 0;
+    if(dealType === "Guarantee") return "Flat guarantee — turnout doesn't change it.";
+    if(dealType === "Guarantee vs %") return "Whichever's greater: " + money(guarantee) + " guarantee, or " + backendPct + "% of net after expenses (" + money(backendPct/100*netAfterExpenses) + ").";
+    if(dealType === "Guarantee + %") return money(guarantee) + " guarantee, plus " + backendPct + "% of whatever clears " + money(guarantee) + " + expenses.";
+    if(dealType === "Door split") return backendPct + "% of " + (s.door_split_from_dollar_one ? "net gross, from the first dollar." : "net after expenses.");
+    return "No artist split for this deal type — the room keeps net after expenses.";
+  }
+
+  function recalc(){
+    var ng = settlementNetGross(s.gross, s.sales_tax_rate, s.facility_fee_per_ticket, s.tickets_sold, s.ticketing_fee_rate);
+    salesTaxComputed.setValue(money(ng.salesTax));
+    facilityFeeComputed.setValue(money(ng.facilityFee));
+    ticketingFeeComputed.setValue(money(ng.ticketingFee));
+    netGrossTotal.setValue(money(ng.netGross));
+
+    var expensesTotal = sd.expenses.reduce(function(sum,l){ return sum + (+l.actual || 0); }, 0);
+    totalExpensesTotal.setValue(money(expensesTotal));
+    var netAfterExpenses = ng.netGross - expensesTotal;
+    netAfterExpensesTotal.setValue(money(netAfterExpenses));
+
+    var payout = settlementArtistPayout(sd.dealType, sd.guarantee, sd.backendPct, ng.netGross, netAfterExpenses, s.door_split_from_dollar_one);
+    payoutTotal.setValue(money(payout));
+    netToRoomTotal.setValue(money(netAfterExpenses - payout));
+    explainEl.textContent = dealExplainText(sd.dealType, sd.guarantee, sd.backendPct, ng.netGross, netAfterExpenses);
+  }
+  recalc();
+
+  var settledWrap = el("div","taskitem"); settledWrap.style.marginTop = "16px";
   var scb = document.createElement("input");
   scb.type = "checkbox"; scb.id = "settledBox"; scb.checked = !!s.settled;
   scb.onchange = function(){ s.settled = scb.checked; };
