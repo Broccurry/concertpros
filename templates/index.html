@@ -366,6 +366,11 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .settlerow-total.settlerow-payout{font-size:19px;color:var(--accent);border-top:2px solid var(--accent)}
 .settlerow-value{font-family:var(--display);white-space:nowrap}
 .settlesheet-explain{font-size:12px;color:var(--ink-3);margin:2px 0 8px}
+.expenseline{display:grid;grid-template-columns:1fr 90px 90px 24px;gap:8px;align-items:center;margin-bottom:6px}
+.expenseline input{width:100%;box-sizing:border-box;min-width:0}
+.expenseline input[type=number]{text-align:right}
+.expenseline .x{justify-self:center}
+@media (max-width:660px){.expenseline{grid-template-columns:1fr 62px 62px 22px;gap:6px}}
 
 .ticketsaleslist{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
 .ticketsalerow{display:flex;align-items:center;gap:10px;font-size:13.5px;padding:4px 0}
@@ -1556,7 +1561,10 @@ function renderSettlementEditor(host){
   var s = sd.settlement;
 
   host.appendChild(el("h3","section", showName(ev)));
-  host.appendChild(el("p","hint", ev.venue + " · " + shortDateWithYear(ev.show_date)));
+  var headerBits = [ev.venue, shortDateWithYear(ev.show_date)];
+  if((ev.promoters||[]).length) headerBits.push(ev.promoters.join(", "));
+  if((ev.event_types||[]).length) headerBits.push(ev.event_types.join(", "));
+  host.appendChild(el("p","hint", headerBits.join(" · ")));
 
   var sheet = el("div","settlementsheet");
 
@@ -1651,21 +1659,6 @@ function renderSettlementEditor(host){
   ticketingSection.appendChild(grossRow.row);
   sheet.appendChild(ticketingSection);
 
-  // ---- Deductions -> Net Gross ----
-  var dedSection = el("div","settlementsheet-section");
-  dedSection.appendChild(el("div","eyebrow","Deductions"));
-  var taxRow = settleRowInput("Sales tax rate (%)", s.sales_tax_rate, function(v){ s.sales_tax_rate = v; recalc(); });
-  var feeRow = settleRowInput("Facility fee / ticket ($)", s.facility_fee_per_ticket, function(v){ s.facility_fee_per_ticket = v; recalc(); });
-  var ticketingFeeRow = settleRowInput("Ticketing fee rate (%)", s.ticketing_fee_rate, function(v){ s.ticketing_fee_rate = v; recalc(); });
-  dedSection.appendChild(taxRow.row); dedSection.appendChild(feeRow.row); dedSection.appendChild(ticketingFeeRow.row);
-  var salesTaxComputed = settleRowComputed("− Sales tax");
-  var facilityFeeComputed = settleRowComputed("− Facility fee");
-  var ticketingFeeComputed = settleRowComputed("− Ticketing fee");
-  dedSection.appendChild(salesTaxComputed.row); dedSection.appendChild(facilityFeeComputed.row); dedSection.appendChild(ticketingFeeComputed.row);
-  var netGrossTotal = settleRowTotal("NET GROSS");
-  dedSection.appendChild(netGrossTotal.row);
-  sheet.appendChild(dedSection);
-
   // ---- Expenses -> Net After Expenses ----
   var expSection = el("div","settlementsheet-section");
   expSection.appendChild(el("div","eyebrow","Expenses"));
@@ -1680,12 +1673,13 @@ function renderSettlementEditor(host){
   }
   var expList = el("div","expenselist");
   if(sd.expenses.length){
-    var expHead = el("div","row-3");
+    var expHead = el("div","expenseline");
     expHead.appendChild(el("span","eyebrow","Label")); expHead.appendChild(el("span","eyebrow","Budget")); expHead.appendChild(el("span","eyebrow","Actual"));
+    expHead.appendChild(el("span"));
     expList.appendChild(expHead);
   }
   sd.expenses.forEach(function(line, idx){
-    var row = el("div","row-3");
+    var row = el("div","expenseline");
     row.appendChild(input("text", line.label, function(v){ line.label = v; }));
     row.appendChild(input("number", line.budget, function(v){ line.budget = v; }));
     row.appendChild(input("number", line.actual, function(v){ line.actual = v; recalc(); }));
@@ -1709,6 +1703,21 @@ function renderSettlementEditor(host){
   var netAfterExpensesTotal = settleRowTotal("NET AFTER EXPENSES");
   expSection.appendChild(netAfterExpensesTotal.row);
   sheet.appendChild(expSection);
+
+  // ---- Deductions -> Net Gross ----
+  var dedSection = el("div","settlementsheet-section");
+  dedSection.appendChild(el("div","eyebrow","Deductions"));
+  var taxRow = settleRowInput("Sales tax rate (%)", s.sales_tax_rate, function(v){ s.sales_tax_rate = v; recalc(); });
+  var feeRow = settleRowInput("Facility fee / ticket ($)", s.facility_fee_per_ticket, function(v){ s.facility_fee_per_ticket = v; recalc(); });
+  var ticketingFeeRow = settleRowInput("Ticketing fee rate (%)", s.ticketing_fee_rate, function(v){ s.ticketing_fee_rate = v; recalc(); });
+  dedSection.appendChild(taxRow.row); dedSection.appendChild(feeRow.row); dedSection.appendChild(ticketingFeeRow.row);
+  var salesTaxComputed = settleRowComputed("− Sales tax");
+  var facilityFeeComputed = settleRowComputed("− Facility fee");
+  var ticketingFeeComputed = settleRowComputed("− Ticketing fee");
+  dedSection.appendChild(salesTaxComputed.row); dedSection.appendChild(facilityFeeComputed.row); dedSection.appendChild(ticketingFeeComputed.row);
+  var netGrossTotal = settleRowTotal("NET GROSS");
+  dedSection.appendChild(netGrossTotal.row);
+  sheet.appendChild(dedSection);
 
   // ---- Artist settlement ----
   var artistSection = el("div","settlementsheet-section");
