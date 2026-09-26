@@ -1049,7 +1049,7 @@ function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace
 var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], offers:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[], fileFolders:[], hivemindIdeas:[], marketingContacts:[], marketingCampaigns:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), selectedVenues:null, showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false, staffEditingCell:null, addingFileFolderIn:null, settlementEditingEventId:null, settlementDraft:null};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), selectedVenues:null, showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false, staffEditingCell:null, addingFileFolderIn:null, settlementEditingEventId:null, settlementDraft:null, offerEditingId:null, offerDraft:null, offerLinkPickerFor:null};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
@@ -1568,21 +1568,33 @@ function renderSettlementEditor(host){
       tickets_sold:"",gross:"",sales_tax_rate:"",facility_fee_per_ticket:"",ticketing_fee_rate:"",
       expenses:0,door_split_from_dollar_one:false,template:"simple",artist_payout:0,settled:false,notes:"",
     };
+    // "when it is time for settlement we select the show and it auto
+    // populates everything based on the offer" (Broc, 2026-09-26) -- a
+    // linked offer's budget/tier PRICES seed the settlement's own blank
+    // slate, same non-destructive rule as everything else pre-filled
+    // here: only when the settlement doesn't already have its own data.
+    var offer = ev.offer;
     var expenses = ev.settlement_expenses ? JSON.parse(JSON.stringify(ev.settlement_expenses)) : [];
-    if(!expenses.length) expenses = SETTLEMENT_TEMPLATES[s.template || "simple"].map(function(label,i){
-      return {label:label, budget:"", actual:"", sort_order:i};
-    });
+    if(!expenses.length){
+      expenses = (offer && offer.expenses && offer.expenses.length)
+        ? offer.expenses.map(function(l,i){ return {label:l.label, budget:l.budget, actual:"", sort_order:i}; })
+        : SETTLEMENT_TEMPLATES[s.template || "simple"].map(function(label,i){ return {label:label, budget:"", actual:"", sort_order:i}; });
+    }
     // Prepopulate from whatever's already known, so there's less to type
     // by hand -- exactly what Broc asked for. Walk Up's price comes from
     // the show card's own ticket_tiers; Advance/Day of Advance start
-    // blank until pulled from Etix or typed by hand.
+    // blank until pulled from Etix or typed by hand -- unless a linked
+    // offer already has real planned tiers, which take priority over the
+    // generic 3-tier default since they're specific to this show.
     var tiers = ev.settlement_ticket_tiers && ev.settlement_ticket_tiers.length
       ? JSON.parse(JSON.stringify(ev.settlement_ticket_tiers))
-      : DEFAULT_TICKET_TIER_LABELS.map(function(label, i){
-          var showTier = (ev.ticket_tiers||[]).find(function(t){ return t.label === label; });
-          return {label:label, price: (showTier && showTier.price !== "" && showTier.price != null) ? showTier.price : "",
-                  sold:"", source:"manual", sort_order:i};
-        });
+      : (offer && offer.ticket_tiers && offer.ticket_tiers.length)
+        ? offer.ticket_tiers.map(function(t,i){ return {label:t.label, price:t.price, sold:"", source:"manual", sort_order:i}; })
+        : DEFAULT_TICKET_TIER_LABELS.map(function(label, i){
+            var showTier = (ev.ticket_tiers||[]).find(function(t){ return t.label === label; });
+            return {label:label, price: (showTier && showTier.price !== "" && showTier.price != null) ? showTier.price : "",
+                    sold:"", source:"manual", sort_order:i};
+          });
     // Every artist on the bill, not grouped into one lump payout (Broc:
     // "we want the artists to be seperate not grouped together as one
     // total") -- pulled straight from the show card's own bill, same
@@ -1597,7 +1609,9 @@ function renderSettlementEditor(host){
     });
     ui.settlementDraft = {
       eventId: ev.id, version: ev.version, settlement: s, expenses: expenses, tiers: tiers, artists: artists,
-      dealType: ev.deal_type || NO_DEAL, guarantee: ev.guarantee, backendPct: ev.backend_pct,
+      dealType: ev.deal_type || (offer && offer.deal_type) || NO_DEAL,
+      guarantee: ev.guarantee != null && ev.guarantee !== "" ? ev.guarantee : (offer ? offer.guarantee : ""),
+      backendPct: ev.backend_pct != null && ev.backend_pct !== "" ? ev.backend_pct : (offer ? offer.backend_pct : ""),
     };
   }
   var sd = ui.settlementDraft;
@@ -4885,15 +4899,26 @@ async function moveOffer(offerId, columnKey, index){
   renderAll();
 }
 function renderOfferCardBody(o, body){
-  body.onclick = function(){ openOfferForm(o.id); };
+  body.onclick = function(){ ui.offerEditingId = o.id; ui.offerDraft = null; renderAll(); };
   body.appendChild(el("p","visioncard-title", o.title));
   if(o.dead) body.appendChild(el("span","pill s-dead","Didn't work out"));
   if(o.artist_name) body.appendChild(el("span","pill s-complete", o.artist_name));
   if(o.venue_name) body.appendChild(el("span","pill pill-muted", o.venue_name));
+  if(o.event_id) body.appendChild(el("span","pill pill-muted","Linked to show"));
+}
+function closeOfferEditor(){
+  ui.offerEditingId = null;
+  ui.offerDraft = null;
+  renderAll();
 }
 function renderOffersView(){
   var host = document.getElementById("view-offers");
   host.innerHTML = "";
+
+  if(ui.offerEditingId != null){
+    renderOfferEditor(host);
+    return;
+  }
 
   var toggleWrap = el("label","checkfield"); toggleWrap.style.marginBottom = "14px";
   var toggleCb = document.createElement("input");
@@ -4915,91 +4940,321 @@ function renderOffersView(){
       itemsForColumn: offersByColumn,
       quickAddMode: "button",
       quickAddPlaceholder: "+ Offer",
-      onQuickAdd: function(colKey){ openOfferForm(null, colKey); },
+      onQuickAdd: function(colKey){ ui.offerEditingId = "NEW:" + colKey; ui.offerDraft = null; renderAll(); },
       onMove: moveOffer,
       renderCardBody: renderOfferCardBody,
     });
   });
 }
-function openOfferForm(offerId, defaultColumnKey){
-  var o = offerId ? (store.offers||[]).find(function(x){ return x.id === offerId; }) : null;
-  var body = document.getElementById("sheetBody"), foot = document.getElementById("sheetFoot");
-  document.getElementById("sheetTitle").textContent = o ? o.title : "New offer";
-  body.innerHTML = ""; foot.innerHTML = "";
+// The offer builder -- "a similar feel as the settlement sheet" (Broc,
+// 2026-09-26), but for a PROSPECTIVE show: deal terms + a Simple/Expanded
+// budget-expense list (same categories settlements use) + ticket tiers
+// that project a POSSIBLE gross from price * CAPACITY (nothing's sold yet)
+// instead of a real sold count. Mirrors renderSettlementEditor's own
+// structure closely on purpose -- same helpers, same recalc-only-updates-
+// text-nodes discipline, so the two sheets feel like siblings.
+function renderOfferEditor(host){
+  var backBtn = el("button","btn","← Back to offers");
+  backBtn.type = "button";
+  backBtn.style.marginBottom = "14px";
+  backBtn.onclick = closeOfferEditor;
+  host.appendChild(backBtn);
 
-  var draftO = o
-    ? {title:o.title, column_key:o.column_key, artist_id:o.artist_id||"", venue_id:o.venue_id||"",
-       notes:o.notes||"", link:o.link||"", dead:!!o.dead}
-    : {title:"", column_key:defaultColumnKey||"mao", artist_id:"", venue_id:"", notes:"", link:"", dead:false};
+  var isNew = typeof ui.offerEditingId === "string" && ui.offerEditingId.indexOf("NEW:") === 0;
+  var o = isNew ? null : (store.offers||[]).find(function(x){ return x.id === ui.offerEditingId; });
+  if(!isNew && !o){ host.appendChild(el("p","hint","That offer couldn't be found.")); return; }
 
-  var fs = document.createElement("fieldset");
-  fs.appendChild(el("legend",null,"The offer"));
+  if(!ui.offerDraft){
+    var expenses = (o && o.expenses && o.expenses.length) ? JSON.parse(JSON.stringify(o.expenses)) :
+      SETTLEMENT_TEMPLATES[(o && o.template) || "simple"].map(function(label,i){ return {label:label, budget:"", sort_order:i}; });
+    var tiers = (o && o.ticket_tiers && o.ticket_tiers.length) ? JSON.parse(JSON.stringify(o.ticket_tiers)) :
+      [{label:"", price:"", capacity:"", sort_order:0}];
+    ui.offerDraft = {
+      id: o ? o.id : null,
+      title: o ? o.title : "", column_key: o ? o.column_key : ui.offerEditingId.slice(4),
+      artist_id: o ? (o.artist_id||"") : "", venue_id: o ? (o.venue_id||"") : "",
+      notes: o ? (o.notes||"") : "", link: o ? (o.link||"") : "", dead: o ? !!o.dead : false,
+      dealType: (o && o.deal_type) || NO_DEAL, guarantee: o ? o.guarantee : "", backendPct: o ? o.backend_pct : "",
+      template: (o && o.template) || "simple", eventId: o ? o.event_id : null,
+      expenses: expenses, tiers: tiers,
+    };
+  }
+  var d = ui.offerDraft;
 
-  var stageOpts = [{value:"mao",label:"MAO"},{value:"needed",label:"Needed"},{value:"sent",label:"Sent"},{value:"confirmed",label:"Confirmed"}];
+  host.appendChild(el("h3","section", o ? o.title || "Untitled offer" : "New offer"));
+
+  var sheet = el("div","settlementsheet");
+
+  // ---- The offer itself: title/stage/band/venue ----
+  var metaSection = el("div","settlementsheet-section");
   var artistOpts = [{value:"",label:"No band linked"}].concat(
     store.artists.slice().sort(function(a,b){ return a.name.localeCompare(b.name); })
       .map(function(a){ return {value:a.id, label:a.name}; }));
   var venueOpts = [{value:"",label:"No venue"}].concat(
     store.venues.map(function(v){ return {value:v.id, label:v.name}; }));
-
+  var stageOpts = [{value:"mao",label:"MAO"},{value:"needed",label:"Needed"},{value:"sent",label:"Sent"},{value:"confirmed",label:"Confirmed"}];
   var r0 = el("div","row-4");
-  r0.appendChild(field("Title", input("text", draftO.title, function(v){ draftO.title = v; })));
-  r0.appendChild(field("Stage", selectKV(stageOpts, draftO.column_key, function(v){ draftO.column_key = v; })));
-  r0.appendChild(field("Band (optional)", selectKV(artistOpts, draftO.artist_id, function(v){ draftO.artist_id = v ? Number(v) : ""; })));
-  r0.appendChild(field("Venue (optional)", selectKV(venueOpts, draftO.venue_id, function(v){ draftO.venue_id = v ? Number(v) : ""; })));
-  fs.appendChild(r0);
-
+  r0.appendChild(field("Title", input("text", d.title, function(v){ d.title = v; })));
+  r0.appendChild(field("Stage", selectKV(stageOpts, d.column_key, function(v){ d.column_key = v; })));
+  r0.appendChild(field("Band (optional)", selectKV(artistOpts, d.artist_id, function(v){ d.artist_id = v ? Number(v) : ""; })));
+  r0.appendChild(field("Venue (optional)", selectKV(venueOpts, d.venue_id, function(v){ d.venue_id = v ? Number(v) : ""; })));
+  metaSection.appendChild(r0);
   var r1 = el("div","row"); r1.style.marginTop = "10px";
-  r1.appendChild(field("Link (offer doc, etc.)", input("text", draftO.link, function(v){ draftO.link = v; })));
-  fs.appendChild(r1);
+  r1.appendChild(field("Link (agent's own offer doc, etc.)", input("text", d.link, function(v){ d.link = v; })));
+  metaSection.appendChild(r1);
+  sheet.appendChild(metaSection);
 
-  var deadWrap = el("label","checkfield"); deadWrap.style.marginTop = "10px";
+  // ---- Deal terms ----
+  var dealSection = el("div","settlementsheet-section");
+  var dealRow = el("div","row-3");
+  dealRow.appendChild(field("Deal type", select(DEAL_TYPES, d.dealType, function(v){ d.dealType = v; recalc(); })));
+  dealRow.appendChild(field("Guarantee", input("number", d.guarantee, function(v){ d.guarantee = v; recalc(); })));
+  dealRow.appendChild(field("Backend %", input("number", d.backendPct, function(v){ d.backendPct = v; recalc(); })));
+  dealSection.appendChild(dealRow);
+  var expandedWrap = el("label","checkfield"); expandedWrap.style.marginTop = "10px";
+  var expandedCb = document.createElement("input");
+  expandedCb.type = "checkbox"; expandedCb.checked = d.template === "detailed";
+  expandedCb.onchange = function(){
+    d.template = expandedCb.checked ? "detailed" : "simple";
+    // Only re-seed if every existing line is still blank -- same safety
+    // rule the settlement sheet's own template switch uses.
+    if(d.expenses.every(function(l){ return !(l.label||"").trim() && !l.budget; })){
+      d.expenses = SETTLEMENT_TEMPLATES[d.template].map(function(label,i){ return {label:label, budget:"", sort_order:i}; });
+    }
+    renderOffersView();
+  };
+  expandedWrap.appendChild(expandedCb);
+  expandedWrap.appendChild(document.createTextNode(" Expanded (bigger show, more expense categories)"));
+  dealSection.appendChild(expandedWrap);
+  sheet.appendChild(dealSection);
+
+  function settleRowTotal(label, extraClass){
+    var row = el("div","settlerow settlerow-total" + (extraClass ? " " + extraClass : ""));
+    row.appendChild(el("span",null,label));
+    var valueEl = el("span","settlerow-value","$0");
+    row.appendChild(valueEl);
+    return {row:row, setValue:function(v){ valueEl.textContent = v; }};
+  }
+
+  // ---- Expenses (left) / Ticket tiers (right), same 2-column layout as
+  // the settlement sheet ----
+  var colsWrap = el("div","settlementsheet-cols");
+
+  var expSection = el("div","settlementsheet-section");
+  expSection.appendChild(el("div","eyebrow","Budgeted Expenses"));
+  var expList = el("div","expenselist");
+  if(d.expenses.length){
+    var expHead = el("div","tierline");
+    expHead.appendChild(el("span","eyebrow","Label")); expHead.appendChild(el("span","eyebrow","Budget")); expHead.appendChild(el("span"));
+    expList.appendChild(expHead);
+  }
+  d.expenses.forEach(function(line, idx){
+    var row = el("div","tierline"); row.style.gridTemplateColumns = "1fr 90px 22px";
+    row.appendChild(input("text", line.label, function(v){ line.label = v; }));
+    row.appendChild(input("number", line.budget, function(v){ line.budget = v; recalc(); }));
+    var del = el("button","x","✕"); del.type = "button"; del.title = "Remove line";
+    del.onclick = function(){ d.expenses.splice(idx,1); renderOffersView(); };
+    row.appendChild(del);
+    expList.appendChild(row);
+  });
+  expSection.appendChild(expList);
+  var addLineBtn = el("button","btn btn-sm","+ Add expense line");
+  addLineBtn.type = "button";
+  addLineBtn.style.marginTop = "8px";
+  addLineBtn.onclick = function(){ d.expenses.push({label:"", budget:"", sort_order:d.expenses.length}); renderOffersView(); };
+  expSection.appendChild(addLineBtn);
+  var totalExpensesTotal = settleRowTotal("TOTAL BUDGETED EXPENSES");
+  totalExpensesTotal.row.style.marginTop = "10px";
+  expSection.appendChild(totalExpensesTotal.row);
+  colsWrap.appendChild(expSection);
+
+  var tierSection = el("div","settlementsheet-section");
+  tierSection.appendChild(el("div","eyebrow","Ticket Tiers"));
+  var tierList = el("div","expenselist");
+  var tierHead = el("div","tierline");
+  tierHead.appendChild(el("span","eyebrow","Tier")); tierHead.appendChild(el("span","eyebrow","Price"));
+  tierHead.appendChild(el("span","eyebrow","Capacity")); tierHead.appendChild(el("span","eyebrow","At sellout"));
+  tierHead.appendChild(el("span"));
+  tierList.appendChild(tierHead);
+  var tierTotalEls = [];
+  d.tiers.forEach(function(tier, idx){
+    var row = el("div","tierline");
+    row.appendChild(input("text", tier.label, function(v){ tier.label = v; }));
+    row.appendChild(input("number", tier.price, function(v){ tier.price = v; recalc(); }));
+    row.appendChild(input("number", tier.capacity, function(v){ tier.capacity = v; recalc(); }));
+    var totalEl = el("span","tierline-total","$0");
+    row.appendChild(totalEl);
+    tierTotalEls.push(totalEl);
+    var del = el("button","x","✕"); del.type = "button"; del.title = "Remove tier";
+    del.onclick = function(){ d.tiers.splice(idx,1); renderOffersView(); };
+    row.appendChild(del);
+    tierList.appendChild(row);
+  });
+  tierSection.appendChild(tierList);
+  var addTierBtn = el("button","btn btn-sm","+ Add tier");
+  addTierBtn.type = "button";
+  addTierBtn.style.marginTop = "8px";
+  addTierBtn.onclick = function(){ d.tiers.push({label:"", price:"", capacity:"", sort_order:d.tiers.length}); renderOffersView(); };
+  tierSection.appendChild(addTierBtn);
+  var totalCapacityTotal = settleRowTotal("TOTAL CAPACITY");
+  totalCapacityTotal.row.style.marginTop = "10px";
+  tierSection.appendChild(totalCapacityTotal.row);
+  var possibleGrossTotal = settleRowTotal("POSSIBLE GROSS AT SELLOUT", "settlerow-payout");
+  tierSection.appendChild(possibleGrossTotal.row);
+  colsWrap.appendChild(tierSection);
+
+  sheet.appendChild(colsWrap);
+  host.appendChild(sheet);
+
+  function recalc(){
+    var expensesTotal = d.expenses.reduce(function(sum,l){ return sum + (+l.budget || 0); }, 0);
+    totalExpensesTotal.setValue(money(expensesTotal));
+    var totalCapacity = 0, possibleGross = 0;
+    d.tiers.forEach(function(tier, idx){
+      var lineTotal = (+tier.capacity || 0) * (+tier.price || 0);
+      tierTotalEls[idx].textContent = money(lineTotal);
+      totalCapacity += (+tier.capacity || 0);
+      possibleGross += lineTotal;
+    });
+    totalCapacityTotal.setValue(String(totalCapacity));
+    possibleGrossTotal.setValue(money(possibleGross));
+  }
+  recalc();
+
+  var deadWrap = el("div","taskitem"); deadWrap.style.marginTop = "16px";
   var deadCb = document.createElement("input");
-  deadCb.type = "checkbox"; deadCb.checked = draftO.dead;
-  deadCb.onchange = function(){ draftO.dead = deadCb.checked; };
+  deadCb.type = "checkbox"; deadCb.id = "offerDeadBox"; deadCb.checked = d.dead;
+  deadCb.onchange = function(){ d.dead = deadCb.checked; };
   deadWrap.appendChild(deadCb);
-  deadWrap.appendChild(document.createTextNode(" Didn't work out"));
-  fs.appendChild(deadWrap);
+  var deadLab = el("label","tlabel","Didn't work out");
+  deadLab.setAttribute("for","offerDeadBox");
+  deadWrap.appendChild(deadLab);
+  host.appendChild(deadWrap);
 
   var notesTa = document.createElement("textarea");
-  notesTa.value = draftO.notes; notesTa.rows = 3;
-  notesTa.oninput = function(){ draftO.notes = notesTa.value; };
+  notesTa.value = d.notes; notesTa.rows = 3;
+  notesTa.oninput = function(){ d.notes = notesTa.value; };
   var notesField = field("Notes", notesTa); notesField.style.marginTop = "10px";
-  fs.appendChild(notesField);
-  body.appendChild(fs);
+  host.appendChild(notesField);
 
-  var errLine = el("span","hint"); errLine.style.color = "var(--dead)";
-  var save = el("button","btn btn-primary","Save");
-  save.onclick = async function(){
-    errLine.textContent = "";
-    var title = draftO.title.trim();
-    if(!title){ errLine.textContent = "Give it a title."; return; }
-    var payload = {title:title, column_key: draftO.column_key, artist_id: draftO.artist_id || null,
-                   venue_id: draftO.venue_id || null, notes: draftO.notes, link: draftO.link, dead: draftO.dead};
-    var r2 = o ? await api("/api/offers/" + o.id, {method:"PATCH", body: JSON.stringify(payload)})
-               : await api("/api/offers", {method:"POST", body: JSON.stringify(payload)});
-    if(!r2.ok){ errLine.textContent = r2.body.error || "Could not save."; return; }
+  var btnRow = el("div","btnrow"); btnRow.style.marginTop = "14px";
+  var saveErr = el("span","hint"); saveErr.style.marginLeft = "8px"; saveErr.style.color = "var(--dead)";
+  var saveBtn = el("button","btn btn-primary","Save offer");
+  saveBtn.type = "button";
+  saveBtn.onclick = async function(){
+    saveErr.textContent = "";
+    var title = d.title.trim();
+    if(!title){ saveErr.textContent = "Give it a title."; return; }
+    saveBtn.disabled = true; saveBtn.textContent = "Saving…";
+    function fail(msg){ saveBtn.disabled = false; saveBtn.textContent = "Save offer"; saveErr.textContent = msg; }
+    var payload = {
+      title:title, column_key: d.column_key, artist_id: d.artist_id || null, venue_id: d.venue_id || null,
+      notes: d.notes, link: d.link, dead: d.dead,
+      deal_type: d.dealType, guarantee: d.guarantee, backend_pct: d.backendPct, template: d.template,
+    };
+    var r = d.id ? await api("/api/offers/" + d.id, {method:"PATCH", body: JSON.stringify(payload)})
+                 : await api("/api/offers", {method:"POST", body: JSON.stringify(payload)});
+    if(!r.ok){ fail(r.body.error || "Could not save."); return; }
+    if(!d.id) d.id = r.body.id;
+    var lines = d.expenses.filter(function(l){ return (l.label||"").trim(); });
+    var r1 = await api("/api/offers/" + d.id + "/expenses", {method:"PUT", body: JSON.stringify({lines: lines})});
+    if(!r1.ok){ fail(r1.body.error || "Could not save expenses."); return; }
+    var tiersToSave = d.tiers.filter(function(t){ return (t.label||"").trim(); });
+    var r2 = await api("/api/offers/" + d.id + "/ticket_tiers", {method:"PUT", body: JSON.stringify({tiers: tiersToSave})});
+    if(!r2.ok){ fail(r2.body.error || "Could not save ticket tiers."); return; }
     await loadBookerLookups();
-    closeSheet();
+    ui.offerEditingId = null; ui.offerDraft = null;
     renderAll();
   };
-  foot.appendChild(save);
-  var cancel = el("button","btn","Cancel");
-  cancel.onclick = closeSheet;
-  foot.appendChild(cancel);
-  foot.appendChild(errLine);
-  if(o){
-    foot.appendChild(el("div","spacer"));
-    var del = el("button","btn btn-danger","Delete");
-    del.onclick = async function(){
-      await api("/api/offers/" + o.id, {method:"DELETE"});
-      await loadBookerLookups();
-      closeSheet();
-      renderAll();
+  btnRow.appendChild(saveBtn);
+
+  if(d.id){
+    var pdfBtn = el("button","btn","Download PDF");
+    pdfBtn.type = "button";
+    pdfBtn.onclick = async function(){
+      pdfBtn.disabled = true; pdfBtn.textContent = "Preparing…";
+      var r = await api("/api/offers/" + d.id + "/pdf");
+      pdfBtn.disabled = false; pdfBtn.textContent = "Download PDF";
+      if(r.ok) window.open(r.body.url, "_blank");
+      else window.alert(r.body.error || "Could not generate the PDF.");
     };
-    foot.appendChild(del);
+    btnRow.appendChild(pdfBtn);
+
+    // "once the show is confirmed the offer gets tagged to the show card
+    // and also the file for the show" (Broc, 2026-09-26) -- linking is a
+    // manual pick from a real existing show rather than this screen
+    // creating one itself, since a show needs real date/doors/status
+    // fields an offer doesn't carry.
+    var linkBtn = el("button","btn", d.eventId ? "Re-link to a show" : "Link to a show");
+    linkBtn.type = "button";
+    linkBtn.onclick = function(){ ui.offerLinkPickerFor = d.id; renderOffersView(); };
+    btnRow.appendChild(linkBtn);
+    if(d.eventId){
+      var linkedEv = eventById(d.eventId);
+      btnRow.appendChild(el("span","hint", linkedEv ? ("Linked to " + showName(linkedEv)) : "Linked to a show"));
+    }
   }
-  openScrim();
+
+  var cancelBtn = el("button","btn","Cancel");
+  cancelBtn.type = "button";
+  cancelBtn.onclick = closeOfferEditor;
+  btnRow.appendChild(cancelBtn);
+
+  if(d.id){
+    var delBtn = el("button","btn btn-danger","Delete");
+    delBtn.type = "button";
+    delBtn.onclick = async function(){
+      await api("/api/offers/" + d.id, {method:"DELETE"});
+      await loadBookerLookups();
+      closeOfferEditor();
+    };
+    btnRow.appendChild(delBtn);
+  }
+
+  host.appendChild(btnRow);
+  host.appendChild(saveErr);
+
+  if(d.id && ui.offerLinkPickerFor === d.id){
+    renderOfferLinkPicker(host, d.id);
+  }
+}
+function renderOfferLinkPicker(host, offerId){
+  var wrap = el("div","settlementsheet"); wrap.style.marginTop = "16px";
+  wrap.appendChild(el("h3","section","Link to which show?"));
+  var searchInput = document.createElement("input");
+  searchInput.type = "search";
+  searchInput.placeholder = "Search shows by band name...";
+  wrap.appendChild(searchInput);
+  var resultsHost = el("div"); resultsHost.style.marginTop = "10px";
+  wrap.appendChild(resultsHost);
+
+  function renderResults(){
+    resultsHost.innerHTML = "";
+    var q = searchInput.value.trim();
+    var results = q ? searchShows(q) : visibleEvents().slice(0, 20);
+    if(!results.length){
+      resultsHost.appendChild(el("p","hint", q ? "No shows found." : "Search for the show this offer became."));
+      return;
+    }
+    results.forEach(function(ev){
+      var row = el("div","settlerow");
+      row.style.cursor = "pointer";
+      var label = el("span",null, showName(ev) + " — " + ev.venue + " · " + shortDateWithYear(ev.show_date));
+      row.appendChild(label);
+      row.onclick = async function(){
+        var r = await api("/api/offers/" + offerId + "/link_event", {method:"POST", body: JSON.stringify({event_id: ev.id})});
+        if(!r.ok){ window.alert(r.body.error || "Could not link this offer to that show."); return; }
+        await loadEvents();
+        await loadBookerLookups();
+        ui.offerLinkPickerFor = null;
+        renderAll();
+      };
+      resultsHost.appendChild(row);
+    });
+  }
+  searchInput.oninput = renderResults;
+  renderResults();
+  host.appendChild(wrap);
 }
 
 // The one place every kanban-style board on this site is actually built --

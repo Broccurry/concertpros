@@ -262,6 +262,52 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
             tiers_by_event.setdefault(d["event_id"], []).append(d)
 
     with conn.cursor() as cur:
+        # The offer this show was booked from, if any -- the one thing a
+        # fresh settlement pre-seeds itself from (see app.py's
+        # renderSettlementEditor pre-seed logic client-side). Not every
+        # show has one (older shows, or ones booked without going through
+        # the Offers pipeline), so this is None for most events today.
+        cur.execute(
+            "SELECT event_id, id, deal_type, guarantee, backend_pct, template "
+            "FROM offers WHERE event_id = ANY(%(ids)s)",
+            {"ids": ids},
+        )
+        cols = [c.name for c in cur.description]
+        offer_by_event: dict[int, dict] = {}
+        offer_ids = []
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            offer_by_event[d.pop("event_id")] = d
+            offer_ids.append(d["id"])
+
+    offer_expenses_by_offer: dict[int, list[dict]] = {}
+    offer_tiers_by_offer: dict[int, list[dict]] = {}
+    if offer_ids:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT offer_id, label, budget FROM offer_expenses "
+                "WHERE offer_id = ANY(%(ids)s) ORDER BY sort_order",
+                {"ids": offer_ids},
+            )
+            cols = [c.name for c in cur.description]
+            for row in cur.fetchall():
+                d = dict(zip(cols, row))
+                offer_expenses_by_offer.setdefault(d.pop("offer_id"), []).append(d)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT offer_id, label, price, capacity FROM offer_ticket_tiers "
+                "WHERE offer_id = ANY(%(ids)s) ORDER BY sort_order",
+                {"ids": offer_ids},
+            )
+            cols = [c.name for c in cur.description]
+            for row in cur.fetchall():
+                d = dict(zip(cols, row))
+                offer_tiers_by_offer.setdefault(d.pop("offer_id"), []).append(d)
+    for eid, offer in offer_by_event.items():
+        offer["expenses"] = offer_expenses_by_offer.get(offer["id"], [])
+        offer["ticket_tiers"] = offer_tiers_by_offer.get(offer["id"], [])
+
+    with conn.cursor() as cur:
         cur.execute(
             "SELECT id, event_id, label, done, owner_person_id, sort_order FROM event_tasks "
             "WHERE event_id = ANY(%(ids)s) ORDER BY sort_order",
@@ -329,6 +375,7 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
         e["settlement"] = settlements.get(eid)
         e["settlement_expenses"] = expenses_by_event.get(eid, [])
         e["settlement_ticket_tiers"] = settle_tiers_by_event.get(eid, [])
+        e["offer"] = offer_by_event.get(eid)
         e["ticket_tiers"] = tiers_by_event.get(eid, [])
         e["staff"] = staff_by_event.get(eid, [])
         e["tasks"] = tasks_by_event.get(eid, [])

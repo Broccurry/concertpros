@@ -28,6 +28,7 @@ import db
 import email_client
 import permissions
 import etix
+import offer_pdf
 import resend_client
 import settlement_calc
 import settlement_pdf
@@ -3217,14 +3218,45 @@ def create_app():
         cur.execute(
             "SELECT o.id, o.title, o.column_key, o.sort_order, o.dead, "
             "o.artist_id, a.name AS artist_name, o.venue_id, v.name AS venue_name, "
-            "o.notes, o.link, o.created_by, o.created_at "
+            "o.notes, o.link, o.created_by, o.created_at, "
+            "o.deal_type, o.guarantee, o.backend_pct, o.template, o.event_id "
             "FROM offers o "
             "LEFT JOIN artists a ON a.id = o.artist_id "
             "LEFT JOIN venues v ON v.id = o.venue_id "
             "ORDER BY o.column_key, o.sort_order"
         )
         cols = [c.name for c in cur.description]
-        return jsonify(offers=[dict(zip(cols, row)) for row in cur.fetchall()])
+        offers = [dict(zip(cols, row)) for row in cur.fetchall()]
+        if not offers:
+            return jsonify(offers=offers)
+
+        ids = [o["id"] for o in offers]
+        cur.execute(
+            "SELECT offer_id, id, label, budget, sort_order FROM offer_expenses "
+            "WHERE offer_id = ANY(%(ids)s) ORDER BY sort_order",
+            {"ids": ids},
+        )
+        cols = [c.name for c in cur.description]
+        expenses_by_offer: dict[int, list[dict]] = {}
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            expenses_by_offer.setdefault(d.pop("offer_id"), []).append(d)
+
+        cur.execute(
+            "SELECT offer_id, id, label, price, capacity, sort_order FROM offer_ticket_tiers "
+            "WHERE offer_id = ANY(%(ids)s) ORDER BY sort_order",
+            {"ids": ids},
+        )
+        cols = [c.name for c in cur.description]
+        tiers_by_offer: dict[int, list[dict]] = {}
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            tiers_by_offer.setdefault(d.pop("offer_id"), []).append(d)
+
+        for o in offers:
+            o["expenses"] = expenses_by_offer.get(o["id"], [])
+            o["ticket_tiers"] = tiers_by_offer.get(o["id"], [])
+        return jsonify(offers=offers)
 
     def _parse_offer_fields(body, require_title=False):
         """One place deciding what a valid offer looks like, used by both
@@ -3255,6 +3287,18 @@ def create_app():
             updates["link"] = (body["link"] or "").strip() or None
         if "dead" in body:
             updates["dead"] = bool(body["dead"])
+        if "deal_type" in body:
+            updates["deal_type"] = body["deal_type"] or None
+        for key in ("guarantee", "backend_pct"):
+            if key in body:
+                parsed, ok = _parse_number(body[key])
+                if not ok:
+                    return None, f"invalid_{key}"
+                updates[key] = parsed
+        if "template" in body:
+            if body["template"] not in ("simple", "detailed"):
+                return None, "invalid_template"
+            updates["template"] = body["template"]
         return updates, None
 
     @app.post("/api/offers")
@@ -3338,6 +3382,179 @@ def create_app():
             return jsonify(error="not_found"), 404
         cur.execute("DELETE FROM offers WHERE id = %s", (offer_id,))
         audit.record(g.db, g.viewer, "offer", offer_id, "delete", {"title": row[0]})
+        return jsonify(ok=True)
+
+    @app.put("/api/offers/<int:offer_id>/expenses")
+    @require_booker
+    def set_offer_expenses(offer_id):
+        """Replaces the whole set, same convention as settlement_expenses
+        -- budget only, since nothing's actually been spent at offer
+        stage. Once this offer is linked to a real show, these budget
+        lines seed that show's settlement_expenses on first open."""
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM offers WHERE id = %s", (offer_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+
+        body = request.get_json(silent=True) or {}
+        raw = body.get("lines")
+        if not isinstance(raw, list):
+            return jsonify(error="lines_must_be_a_list"), 400
+
+        lines = []
+        for entry in raw:
+            if not isinstance(entry, dict) or not (entry.get("label") or "").strip():
+                return jsonify(error="each_line_needs_a_label"), 400
+            budget, ok = _parse_number(entry.get("budget"))
+            if not ok:
+                return jsonify(error="invalid_amount"), 400
+            lines.append((entry["label"].strip(), budget))
+
+        cur.execute("DELETE FROM offer_expenses WHERE offer_id = %s", (offer_id,))
+        for i, (label, budget) in enumerate(lines):
+            cur.execute(
+                "INSERT INTO offer_expenses (offer_id, label, budget, sort_order) VALUES (%s, %s, %s, %s)",
+                (offer_id, label, budget, i),
+            )
+        audit.record(g.db, g.viewer, "offer", offer_id, "offer_expenses", {"line_count": len(lines)})
+        return jsonify(ok=True)
+
+    @app.put("/api/offers/<int:offer_id>/ticket_tiers")
+    @require_booker
+    def set_offer_ticket_tiers(offer_id):
+        """Replaces the whole set. Capacity, not sold -- an offer's tiers
+        project a POSSIBLE gross at full sellout (Broc: "100 seats at $20
+        that tier is $2000... 200 capacity $3000 possible gross on
+        sellout"), not a real sold count, since the show hasn't happened
+        yet (or in most cases isn't even confirmed)."""
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM offers WHERE id = %s", (offer_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+
+        body = request.get_json(silent=True) or {}
+        raw = body.get("tiers")
+        if not isinstance(raw, list):
+            return jsonify(error="tiers_must_be_a_list"), 400
+
+        tiers = []
+        for entry in raw:
+            if not isinstance(entry, dict) or not (entry.get("label") or "").strip():
+                return jsonify(error="each_tier_needs_a_label"), 400
+            price, ok1 = _parse_number(entry.get("price"))
+            capacity_raw = entry.get("capacity")
+            if capacity_raw in (None, ""):
+                capacity, ok2 = None, True
+            else:
+                try:
+                    capacity, ok2 = int(capacity_raw), True
+                except (TypeError, ValueError):
+                    capacity, ok2 = None, False
+            if not (ok1 and ok2):
+                return jsonify(error="invalid_amount"), 400
+            tiers.append((entry["label"].strip(), price, capacity))
+
+        cur.execute("DELETE FROM offer_ticket_tiers WHERE offer_id = %s", (offer_id,))
+        for i, (label, price, capacity) in enumerate(tiers):
+            cur.execute(
+                "INSERT INTO offer_ticket_tiers (offer_id, label, price, capacity, sort_order) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (offer_id, label, price, capacity, i),
+            )
+        audit.record(g.db, g.viewer, "offer", offer_id, "offer_ticket_tiers", {"tier_count": len(tiers)})
+        return jsonify(ok=True)
+
+    def _offer_pdf_bytes(conn, offer_id):
+        """The one place an offer turns into a document -- used by both
+        the on-demand download and the file-to-show-card step below, so
+        they can never disagree about what an offer's PDF says."""
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT o.title, o.deal_type, o.guarantee, o.backend_pct, a.name, v.name "
+            "FROM offers o LEFT JOIN artists a ON a.id = o.artist_id "
+            "LEFT JOIN venues v ON v.id = o.venue_id WHERE o.id = %s",
+            (offer_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        title, deal_type, guarantee, backend_pct, artist_name, venue_name = row
+        cur.execute(
+            "SELECT label, budget FROM offer_expenses WHERE offer_id = %s ORDER BY sort_order",
+            (offer_id,),
+        )
+        expense_lines = cur.fetchall()
+        expenses_total = sum(float(b) for _l, b in expense_lines if b is not None)
+        cur.execute(
+            "SELECT label, price, capacity FROM offer_ticket_tiers WHERE offer_id = %s ORDER BY sort_order",
+            (offer_id,),
+        )
+        tier_lines = cur.fetchall()
+        total_capacity = sum(c for _l, _p, c in tier_lines if c is not None)
+        possible_gross = sum(float(p or 0) * (c or 0) for _l, p, c in tier_lines)
+        return offer_pdf.generate(
+            title=title, venue_name=venue_name, artist_name=artist_name,
+            deal_type=deal_type, guarantee=guarantee, backend_pct=backend_pct,
+            expense_lines=expense_lines, expenses_total=expenses_total,
+            tier_lines=tier_lines, total_capacity=total_capacity, possible_gross=possible_gross,
+        )
+
+    OFFER_PDF_FILENAME = "Offer Sheet.pdf"
+
+    @app.get("/api/offers/<int:offer_id>/pdf")
+    @require_booker
+    def get_offer_pdf(offer_id):
+        """Regenerates fresh every call -- an offer changes hands and
+        gets re-edited often during negotiation, and this is a low-volume
+        action (sent to an agent a handful of times per offer), so always-
+        current beats caching a possibly-stale copy."""
+        pdf_bytes = _offer_pdf_bytes(g.db, offer_id)
+        if pdf_bytes is None:
+            return jsonify(error="not_found"), 404
+        storage_key = f"offer-{offer_id}/{OFFER_PDF_FILENAME}"
+        storage.put_bytes(storage_key, pdf_bytes, "application/pdf")
+        return jsonify(url=storage.presign_download(storage_key, OFFER_PDF_FILENAME, disposition="attachment"))
+
+    @app.post("/api/offers/<int:offer_id>/link_event")
+    @require_booker
+    def link_offer_to_event(offer_id):
+        """"once the show is confirmed the offer gets tagged to the show
+        card and also the file for the show" (Broc, 2026-09-26) -- sets
+        the one link a settlement follows to pull its starting numbers
+        from, and files a real copy of the offer PDF into that show's own
+        Files section, same upsert-by-filename convention
+        _write_settlement_file already uses for its own document."""
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM offers WHERE id = %s", (offer_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+        body = request.get_json(silent=True) or {}
+        event_id = body.get("event_id")
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="unknown_event"), 400
+
+        cur.execute("UPDATE offers SET event_id = %s, updated_at = now() WHERE id = %s", (event_id, offer_id))
+
+        pdf_bytes = _offer_pdf_bytes(g.db, offer_id)
+        cur.execute(
+            "SELECT id, storage_key FROM event_files WHERE event_id = %s AND filename = %s",
+            (event_id, OFFER_PDF_FILENAME),
+        )
+        existing = cur.fetchone()
+        if existing:
+            file_id, storage_key = existing
+            storage.put_bytes(storage_key, pdf_bytes, "application/pdf")
+            cur.execute("UPDATE event_files SET size_bytes = %s WHERE id = %s", (len(pdf_bytes), file_id))
+        else:
+            storage_key = storage.new_storage_key(event_id, OFFER_PDF_FILENAME)
+            storage.put_bytes(storage_key, pdf_bytes, "application/pdf")
+            cur.execute(
+                "INSERT INTO event_files (event_id, filename, storage_key, content_type, size_bytes, uploaded_by) "
+                "VALUES (%s, %s, %s, 'application/pdf', %s, %s)",
+                (event_id, OFFER_PDF_FILENAME, storage_key, len(pdf_bytes), g.viewer.id),
+            )
+        audit.record(g.db, g.viewer, "offer", offer_id, "link_event", {"event_id": event_id})
         return jsonify(ok=True)
 
     @app.get("/api/todos")

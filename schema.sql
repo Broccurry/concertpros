@@ -401,10 +401,57 @@ CREATE TABLE offers (
     link        TEXT,
     created_by  INTEGER REFERENCES people(id),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+
+    -- v2 (2026-09-26): a real ledger-style offer, not just a pipeline
+    -- card -- same deal-terms shape as events/settlements, so the same
+    -- DEAL_TYPES list and settlement_calc-style math apply here too.
+    deal_type    TEXT,
+    guarantee    NUMERIC,
+    backend_pct  NUMERIC,
+    template     TEXT NOT NULL DEFAULT 'simple' CHECK (template IN ('simple', 'detailed')),
+
+    -- Set once this prospective offer becomes a real booked show -- the
+    -- one link a settlement follows to pull its starting numbers from
+    -- (see app.py's settlement pre-seed). NOT unique: an offer that fell
+    -- through and got re-quoted for the same show shouldn't be blocked
+    -- by a stale link, so re-linking is just overwriting this column,
+    -- but a given event is only ever meant to have one real offer behind
+    -- it in practice.
+    event_id     INTEGER REFERENCES events(id) ON DELETE SET NULL
 );
 CREATE INDEX idx_offers_column ON offers(column_key, sort_order);
+CREATE INDEX idx_offers_event ON offers(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX idx_vision_cards_follow_up ON vision_cards(follow_up_date) WHERE follow_up_date IS NOT NULL;
+
+-- Budgeted expense line for an offer -- same shape as settlement_expenses
+-- minus `actual` (nothing's been spent yet at offer stage). Once an
+-- offer is linked to a real show, its budget lines seed that show's
+-- settlement_expenses.budget on first open (see app.py).
+CREATE TABLE offer_expenses (
+    id          SERIAL PRIMARY KEY,
+    offer_id    INTEGER NOT NULL REFERENCES offers(id) ON DELETE CASCADE,
+    label       TEXT NOT NULL,
+    budget      NUMERIC,
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_offer_expenses_offer ON offer_expenses(offer_id, sort_order);
+
+-- A planned ticket-price tier for an offer -- capacity instead of a real
+-- sold count, since nothing's on sale yet. price * capacity is that
+-- tier's gross AT FULL SELLOUT; summed across tiers, that's the
+-- "possible gross" the offer is built around (Broc's own worked
+-- example: 100 seats @ $20 + 100 GA @ $10 = 200 capacity, $3,000
+-- possible gross).
+CREATE TABLE offer_ticket_tiers (
+    id          SERIAL PRIMARY KEY,
+    offer_id    INTEGER NOT NULL REFERENCES offers(id) ON DELETE CASCADE,
+    label       TEXT NOT NULL,
+    price       NUMERIC,
+    capacity    INTEGER,
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_offer_ticket_tiers_offer ON offer_ticket_tiers(offer_id, sort_order);
 
 -- A band can have more than one point of contact (the singer, the manager,
 -- whoever actually answers) — this is the list of them, separate from the
