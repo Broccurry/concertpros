@@ -184,7 +184,17 @@ def get_price_breakdown(performance_id):
     snapshot's own pulledTickets field reports; the remaining 47 tickets
     matched revenueProducingTickets (47) and summed to $1,455 -- the
     exact figure get_daily_sales already independently produces. Real,
-    cross-checked, not a guess."""
+    cross-checked, not a guess.
+
+    Groups by (priceCode, price), NOT priceCode alone -- confirmed on a
+    real reserved-seating show (Crystal Bowersox, Cla-Zel) that a single
+    priceCode is not always one uniform price: "Floor D seats" carried
+    both $35 and $50 tickets under the identical code, so grouping on the
+    code name alone and reporting only the first price seen understated
+    real revenue by hundreds of dollars once the settlement sheet does
+    price*sold. A price code that turns out to have more than one real
+    price gets its distinct prices as separate rows, each with its own
+    price appended to the label so they don't collide."""
     token = _get_token()
     qs = urllib.parse.urlencode({"eventId": performance_id, "pageSize": 1000, "excludeVoidTickets": "true"})
     req = urllib.request.Request(
@@ -198,10 +208,22 @@ def get_price_breakdown(performance_id):
         if order.get("salesChannel") == "SALES_CHANNEL.INTERNAL":
             continue
         for ticket in order.get("tickets", []):
-            label = ticket.get("priceCode") or "Unknown"
-            entry = tiers.setdefault(label, {"label": label, "price": ticket.get("price"), "sold": 0})
+            code = ticket.get("priceCode") or "Unknown"
+            price = ticket.get("price")
+            key = (code, price)
+            entry = tiers.setdefault(key, {"label": code, "price": price, "sold": 0})
             entry["sold"] += 1
-    return list(tiers.values())
+    # Disambiguate a price code that came back with more than one real
+    # price, so two rows don't render with the same label.
+    codes_seen = {}
+    for (code, _price) in tiers:
+        codes_seen[code] = codes_seen.get(code, 0) + 1
+    result = []
+    for (code, price), entry in tiers.items():
+        if codes_seen[code] > 1:
+            entry = {**entry, "label": f"{code} (${price:g})"}
+        result.append(entry)
+    return result
 
 
 def pull_and_store_snapshot(conn, event_id, venue_name, show_date, sale_date=None):

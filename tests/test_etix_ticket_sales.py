@@ -316,6 +316,39 @@ class PriceBreakdownFromOrders(unittest.TestCase):
              patch("etix._get_token", return_value="fake-token"):
             self.assertEqual(etix.get_price_breakdown(87567148), [])
 
+    def test_a_price_code_with_more_than_one_real_price_splits_and_labels_each(self):
+        """Confirmed 2026-09-26 against a real reserved-seating show
+        (Crystal Bowersox, Cla-Zel): a single priceCode ("Floor D seats")
+        is NOT always one uniform price -- it carried both $35 and $50
+        tickets. Grouping by code name alone and reporting only the first
+        price seen understated real revenue once the settlement sheet
+        does price*sold (was off by hundreds of dollars on that real
+        show). Each distinct price under a shared code becomes its own
+        row, labeled to disambiguate."""
+        payload = {
+            "createdOrders": [
+                {
+                    "salesChannel": "SALES_CHANNEL.ONLINE",
+                    "tickets": [
+                        {"priceCode": "Floor D seats", "price": 35.0},
+                        {"priceCode": "Floor D seats", "price": 35.0},
+                        {"priceCode": "Floor D seats", "price": 50.0},
+                        {"priceCode": "Floor A seats", "price": 35.0},
+                    ],
+                },
+            ],
+        }
+        with patch("urllib.request.urlopen", return_value=self._fake_response(payload)), \
+             patch("etix._get_token", return_value="fake-token"):
+            tiers = etix.get_price_breakdown(87567148)
+        by_label = {t["label"]: t for t in tiers}
+        self.assertEqual(by_label["Floor D seats ($35)"], {"label": "Floor D seats ($35)", "price": 35.0, "sold": 2})
+        self.assertEqual(by_label["Floor D seats ($50)"], {"label": "Floor D seats ($50)", "price": 50.0, "sold": 1})
+        # A code with only one real price is left with its plain name.
+        self.assertEqual(by_label["Floor A seats"], {"label": "Floor A seats", "price": 35.0, "sold": 1})
+        total_gross = sum(t["sold"] * t["price"] for t in tiers)
+        self.assertAlmostEqual(total_gross, 2 * 35.0 + 1 * 50.0 + 1 * 35.0)
+
 
 if __name__ == "__main__":
     unittest.main()
