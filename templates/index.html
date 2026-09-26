@@ -1621,12 +1621,27 @@ function renderSettlementEditor(host){
   var pullBtn = el("button","btn btn-sm","Pull latest ticket sale");
   pullBtn.type = "button";
   pullBtn.style.margin = "6px 0 10px";
-  pullBtn.onclick = function(){
-    var sales = ev.ticket_sales || [];
-    if(!sales.length){ window.alert("No ticket sales logged yet for this show."); return; }
-    var latest = sales[sales.length - 1];
-    s.tickets_sold = latest.tickets_sold;
-    if(latest.gross != null) s.gross = latest.gross;
+  pullBtn.onclick = async function(){
+    pullBtn.disabled = true; pullBtn.textContent = "Pulling…";
+    var r = await api("/api/events/" + ev.id + "/ticket_sales/pull_etix", {method:"POST"});
+    pullBtn.disabled = false; pullBtn.textContent = "Pull latest ticket sale";
+    if(!r.ok){
+      window.alert(r.body.error === "no_matching_etix_event"
+        ? "No matching Etix event found for this venue and date."
+        : (r.body.detail || r.body.error || "Could not pull ticket sales."));
+      return;
+    }
+    // The endpoint only hands back tickets_sold -- gross comes from the
+    // ticket_sales row it just wrote, so reload events to see it (same
+    // pattern as the show card's own "Pull from Etix" button).
+    await loadEvents();
+    var freshEv = eventById(ev.id);
+    var sales = (freshEv && freshEv.ticket_sales) || [];
+    if(sales.length){
+      var latest = sales[sales.length - 1];
+      s.tickets_sold = latest.tickets_sold;
+      if(latest.gross != null) s.gross = latest.gross;
+    }
     renderSettlementsView();
   };
   ticketingSection.appendChild(pullBtn);

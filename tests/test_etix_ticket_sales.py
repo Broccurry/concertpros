@@ -188,13 +188,42 @@ class EtixSnapshotStorage(unittest.TestCase):
         self.assertEqual(cur.fetchone()[0], 0)
 
     def test_no_match_returns_none_and_writes_nothing(self):
-        with patch("etix._find_public_event", return_value=None):
+        with patch("etix._find_public_event", return_value=None), \
+             patch("etix._find_private_event", return_value=None):
             result = etix.pull_and_store_snapshot(
                 self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
         self.assertIsNone(result)
         cur = self.conn.cursor()
         cur.execute("SELECT count(*) FROM ticket_sales WHERE event_id = %s", (self.event_id,))
         self.assertEqual(cur.fetchone()[0], 0)
+
+    def test_a_played_show_falls_back_to_the_private_lookup(self):
+        """/public/events only lists on-sale/upcoming shows (confirmed
+        2026-09-25 against real Frankies data -- a real past show had
+        already dropped off it entirely), so a show that's already
+        happened must be found through the private VIEW_VENUE endpoint
+        instead. This is what makes a settlement's "pull from Etix"
+        work for a show that played last night, not just an upcoming one."""
+        with patch("etix._find_public_event", return_value=None), \
+             patch("etix._find_private_event", return_value={"id": 999}) as mock_private, \
+             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 47}), \
+             patch("etix.get_daily_sales", return_value=[]):
+            result = etix.pull_and_store_snapshot(
+                self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
+        self.conn.commit()
+        self.assertEqual(result, 47)
+        mock_private.assert_called_once_with(self.venue_name, date(2027, 8, 15))
+
+    def test_an_upcoming_show_never_needs_the_private_fallback(self):
+        """The public feed is cheap and already covers on-sale shows --
+        don't call the private endpoint when it's not needed."""
+        with patch("etix._find_public_event", return_value={"id": 999}), \
+             patch("etix._find_private_event") as mock_private, \
+             patch("etix.get_snapshot", return_value={"revenueProducingTickets": 10}), \
+             patch("etix.get_daily_sales", return_value=[]):
+            etix.pull_and_store_snapshot(
+                self.conn, self.event_id, self.venue_name, date(2027, 8, 15), sale_date=date(2027, 1, 1))
+        mock_private.assert_not_called()
 
     def test_re_pulling_the_same_date_corrects_it_not_duplicates(self):
         with patch("etix._find_public_event", return_value={"id": 999}), \

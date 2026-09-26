@@ -18,7 +18,7 @@ import os
 import time as time_module
 import urllib.parse
 import urllib.request
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 TOKEN_URL = "https://authorization.etix.com/v1/token/authorize"
@@ -82,6 +82,49 @@ def _find_public_event(venue_name, show_date):
     return None
 
 
+def _find_private_event(venue_name, show_date):
+    """Etix's private GET /events endpoint (VIEW_VENUE scope) -- unlike
+    /public/events this is NOT limited to on-sale/upcoming shows, so
+    it's what can find a performance AFTER it has already happened.
+    Confirmed 2026-09-25: a real past show (Merkules, Frankies, already
+    played) had dropped off /public/events entirely -- all events that
+    feed returned were upcoming/onSale -- but this endpoint found it by
+    venue + date range. Only used as a fallback for ticket-sales pulls
+    (see pull_and_store_snapshot); find_ticket_link still uses the
+    public feed only, since a played show has no purchase link to show.
+    Brackets a day either side of the local calendar date because
+    beginDatetime/endDatetime are UTC and a tight window can clip a show
+    sitting near the day's edge."""
+    venue_id = VENUE_IDS.get(venue_name)
+    if venue_id is None:
+        return None
+    token = _get_token()
+    begin = datetime(show_date.year, show_date.month, show_date.day) - timedelta(days=1)
+    end = datetime(show_date.year, show_date.month, show_date.day) + timedelta(days=2)
+    qs = urllib.parse.urlencode({
+        "venueId": venue_id,
+        "beginDatetime": begin.strftime("%Y-%m-%dT00:00:00Z"),
+        "endDatetime": end.strftime("%Y-%m-%dT23:59:59Z"),
+        "showPrivate": "true",
+    })
+    req = urllib.request.Request(
+        f"{API_BASE}/events?{qs}",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read())
+    events = data if isinstance(data, list) else data.get("data", [])
+    tz = ZoneInfo("America/New_York")
+    for ev in events:
+        start = ev.get("beginTimestamp8601")
+        if not start:
+            continue
+        local_date = datetime.fromisoformat(start.replace("Z", "+00:00")).astimezone(tz).date()
+        if local_date == show_date:
+            return ev
+    return None
+
+
 def find_ticket_link(venue_name, show_date):
     ev = _find_public_event(venue_name, show_date)
     return ev.get("purchaseURL") if ev else None
@@ -117,16 +160,18 @@ def get_daily_sales(performance_id):
 
 
 def pull_and_store_snapshot(conn, event_id, venue_name, show_date, sale_date=None):
-    """Finds the matching Etix performance, pulls its live ticket count
-    and real sales revenue, and upserts one ticket_sales row (source=
-    'etix') -- the one place this decision is made, called by both the
-    manual "Pull from Etix" button and the daily scheduled script, so
-    they can't drift. Returns the tickets_sold count on success, or None
-    if no Etix match exists for this show. Callers that also want the
-    gross figure get it back through the normal event refresh
-    (ticket_sales.gross), not a second return value -- keeps this
-    function's contract unchanged for the existing tickets_sold-only
-    callers.
+    """Finds the matching Etix performance -- tries the public on-sale
+    feed first, then falls back to the private VIEW_VENUE lookup for a
+    show that's already played and dropped off that feed -- pulls its
+    live ticket count and real sales revenue, and upserts one
+    ticket_sales row (source='etix') -- the one place this decision is
+    made, called by both the manual "Pull from Etix" button and the
+    daily scheduled script, so they can't drift. Returns the
+    tickets_sold count on success, or None if no Etix match exists for
+    this show. Callers that also want the gross figure get it back
+    through the normal event refresh (ticket_sales.gross), not a second
+    return value -- keeps this function's contract unchanged for the
+    existing tickets_sold-only callers.
 
     Gross comes from get_daily_sales, NOT the snapshot's own
     salesByCurrency -- confirmed against real production data (2026-09-24)
@@ -136,7 +181,7 @@ def pull_and_store_snapshot(conn, event_id, venue_name, show_date, sale_date=Non
     from 40 pulled tickets, while its real daily-sales revenue was $0.
     Daily sales is per-day historical revenue and doesn't carry that
     contamination, so summing it gives the real cumulative sales total."""
-    ev = _find_public_event(venue_name, show_date)
+    ev = _find_public_event(venue_name, show_date) or _find_private_event(venue_name, show_date)
     if ev is None:
         return None
     snapshot = get_snapshot(ev["id"])
