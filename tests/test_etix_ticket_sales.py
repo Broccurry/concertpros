@@ -13,6 +13,7 @@ split as test_pull_ticket_link.py:
   behavior from, so it's worth testing directly rather than only through
   the mocked endpoint layer.
 """
+import json
 import unittest
 from datetime import date
 from unittest.mock import patch
@@ -261,6 +262,59 @@ class EtixSnapshotStorage(unittest.TestCase):
         cur.execute("SELECT tickets_sold, source FROM ticket_sales WHERE event_id = %s AND sale_date = %s",
                     (self.event_id, date(2027, 1, 1)))
         self.assertEqual(cur.fetchone(), (12, "etix"))
+
+
+class PriceBreakdownFromOrders(unittest.TestCase):
+    """etix.get_price_breakdown() -- per-tier ticket counts built from real
+    order data (GET /organizations/{id}/orders), not Etix's Settlement API
+    (that needs a scope this app's key doesn't have -- confirmed live,
+    406 invalid_scope). Mocks only the HTTP call; the aggregation and
+    comp-exclusion logic run for real. Shape below mirrors the real
+    Merkules response exactly (confirmed 2026-09-26): 2 real online
+    orders plus one internal box-office order carrying the comp tickets
+    that must be excluded."""
+
+    def _fake_response(self, payload):
+        class FakeResponse:
+            def __enter__(self_inner): return self_inner
+            def __exit__(self_inner, *a): return False
+            def read(self_inner): return json.dumps(payload).encode()
+        return FakeResponse()
+
+    def test_internal_channel_orders_are_excluded_as_comps(self):
+        payload = {
+            "createdOrders": [
+                {
+                    "salesChannel": "SALES_CHANNEL.ONLINE",
+                    "tickets": [
+                        {"priceCode": "ADVANCED", "price": 30.0},
+                        {"priceCode": "ADVANCED", "price": 30.0},
+                        {"priceCode": "DAY OF", "price": 35.0},
+                    ],
+                },
+                {
+                    # Box-office-pulled comps -- must not count as sales.
+                    "salesChannel": "SALES_CHANNEL.INTERNAL",
+                    "tickets": [
+                        {"priceCode": "ADVANCED", "price": 30.0},
+                        {"priceCode": "ADVANCED", "price": 30.0},
+                        {"priceCode": "ADVANCED", "price": 30.0},
+                    ],
+                },
+            ],
+        }
+        with patch("urllib.request.urlopen", return_value=self._fake_response(payload)), \
+             patch("etix._get_token", return_value="fake-token"):
+            tiers = etix.get_price_breakdown(87567148)
+        self.assertEqual(sorted(tiers, key=lambda t: t["label"]), [
+            {"label": "ADVANCED", "price": 30.0, "sold": 2},
+            {"label": "DAY OF", "price": 35.0, "sold": 1},
+        ])
+
+    def test_no_orders_is_an_empty_list_not_a_crash(self):
+        with patch("urllib.request.urlopen", return_value=self._fake_response({"createdOrders": []})), \
+             patch("etix._get_token", return_value="fake-token"):
+            self.assertEqual(etix.get_price_breakdown(87567148), [])
 
 
 if __name__ == "__main__":

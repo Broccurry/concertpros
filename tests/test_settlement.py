@@ -373,15 +373,14 @@ class PullingEtixTicketTiers(unittest.TestCase):
             {"label": "Day of Advance", "price": 25.0, "sold": 40},
         ])
 
-    def test_missing_scope_is_a_clear_403_not_a_dead_502(self):
-        import etix
+    def test_an_etix_failure_is_a_502_not_a_crash(self):
         client = self.app.test_client()
         self._login(client)
         with patch("app.etix._find_public_event", return_value={"id": 999}), \
-             patch("app.etix.get_price_breakdown", side_effect=etix.ScopeMissing("go grant it")):
+             patch("app.etix.get_price_breakdown", side_effect=RuntimeError("boom")):
             r = client.post(f"/api/events/{self.event_id}/settlement_ticket_tiers/pull_etix")
-        self.assertEqual(r.status_code, 403)
-        self.assertEqual(r.get_json()["error"], "etix_scope_missing")
+        self.assertEqual(r.status_code, 502)
+        self.assertEqual(r.get_json()["error"], "etix_lookup_failed")
 
     def test_no_matching_show_is_a_404(self):
         client = self.app.test_client()

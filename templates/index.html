@@ -1732,15 +1732,9 @@ function renderSettlementEditor(host){
     var r = await api("/api/events/" + ev.id + "/settlement_ticket_tiers/pull_etix", {method:"POST"});
     tierPullBtn.disabled = false; tierPullBtn.textContent = "Pull tiers from Etix";
     if(!r.ok){
-      if(r.body.error === "etix_scope_missing"){
-        window.alert("Etix hasn't granted this app access to its Settlement API yet, so tier-level " +
-          "data isn't available. Add the VIEW_SETTLEMENT_DATA scope (Etix permission " +
-          "\"VIEW ACCOUNTING DATA\") to the API key in Etix's Manage API Keys screen, then try again.");
-      } else {
-        window.alert(r.body.error === "no_matching_etix_event"
-          ? "No matching Etix event found for this venue and date."
-          : (r.body.detail || r.body.error || "Could not pull ticket tiers."));
-      }
+      window.alert(r.body.error === "no_matching_etix_event"
+        ? "No matching Etix event found for this venue and date."
+        : (r.body.detail || r.body.error || "Could not pull ticket tiers."));
       return;
     }
     // Update a tier we already have by matching label; anything Etix

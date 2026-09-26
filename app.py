@@ -2370,11 +2370,12 @@ def create_app():
         """A per-tier breakdown, distinct from the plain ticket_sales pull
         (POST .../ticket_sales/pull_etix) -- that one gives a single
         aggregate count/gross; this returns Advance/Day-of-Advance/etc as
-        separate lines with their own sold count and price, straight from
-        Etix's own Settlement API. Does NOT write anything to the DB --
-        the settlement editor merges the result into its in-progress draft
-        and only settlement_ticket_tiers's own PUT persists it, same as
-        every other field on this sheet."""
+        separate lines with their own sold count and price, built from
+        real per-ticket order data (see etix.get_price_breakdown for why
+        that's used instead of Etix's Settlement API). Does NOT write
+        anything to the DB -- the settlement editor merges the result into
+        its in-progress draft and only settlement_ticket_tiers's own PUT
+        persists it, same as every other field on this sheet."""
         cur = g.db.cursor()
         cur.execute(
             "SELECT e.show_date, v.name FROM events e JOIN venues v ON v.id = e.venue_id WHERE e.id = %s",
@@ -2389,8 +2390,6 @@ def create_app():
             if performance is None:
                 return jsonify(error="no_matching_etix_event"), 404
             tiers = etix.get_price_breakdown(performance["id"])
-        except etix.ScopeMissing as e:
-            return jsonify(error="etix_scope_missing", detail=str(e)), 403
         except Exception as e:
             return jsonify(error="etix_lookup_failed", detail=str(e)), 502
         audit.record(g.db, g.viewer, "event", event_id, "pull_etix_ticket_tiers", {"tier_count": len(tiers)})
