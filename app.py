@@ -30,6 +30,7 @@ import permissions
 import etix
 import resend_client
 import settlement_calc
+import settlement_pdf
 import storage
 from permissions import Viewer
 
@@ -2057,7 +2058,7 @@ def create_app():
             "_net_gross": net_gross, "_net_after_expenses": net_after_expenses,
         }
 
-    SETTLEMENT_FILENAME = "Settlement Summary.txt"
+    SETTLEMENT_FILENAME = "Settlement Summary.pdf"
 
     def _write_settlement_file(conn, viewer, event_id, merged):
         """Auto-files a plain-text settlement snapshot into the show's own
@@ -2078,39 +2079,21 @@ def create_app():
         )
         acts = [row[0] for row in cur.fetchall()]
         cur.execute(
-            "SELECT label, actual FROM settlement_expenses WHERE event_id = %s ORDER BY sort_order", (event_id,)
+            "SELECT label, actual FROM settlement_expenses WHERE event_id = %s AND actual IS NOT NULL "
+            "ORDER BY sort_order",
+            (event_id,),
         )
         expense_lines = cur.fetchall()
 
-        def fmt(n):
-            return f"${float(n):,.2f}" if n is not None else "—"
-
-        lines = [
-            f"Settlement — {', '.join(acts) or 'Untitled show'}",
-            f"{venue_name} · {show_date}",
-            "",
-            f"Deal: {merged['_deal_type']}"
-            + (f" · Guarantee {fmt(merged['_guarantee'])}" if merged.get("_guarantee") else "")
-            + (f" · {merged['_backend_pct']}%" if merged.get("_backend_pct") else ""),
-            "",
-            f"Tickets sold: {merged.get('tickets_sold') if merged.get('tickets_sold') is not None else '—'}",
-            f"Gross: {fmt(merged.get('gross'))}",
-            f"Net gross (after tax/fees): {fmt(merged['_net_gross'])}",
-            "",
-            "Expenses:",
-        ]
-        for label, actual in expense_lines:
-            if actual is not None:
-                lines.append(f"  {label} ...... {fmt(actual)}")
-        lines += [
-            f"Total expenses: {fmt(merged['expenses'])}",
-            f"Net after expenses: {fmt(merged['_net_after_expenses'])}",
-            "",
-            f"Artist payout: {fmt(merged['artist_payout'])}",
-            "",
-            f"Settled: {'Yes' if merged.get('settled') else 'No'}",
-        ]
-        text = "\n".join(lines)
+        pdf_bytes = settlement_pdf.generate(
+            show_title=", ".join(acts) or "Untitled show",
+            venue_name=venue_name, show_date=str(show_date),
+            deal_type=merged["_deal_type"], guarantee=merged.get("_guarantee"), backend_pct=merged.get("_backend_pct"),
+            tickets_sold=merged.get("tickets_sold"), gross=merged.get("gross"), net_gross=merged["_net_gross"],
+            expense_lines=expense_lines, expenses_total=merged["expenses"],
+            net_after_expenses=merged["_net_after_expenses"], artist_payout=merged["artist_payout"],
+            settled=merged.get("settled") or False,
+        )
 
         cur.execute(
             "SELECT id, storage_key FROM event_files WHERE event_id = %s AND filename = %s",
@@ -2119,15 +2102,15 @@ def create_app():
         existing = cur.fetchone()
         if existing:
             file_id, storage_key = existing
-            storage.put_text(storage_key, text)
-            cur.execute("UPDATE event_files SET size_bytes = %s WHERE id = %s", (len(text.encode("utf-8")), file_id))
+            storage.put_bytes(storage_key, pdf_bytes, "application/pdf")
+            cur.execute("UPDATE event_files SET size_bytes = %s WHERE id = %s", (len(pdf_bytes), file_id))
         else:
             storage_key = storage.new_storage_key(event_id, SETTLEMENT_FILENAME)
-            storage.put_text(storage_key, text)
+            storage.put_bytes(storage_key, pdf_bytes, "application/pdf")
             cur.execute(
                 "INSERT INTO event_files (event_id, filename, storage_key, content_type, size_bytes, uploaded_by) "
-                "VALUES (%s, %s, %s, 'text/plain', %s, %s)",
-                (event_id, SETTLEMENT_FILENAME, storage_key, len(text.encode("utf-8")), viewer.id),
+                "VALUES (%s, %s, %s, 'application/pdf', %s, %s)",
+                (event_id, SETTLEMENT_FILENAME, storage_key, len(pdf_bytes), viewer.id),
             )
 
     _SETTLEMENT_DEFAULTS = {

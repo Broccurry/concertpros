@@ -973,7 +973,7 @@ function normName(s){ return (s||"").toLowerCase().replace(/^the\s+/,"").replace
 var store = {events:[], venues:[], roles:[], people:[], artists:[], visionCards:[], offers:[], todos:[], files:[], siteSettings:{}, contactMessages:[], genres:[], fileFolders:[], hivemindIdeas:[], marketingContacts:[], marketingCampaigns:[]};
 var phoneMQ = window.matchMedia ? window.matchMedia("(max-width: 660px)") : null;
 function isPhone(){ return !!(phoneMQ && phoneMQ.matches); }
-var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), selectedVenues:null, showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false, staffEditingCell:null, addingFileFolderIn:null};
+var ui = {view:"calendar", cursor:(function(){ var t=new Date(); return {y:t.getFullYear(), m:t.getMonth()}; })(), selectedVenues:null, showDead:false, staffOnlyMine:false, listSearch:"", openFolders:{}, todoShowDone:{}, websiteWhen:"current", staffAddingShiftFor:null, showDeadOffers:false, staffEditingCell:null, addingFileFolderIn:null, settlementEditingEventId:null, settlementDraft:null};
 var me = {access_level:"crew"};
 function canBook(){ return me.access_level === "booker" || me.access_level === "owner"; }
 
@@ -1368,18 +1368,43 @@ function renderListResults(host){
 
 /* ============================== settlements view ======================= */
 // Was two sections buried at the bottom of the List view -- moved into
-// its own tab (2026-09-25, Broc: "we do all settlements in that tab")
-// since that's the one workflow booker/owner actually go looking for on
-// its own, not as a scroll-past on the way to the upcoming-shows list.
+// its own tab (2026-09-25, Broc: "we do all settlements in that tab").
+// Then Broc pushed further: "i dont really like that we are doing the
+// settlement directly in the show card... we should have a +settlement
+// button on the settlement tab" -- editing moved out of the show editor
+// entirely into a dedicated picker+form living only in this tab.
 function renderSettlementsView(){
   var host = document.getElementById("view-settlements");
   host.innerHTML = "";
+  if(ui.settlementEditingEventId){
+    renderSettlementEditor(host);
+  } else {
+    renderSettlementsList(host);
+  }
+}
+
+function openSettlementEditor(eventIdOrPick){
+  ui.settlementEditingEventId = eventIdOrPick;
+  ui.settlementDraft = null;
+  renderSettlementsView();
+}
+function closeSettlementEditor(){
+  ui.settlementEditingEventId = null;
+  ui.settlementDraft = null;
+  renderSettlementsView();
+}
+
+function renderSettlementsList(host){
+  var addBtn = el("button","btn btn-primary","+ Settlement");
+  addBtn.type = "button";
+  addBtn.style.marginBottom = "14px";
+  addBtn.onclick = function(){ openSettlementEditor("PICK"); };
+  host.appendChild(addBtn);
 
   // Past its date but still sitting at "confirmed" — nobody closed it
-  // out. Pulled into its own section instead of a special color on the
-  // calendar/main table, which is the one thing this app is trying not
-  // to do (one fact, one place, not a color you have to remember the
-  // meaning of).
+  // out. This is a status-housekeeping gap, not a finals gap, so it
+  // still opens the real show editor (to flip the status), not the
+  // settlement form.
   var needsSettling = visibleEvents().filter(isUnsettled);
   if(needsSettling.length){
     host.appendChild(el("h3","section","Needs settled (" + needsSettling.length + ")"));
@@ -1419,7 +1444,7 @@ function renderSettlementsView(){
       var s = ev.settlement || {};
       var net = (+s.gross||0) - (+s.expenses||0) - (+s.artist_payout||0);
       var tr = document.createElement("tr");
-      tr.onclick = function(){ openEvent(ev.id); };
+      tr.onclick = function(){ openSettlementEditor(ev.id); };
       tr.appendChild(el("td","date-col", shortDate(ev.show_date)));
       tr.appendChild(el("td",null, ev.venue));
       tr.appendChild(el("td","title-cell", showName(ev)));
@@ -1445,6 +1470,227 @@ function renderSettlementsView(){
   var settled = visibleEvents().filter(function(e){ return e.status === "complete" && e.settlement && e.settlement.settled; })
     .sort(function(a,b){ return a.show_date < b.show_date ? 1 : -1; });
   if(settled.length) settlementsTable("Settled", settled);
+}
+
+function renderSettlementEditor(host){
+  var backBtn = el("button","btn","← Back to list");
+  backBtn.type = "button";
+  backBtn.style.marginBottom = "14px";
+  backBtn.onclick = closeSettlementEditor;
+  host.appendChild(backBtn);
+
+  if(ui.settlementEditingEventId === "PICK"){
+    renderSettlementPicker(host);
+    return;
+  }
+
+  var ev = eventById(ui.settlementEditingEventId);
+  if(!ev){ host.appendChild(el("p","hint","That show couldn't be found.")); return; }
+
+  if(!ui.settlementDraft){
+    var s = ev.settlement ? JSON.parse(JSON.stringify(ev.settlement)) : {
+      tickets_sold:"",gross:"",sales_tax_rate:"",facility_fee_per_ticket:"",ticketing_fee_rate:"",
+      expenses:0,door_split_from_dollar_one:false,template:"simple",artist_payout:0,settled:false,notes:"",
+    };
+    var expenses = ev.settlement_expenses ? JSON.parse(JSON.stringify(ev.settlement_expenses)) : [];
+    // Prepopulate from whatever's already known, so there's less to type
+    // by hand -- exactly what Broc asked for ("fields that can be
+    // prepopulated filled out").
+    if((s.gross === "" || s.gross == null) && ev.ticket_sales && ev.ticket_sales.length){
+      var latest = ev.ticket_sales[ev.ticket_sales.length - 1];
+      s.tickets_sold = latest.tickets_sold;
+      if(latest.gross != null) s.gross = latest.gross;
+    }
+    if(!expenses.length) expenses = SETTLEMENT_TEMPLATES[s.template || "simple"].map(function(label,i){
+      return {label:label, budget:"", actual:"", sort_order:i};
+    });
+    ui.settlementDraft = {
+      eventId: ev.id, version: ev.version, settlement: s, expenses: expenses,
+      dealType: ev.deal_type || NO_DEAL, guarantee: ev.guarantee, backendPct: ev.backend_pct,
+    };
+  }
+  var sd = ui.settlementDraft;
+  var s = sd.settlement;
+
+  host.appendChild(el("h3","section", showName(ev)));
+  host.appendChild(el("p","hint", ev.venue + " · " + shortDateWithYear(ev.show_date)));
+
+  var dealRow = el("div","row-3"); dealRow.style.marginTop = "10px";
+  dealRow.appendChild(field("Deal type", select(DEAL_TYPES, sd.dealType, function(v){ sd.dealType = v; renderSettlementsView(); })));
+  dealRow.appendChild(field("Guarantee", input("number", sd.guarantee, function(v){ sd.guarantee = v; })));
+  dealRow.appendChild(field("Backend %", input("number", sd.backendPct, function(v){ sd.backendPct = v; })));
+  host.appendChild(dealRow);
+
+  var templateField = el("div","field"); templateField.style.marginTop = "10px";
+  templateField.appendChild(el("label",null,"Expense template"));
+  var templateChips = el("div","chips");
+  [{v:"simple",label:"Simple"},{v:"detailed",label:"Detailed (bigger shows)"}].forEach(function(t){
+    var chip = el("button","chip",t.label);
+    chip.type = "button";
+    chip.setAttribute("aria-pressed", s.template === t.v ? "true" : "false");
+    chip.onclick = function(){
+      s.template = t.v;
+      // Only re-seed if every existing line is still blank -- switching
+      // templates on a show with real numbers already typed in must
+      // never silently wipe them.
+      if(sd.expenses.every(function(l){ return !(l.label||"").trim() && !l.actual && !l.budget; })){
+        sd.expenses = SETTLEMENT_TEMPLATES[t.v].map(function(label,i){ return {label:label, budget:"", actual:"", sort_order:i}; });
+      }
+      renderSettlementsView();
+    };
+    templateChips.appendChild(chip);
+  });
+  templateField.appendChild(templateChips);
+  host.appendChild(templateField);
+
+  var pullBtn = el("button","btn","Pull latest ticket sale → tickets sold / gross");
+  pullBtn.type = "button";
+  pullBtn.style.marginTop = "10px";
+  pullBtn.onclick = function(){
+    var sales = ev.ticket_sales || [];
+    if(!sales.length){ window.alert("No ticket sales logged yet for this show."); return; }
+    var latest = sales[sales.length - 1];
+    s.tickets_sold = latest.tickets_sold;
+    if(latest.gross != null) s.gross = latest.gross;
+    renderSettlementsView();
+  };
+  host.appendChild(pullBtn);
+
+  var r7 = el("div","row"); r7.style.marginTop = "10px";
+  r7.appendChild(field("Tickets sold", input("number", s.tickets_sold, function(v){ s.tickets_sold = v; })));
+  r7.appendChild(field("Gross (walk-up + presale)", input("number", s.gross, function(v){ s.gross = v; })));
+  host.appendChild(r7);
+
+  var r7b = el("div","row-3"); r7b.style.marginTop = "10px";
+  r7b.appendChild(field("Sales tax rate (%)", input("number", s.sales_tax_rate, function(v){ s.sales_tax_rate = v; })));
+  r7b.appendChild(field("Facility fee / ticket ($)", input("number", s.facility_fee_per_ticket, function(v){ s.facility_fee_per_ticket = v; })));
+  r7b.appendChild(field("Ticketing fee rate (%)", input("number", s.ticketing_fee_rate, function(v){ s.ticketing_fee_rate = v; })));
+  host.appendChild(r7b);
+
+  if(sd.dealType === "Door split"){
+    var doorWrap = el("label","checkfield"); doorWrap.style.marginTop = "10px";
+    var doorCb = document.createElement("input");
+    doorCb.type = "checkbox"; doorCb.checked = !!s.door_split_from_dollar_one;
+    doorCb.onchange = function(){ s.door_split_from_dollar_one = doorCb.checked; };
+    doorWrap.appendChild(doorCb);
+    doorWrap.appendChild(document.createTextNode(" Split from dollar one (not just above expenses)"));
+    host.appendChild(doorWrap);
+  }
+
+  var expField = el("div","field"); expField.style.marginTop = "12px";
+  expField.appendChild(el("label",null,"Expenses"));
+  var expList = el("div","expenselist");
+  sd.expenses.forEach(function(line, idx){
+    var row = el("div","row-3");
+    row.appendChild(input("text", line.label, function(v){ line.label = v; }));
+    row.appendChild(input("number", line.budget, function(v){ line.budget = v; }));
+    row.appendChild(input("number", line.actual, function(v){ line.actual = v; }));
+    var del = el("button","x","✕"); del.type = "button"; del.title = "Remove line";
+    del.onclick = function(){ sd.expenses.splice(idx,1); renderSettlementsView(); };
+    row.appendChild(del);
+    expList.appendChild(row);
+  });
+  if(sd.expenses.length){
+    var expHead = el("div","row-3");
+    expHead.appendChild(el("span","eyebrow","Label")); expHead.appendChild(el("span","eyebrow","Budget")); expHead.appendChild(el("span","eyebrow","Actual"));
+    expList.insertBefore(expHead, expList.firstChild);
+  }
+  expField.appendChild(expList);
+  var addLineBtn = el("button","btn","+ Add expense line");
+  addLineBtn.type = "button";
+  addLineBtn.style.marginTop = "8px";
+  addLineBtn.onclick = function(){
+    sd.expenses.push({label:"", budget:"", actual:"", sort_order: sd.expenses.length});
+    renderSettlementsView();
+  };
+  expField.appendChild(addLineBtn);
+  host.appendChild(expField);
+
+  var summary = el("div","hint"); summary.style.marginTop = "10px";
+  var expensesTotal = sd.expenses.reduce(function(sum,l){ return sum + (+l.actual || 0); }, 0);
+  summary.appendChild(el("p",null,"Expenses (actual): " + money(expensesTotal)));
+  summary.appendChild(el("p",null,"Artist payout (as of last save): " + money(+s.artist_payout || 0)));
+  host.appendChild(summary);
+
+  var settledWrap = el("div","taskitem");
+  var scb = document.createElement("input");
+  scb.type = "checkbox"; scb.id = "settledBox"; scb.checked = !!s.settled;
+  scb.onchange = function(){ s.settled = scb.checked; };
+  settledWrap.appendChild(scb);
+  var slab = el("label","tlabel","Settled and paid");
+  slab.setAttribute("for","settledBox");
+  settledWrap.appendChild(slab);
+  host.appendChild(settledWrap);
+
+  var saveSettle = el("button","btn btn-primary","Save finals");
+  saveSettle.type = "button";
+  saveSettle.style.marginTop = "8px";
+  var saveErr = el("span","hint"); saveErr.style.marginLeft = "8px"; saveErr.style.color = "var(--dead)";
+  saveSettle.onclick = async function(){
+    saveErr.textContent = "";
+    var dealChanged = sd.dealType !== (ev.deal_type || NO_DEAL) || String(sd.guarantee||"") !== String(ev.guarantee||"")
+      || String(sd.backendPct||"") !== String(ev.backend_pct||"");
+    if(dealChanged){
+      var rDeal = await api("/api/events/" + ev.id, {method:"PATCH", body: JSON.stringify({
+        version: sd.version, deal_type: sd.dealType, guarantee: sd.guarantee, backend_pct: sd.backendPct,
+      })});
+      if(!rDeal.ok){ saveErr.textContent = rDeal.body.error || "Could not save the deal terms."; return; }
+      sd.version = rDeal.body.version;
+    }
+    var lines = sd.expenses.filter(function(l){ return (l.label||"").trim(); });
+    var r1 = await api("/api/events/" + ev.id + "/settlement_expenses", {method:"PUT", body: JSON.stringify({lines: lines})});
+    if(!r1.ok){ saveErr.textContent = r1.body.error || "Could not save expenses."; return; }
+    var r2 = await api("/api/events/" + ev.id + "/settlement", {method:"PUT", body: JSON.stringify(s)});
+    if(!r2.ok){ saveErr.textContent = r2.body.error || "Could not save finals."; return; }
+    await loadEvents();
+    await loadBookerLookups();
+    ui.settlementDraft = null;
+    renderSettlementsView();
+  };
+  host.appendChild(saveSettle);
+  host.appendChild(saveErr);
+}
+
+function renderSettlementPicker(host){
+  host.appendChild(el("h3","section","Which show?"));
+  var searchWrap = el("div","field");
+  var searchInput = document.createElement("input");
+  searchInput.type = "search";
+  searchInput.placeholder = "Search shows by band name...";
+  searchWrap.appendChild(searchInput);
+  host.appendChild(searchWrap);
+  var resultsHost = el("div");
+  host.appendChild(resultsHost);
+
+  function renderResults(){
+    resultsHost.innerHTML = "";
+    var q = searchInput.value.trim();
+    var results = q ? searchShows(q) : visibleEvents()
+      .filter(function(e){ return isUnsettled(e) || (e.status === "complete" && !(e.settlement && e.settlement.settled)); })
+      .slice(0, 20);
+    if(!results.length){
+      resultsHost.appendChild(el("p","hint", q ? "No shows found." : "Nothing waiting on a settlement — search above for any show."));
+      return;
+    }
+    var w = el("div","tablewrap"), t = document.createElement("table");
+    var thead = document.createElement("thead"), hr = document.createElement("tr");
+    ["Date","Venue","Show","Status"].forEach(function(h){ hr.appendChild(el("th",null,h)); });
+    thead.appendChild(hr); t.appendChild(thead);
+    var tb = document.createElement("tbody");
+    results.forEach(function(ev){
+      var tr = document.createElement("tr");
+      tr.onclick = function(){ openSettlementEditor(ev.id); };
+      tr.appendChild(el("td","date-col", shortDateWithYear(ev.show_date)));
+      tr.appendChild(el("td",null, ev.venue));
+      var td = el("td","title-cell"); td.appendChild(actsNodes(ev)); tr.appendChild(td);
+      var stc = document.createElement("td"); stc.appendChild(statusPill(ev)); tr.appendChild(stc);
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb); w.appendChild(t);
+    resultsHost.appendChild(w);
+  }
+  searchInput.oninput = renderResults;
+  renderResults();
 }
 
 /* ============================== artists view =========================== */
@@ -3067,135 +3313,26 @@ function renderSheet(){
   if(draft.status === "complete" && !draftIsNew){
     var fs7 = document.createElement("fieldset");
     fs7.appendChild(el("legend",null,"Finals & payout"));
-    if(!draft.settlement) draft.settlement = {tickets_sold:"",gross:"",sales_tax_rate:"",facility_fee_per_ticket:"",
-      ticketing_fee_rate:"",expenses:0,door_split_from_dollar_one:false,template:"simple",artist_payout:0,
-      settled:false,notes:""};
-    if(!draft.settlement_expenses) draft.settlement_expenses = [];
-    var s = draft.settlement;
-
-    var templateField = el("div","field");
-    templateField.appendChild(el("label",null,"Expense template"));
-    var templateChips = el("div","chips");
-    [{v:"simple",label:"Simple"},{v:"detailed",label:"Detailed (bigger shows)"}].forEach(function(t){
-      var chip = el("button","chip",t.label);
-      chip.type = "button";
-      chip.setAttribute("aria-pressed", s.template === t.v ? "true" : "false");
-      chip.onclick = function(){
-        s.template = t.v;
-        // Only seed starter lines the first time -- switching templates
-        // on a show that already has real numbers typed in must never
-        // silently wipe them.
-        if(!draft.settlement_expenses.length){
-          draft.settlement_expenses = SETTLEMENT_TEMPLATES[t.v].map(function(label,i){
-            return {label:label, budget:"", actual:"", sort_order:i};
-          });
-        }
-        renderSheet();
-      };
-      templateChips.appendChild(chip);
-    });
-    templateField.appendChild(templateChips);
-    fs7.appendChild(templateField);
-
-    var pullBtn = el("button","btn","Pull latest ticket sale → tickets sold / gross");
-    pullBtn.type = "button";
-    pullBtn.style.marginTop = "10px";
-    pullBtn.onclick = function(){
-      var sales = draft.ticket_sales || [];
-      if(!sales.length){ window.alert("No ticket sales logged yet for this show."); return; }
-      var latest = sales[sales.length - 1];
-      s.tickets_sold = latest.tickets_sold;
-      if(latest.gross != null) s.gross = latest.gross;
-      renderSheet();
-    };
-    fs7.appendChild(pullBtn);
-
-    var r7 = el("div","row"); r7.style.marginTop = "10px";
-    r7.appendChild(field("Tickets sold", input("number", s.tickets_sold, function(v){ s.tickets_sold = v; })));
-    r7.appendChild(field("Gross (walk-up + presale)", input("number", s.gross, function(v){ s.gross = v; })));
-    fs7.appendChild(r7);
-
-    var r7b = el("div","row-3"); r7b.style.marginTop = "10px";
-    r7b.appendChild(field("Sales tax rate (%)", input("number", s.sales_tax_rate, function(v){ s.sales_tax_rate = v; })));
-    r7b.appendChild(field("Facility fee / ticket ($)", input("number", s.facility_fee_per_ticket, function(v){ s.facility_fee_per_ticket = v; })));
-    r7b.appendChild(field("Ticketing fee rate (%)", input("number", s.ticketing_fee_rate, function(v){ s.ticketing_fee_rate = v; })));
-    fs7.appendChild(r7b);
-
-    if(draft.deal_type === "Door split"){
-      var doorWrap = el("label","checkfield"); doorWrap.style.marginTop = "10px";
-      var doorCb = document.createElement("input");
-      doorCb.type = "checkbox"; doorCb.checked = !!s.door_split_from_dollar_one;
-      doorCb.onchange = function(){ s.door_split_from_dollar_one = doorCb.checked; };
-      doorWrap.appendChild(doorCb);
-      doorWrap.appendChild(document.createTextNode(" Split from dollar one (not just above expenses)"));
-      fs7.appendChild(doorWrap);
+    var settleHint = el("p","hint");
+    var s7 = draft.settlement;
+    if(s7 && s7.settled){
+      settleHint.appendChild(document.createTextNode("Settled — " + money(s7.artist_payout) + " artist payout. "));
+    } else if(s7 && (s7.gross != null || s7.tickets_sold != null)){
+      settleHint.appendChild(document.createTextNode("In progress — " + money(s7.artist_payout) + " artist payout so far. "));
+    } else {
+      settleHint.appendChild(document.createTextNode("Not started. "));
     }
-
-    var expField = el("div","field"); expField.style.marginTop = "12px";
-    expField.appendChild(el("label",null,"Expenses"));
-    var expList = el("div","expenselist");
-    draft.settlement_expenses.forEach(function(line, idx){
-      var row = el("div","row-3");
-      var labelInput = input("text", line.label, function(v){ line.label = v; });
-      row.appendChild(labelInput);
-      row.appendChild(input("number", line.budget, function(v){ line.budget = v; }));
-      var actualInput = input("number", line.actual, function(v){ line.actual = v; });
-      row.appendChild(actualInput);
-      var del = el("button","x","✕"); del.type = "button"; del.title = "Remove line";
-      del.onclick = function(){ draft.settlement_expenses.splice(idx,1); renderSheet(); };
-      row.appendChild(del);
-      expList.appendChild(row);
-    });
-    if(!draft.settlement_expenses.length){
-      var expHead = el("div","row-3");
-      expHead.appendChild(el("span","eyebrow","Label")); expHead.appendChild(el("span","eyebrow","Budget")); expHead.appendChild(el("span","eyebrow","Actual"));
-      expList.insertBefore(expHead, expList.firstChild);
-    }
-    expField.appendChild(expList);
-    var addLineBtn = el("button","btn","+ Add expense line");
-    addLineBtn.type = "button";
-    addLineBtn.style.marginTop = "8px";
-    addLineBtn.onclick = function(){
-      draft.settlement_expenses.push({label:"", budget:"", actual:"", sort_order: draft.settlement_expenses.length});
-      renderSheet();
+    var goToTab = el("button","btn btn-sm","Open in Settlements");
+    goToTab.type = "button";
+    goToTab.onclick = async function(){
+      var eventId = draft.id;
+      await closeSheet();
+      ui.view = "settlements";
+      setActiveTab();
+      openSettlementEditor(eventId);
     };
-    expField.appendChild(addLineBtn);
-    fs7.appendChild(expField);
-
-    var summary = el("div","hint"); summary.style.marginTop = "10px";
-    var expensesTotal = draft.settlement_expenses.reduce(function(sum,l){ return sum + (+l.actual || 0); }, 0);
-    summary.appendChild(el("p",null,"Expenses (actual): " + money(expensesTotal)));
-    summary.appendChild(el("p",null,"Artist payout (as of last save): " + money(+s.artist_payout || 0)));
-    summary.appendChild(el("p",null,"Deal: " + (draft.deal_type || NO_DEAL) +
-      (draft.guarantee ? " · guarantee " + money(draft.guarantee) : "") +
-      (draft.backend_pct ? " · " + draft.backend_pct + "%" : "")));
-    fs7.appendChild(summary);
-
-    var settledWrap = el("div","taskitem");
-    var scb = document.createElement("input");
-    scb.type = "checkbox"; scb.id = "settledBox"; scb.checked = !!s.settled;
-    scb.onchange = function(){ s.settled = scb.checked; };
-    settledWrap.appendChild(scb);
-    var slab = el("label","tlabel","Settled and paid");
-    slab.setAttribute("for","settledBox");
-    settledWrap.appendChild(slab);
-    fs7.appendChild(settledWrap);
-
-    var saveSettle = el("button","btn btn-primary","Save finals");
-    saveSettle.type = "button";
-    saveSettle.style.marginTop = "8px";
-    var saveErr = el("span","hint"); saveErr.style.marginLeft = "8px"; saveErr.style.color = "var(--dead)";
-    saveSettle.onclick = async function(){
-      saveErr.textContent = "";
-      var lines = draft.settlement_expenses.filter(function(l){ return (l.label||"").trim(); });
-      var r1 = await api("/api/events/" + draft.id + "/settlement_expenses", {method:"PUT", body: JSON.stringify({lines: lines})});
-      if(!r1.ok){ saveErr.textContent = r1.body.error || "Could not save expenses."; return; }
-      var r2 = await api("/api/events/" + draft.id + "/settlement", {method:"PUT", body: JSON.stringify(s)});
-      if(!r2.ok){ saveErr.textContent = r2.body.error || "Could not save finals."; return; }
-      await refreshDraft();
-    };
-    fs7.appendChild(saveSettle);
-    fs7.appendChild(saveErr);
+    settleHint.appendChild(goToTab);
+    fs7.appendChild(settleHint);
     body.appendChild(fs7);
   }
 

@@ -68,11 +68,9 @@ def delete_object(storage_key):
     _client().delete_object(Bucket=os.environ["B2_BUCKET"], Key=storage_key)
 
 
-def put_text(storage_key, text, content_type="text/plain; charset=utf-8"):
-    """For content THIS app generates itself (a settlement summary), not
-    a browser upload -- everything else in this module hands the browser
-    a presigned URL and never sees the bytes, but there's no browser file
+def put_bytes(storage_key, data: bytes, content_type):
+    """For content THIS app generates itself (a settlement PDF), not a
+    browser upload -- everything else in this module hands the browser a
+    presigned URL and never sees the bytes, but there's no browser file
     to presign for something the server wrote."""
-    _client().put_object(
-        Bucket=os.environ["B2_BUCKET"], Key=storage_key, Body=text.encode("utf-8"), ContentType=content_type,
-    )
+    _client().put_object(Bucket=os.environ["B2_BUCKET"], Key=storage_key, Body=data, ContentType=content_type)

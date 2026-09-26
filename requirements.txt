@@ -4,3 +4,4 @@ gunicorn>=22.0
 python-dotenv>=1.0
 boto3>=1.34
 cryptography>=42
+reportlab>=4.2
