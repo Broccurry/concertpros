@@ -75,6 +75,7 @@ def _parse_number(v):
 
 
 _BILL_ROLES = ("Touring", "Direct Support", "Support", "Local")
+_PAYMENT_METHODS = ("Cash", "Check", "Deposit", "Wire", "Venmo")
 
 
 def _parse_optional_time(raw):
@@ -122,19 +123,26 @@ def _parse_acts(raw):
             set_time_end, ok5 = _parse_optional_time(item.get("set_time_end"))
             if not (ok4 and ok5):
                 return None, "invalid_set_time"
+            payment_method = item.get("payment_method") or None
+            if payment_method is not None and payment_method not in _PAYMENT_METHODS:
+                return None, "invalid_payment_method"
+            payment_cleared = bool(item.get("payment_cleared"))
         elif isinstance(item, str):
             name = item.strip()
             confirmed = declined = False
-            notes = bill_role = guarantee = paid = walkups = set_time = set_time_end = None
+            notes = bill_role = guarantee = paid = walkups = set_time = set_time_end = payment_method = None
+            payment_cleared = False
         else:
             name = ""
             confirmed = declined = False
-            notes = bill_role = guarantee = paid = walkups = set_time = set_time_end = None
+            notes = bill_role = guarantee = paid = walkups = set_time = set_time_end = payment_method = None
+            payment_cleared = False
         if not name:
             return None, "every_act_needs_a_name"
         acts.append({"name": name, "confirmed": confirmed, "declined": declined,
                      "notes": notes, "bill_role": bill_role, "set_time": set_time, "set_time_end": set_time_end,
-                     "guarantee": guarantee, "paid": paid, "walkups": walkups})
+                     "guarantee": guarantee, "paid": paid, "walkups": walkups,
+                     "payment_method": payment_method, "payment_cleared": payment_cleared})
     return acts, None
 
 
@@ -164,19 +172,21 @@ def _replace_event_artists(conn, event_id, acts):
         if artist_id in existing_by_artist:
             cur.execute(
                 "UPDATE event_artists SET confirmed=%s, declined=%s, sort_order=%s, guarantee=%s, "
-                "paid=%s, walkups=%s, notes=%s, bill_role=%s, set_time=%s, set_time_end=%s WHERE id = %s",
+                "paid=%s, walkups=%s, notes=%s, bill_role=%s, set_time=%s, set_time_end=%s, "
+                "payment_method=%s, payment_cleared=%s WHERE id = %s",
                 (act["confirmed"], act["declined"], sort_order, act["guarantee"], act["paid"],
                  act["walkups"], act["notes"], act["bill_role"], act["set_time"], act["set_time_end"],
-                 existing_by_artist[artist_id]),
+                 act["payment_method"], act["payment_cleared"], existing_by_artist[artist_id]),
             )
         else:
             cur.execute(
                 "INSERT INTO event_artists (event_id, artist_id, confirmed, declined, sort_order, "
-                "guarantee, paid, walkups, notes, bill_role, set_time, set_time_end) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "guarantee, paid, walkups, notes, bill_role, set_time, set_time_end, "
+                "payment_method, payment_cleared) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (event_id, artist_id, act["confirmed"], act["declined"], sort_order,
                  act["guarantee"], act["paid"], act["walkups"], act["notes"], act["bill_role"],
-                 act["set_time"], act["set_time_end"]),
+                 act["set_time"], act["set_time_end"], act["payment_method"], act["payment_cleared"]),
             )
         sort_order += 1
     cur.execute(
@@ -250,7 +260,7 @@ def _parse_optional_event_fields(body):
 PER_DATE_EVENT_FIELDS = {"venue_id", "status", "show_date", "doors", "show_time"}
 
 _SHARED_CHILD_TABLES = ("event_artists", "ticket_tiers", "event_tasks", "assignments",
-                        "settlements", "settlement_expenses", "event_messages")
+                        "settlements", "settlement_expenses", "settlement_ticket_tiers", "event_messages")
 _SHARED_SCALAR_COLUMNS = ("deal_type", "guarantee", "backend_pct", "deal_notes",
                           "announce_date", "onsale_date", "notes", "ticket_link")
 
@@ -2040,6 +2050,21 @@ def create_app():
         cur.execute("SELECT COALESCE(SUM(actual), 0) FROM settlement_expenses WHERE event_id = %s", (event_id,))
         expenses = float(cur.fetchone()[0])
 
+        # tickets_sold/gross become a synced total of the tier breakdown --
+        # same convention as `expenses` above -- but ONLY once at least one
+        # tier row exists, so a show settled before tiers existed (real
+        # production data: one already-settled show has tickets_sold/gross
+        # recorded with no tiers behind it) keeps its number rather than
+        # reading as zero the moment this feature ships.
+        cur.execute(
+            "SELECT COALESCE(SUM(sold), 0), COALESCE(SUM(sold * price), 0), COUNT(*) "
+            "FROM settlement_ticket_tiers WHERE event_id = %s",
+            (event_id,),
+        )
+        tiers_sold, tiers_gross, tier_count = cur.fetchone()
+        if tier_count:
+            merged = {**merged, "tickets_sold": int(tiers_sold), "gross": float(tiers_gross)}
+
         net_gross, _breakdown = settlement_calc.compute_net_gross(
             gross=merged.get("gross") or 0,
             sales_tax_rate=merged.get("sales_tax_rate") or 0,
@@ -2268,6 +2293,108 @@ def create_app():
         )
         audit.record(g.db, g.viewer, "event", event_id, "settlement_expenses", {"line_count": len(lines)})
         return jsonify(ok=True, expenses=merged["expenses"], artist_payout=merged["artist_payout"])
+
+    @app.put("/api/events/<int:event_id>/settlement_ticket_tiers")
+    @require_booker
+    def set_settlement_ticket_tiers(event_id):
+        """Replaces the whole set, same convention as settlement_expenses
+        and ticket_tiers -- a booker re-sends the full tier list each save.
+        Triggers a settlement recompute afterward since tickets_sold/gross
+        become a synced total of these rows (see _recompute_settlement)."""
+        cur = g.db.cursor()
+        cur.execute("SELECT 1 FROM events WHERE id = %s", (event_id,))
+        if cur.fetchone() is None:
+            return jsonify(error="not_found"), 404
+
+        body = request.get_json(silent=True) or {}
+        raw = body.get("tiers")
+        if not isinstance(raw, list):
+            return jsonify(error="tiers_must_be_a_list"), 400
+
+        tiers = []
+        for entry in raw:
+            if not isinstance(entry, dict) or not (entry.get("label") or "").strip():
+                return jsonify(error="each_tier_needs_a_label"), 400
+            price, ok1 = _parse_number(entry.get("price"))
+            sold_raw = entry.get("sold")
+            if sold_raw in (None, ""):
+                sold, ok2 = None, True
+            else:
+                try:
+                    sold, ok2 = int(sold_raw), True
+                except (TypeError, ValueError):
+                    sold, ok2 = None, False
+            if not (ok1 and ok2):
+                return jsonify(error="invalid_amount"), 400
+            source = entry.get("source") if entry.get("source") in ("manual", "etix") else "manual"
+            tiers.append((entry["label"].strip(), price, sold, source))
+
+        cur.execute("DELETE FROM settlement_ticket_tiers WHERE event_id = %s", (event_id,))
+        for i, (label, price, sold, source) in enumerate(tiers):
+            cur.execute(
+                "INSERT INTO settlement_ticket_tiers (event_id, label, price, sold, source, sort_order) "
+                "VALUES (%s, %s, %s, %s, %s, %s)",
+                (event_id, label, price, sold, source, i),
+            )
+
+        cur.execute(
+            "SELECT tickets_sold, gross, sales_tax_rate, facility_fee_per_ticket, ticketing_fee_rate, "
+            "door_split_from_dollar_one, template, settled, notes FROM settlements WHERE event_id = %s",
+            (event_id,),
+        )
+        row = cur.fetchone()
+        before = dict(zip(
+            ["tickets_sold", "gross", "sales_tax_rate", "facility_fee_per_ticket", "ticketing_fee_rate",
+             "door_split_from_dollar_one", "template", "settled", "notes"], row,
+        )) if row else dict(_SETTLEMENT_DEFAULTS)
+        merged = _recompute_settlement(g.db, event_id, before)
+        cur.execute(
+            """INSERT INTO settlements (event_id, tickets_sold, gross, sales_tax_rate,
+                       facility_fee_per_ticket, ticketing_fee_rate, expenses, door_split_from_dollar_one,
+                       template, artist_payout, settled, notes)
+               VALUES (%(event_id)s, %(tickets_sold)s, %(gross)s, %(sales_tax_rate)s,
+                       %(facility_fee_per_ticket)s, %(ticketing_fee_rate)s, %(expenses)s,
+                       %(door_split_from_dollar_one)s, %(template)s, %(artist_payout)s, %(settled)s, %(notes)s)
+               ON CONFLICT (event_id) DO UPDATE SET
+                   tickets_sold = EXCLUDED.tickets_sold, gross = EXCLUDED.gross,
+                   expenses = EXCLUDED.expenses, artist_payout = EXCLUDED.artist_payout, updated_at = now()""",
+            {"event_id": event_id, **merged},
+        )
+        audit.record(g.db, g.viewer, "event", event_id, "settlement_ticket_tiers", {"tier_count": len(tiers)})
+        return jsonify(ok=True, tickets_sold=merged["tickets_sold"], gross=merged["gross"],
+                       expenses=merged["expenses"], artist_payout=merged["artist_payout"])
+
+    @app.post("/api/events/<int:event_id>/settlement_ticket_tiers/pull_etix")
+    @require_booker
+    def pull_etix_ticket_tiers(event_id):
+        """A per-tier breakdown, distinct from the plain ticket_sales pull
+        (POST .../ticket_sales/pull_etix) -- that one gives a single
+        aggregate count/gross; this returns Advance/Day-of-Advance/etc as
+        separate lines with their own sold count and price, straight from
+        Etix's own Settlement API. Does NOT write anything to the DB --
+        the settlement editor merges the result into its in-progress draft
+        and only settlement_ticket_tiers's own PUT persists it, same as
+        every other field on this sheet."""
+        cur = g.db.cursor()
+        cur.execute(
+            "SELECT e.show_date, v.name FROM events e JOIN venues v ON v.id = e.venue_id WHERE e.id = %s",
+            (event_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return jsonify(error="not_found"), 404
+        show_date, venue_name = row
+        try:
+            performance = etix._find_public_event(venue_name, show_date) or etix._find_private_event(venue_name, show_date)
+            if performance is None:
+                return jsonify(error="no_matching_etix_event"), 404
+            tiers = etix.get_price_breakdown(performance["id"])
+        except etix.ScopeMissing as e:
+            return jsonify(error="etix_scope_missing", detail=str(e)), 403
+        except Exception as e:
+            return jsonify(error="etix_lookup_failed", detail=str(e)), 502
+        audit.record(g.db, g.viewer, "event", event_id, "pull_etix_ticket_tiers", {"tier_count": len(tiers)})
+        return jsonify(ok=True, tiers=tiers)
 
     @app.put("/api/events/<int:event_id>/ticket_tiers")
     @require_booker

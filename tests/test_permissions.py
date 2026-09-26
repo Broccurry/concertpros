@@ -69,8 +69,8 @@ class CrewCannotSeeHoldsOrMoney(unittest.TestCase):
         )
         self.confirmed_event_id = cur.fetchone()[0]
         cur.execute(
-            "INSERT INTO event_artists (event_id, artist_id, confirmed, guarantee, paid, walkups) "
-            "VALUES (%s, %s, TRUE, 750, 800, 12)",
+            "INSERT INTO event_artists (event_id, artist_id, confirmed, guarantee, paid, walkups, "
+            "payment_method, payment_cleared) VALUES (%s, %s, TRUE, 750, 800, 12, 'Check', TRUE)",
             (self.confirmed_event_id, self.artist_id),
         )
 
@@ -118,10 +118,11 @@ class CrewCannotSeeHoldsOrMoney(unittest.TestCase):
         self.assertTrue(mine["artists"][0]["confirmed"])
         self.assertEqual(mine["my_roles"], ["Sound"])
         for forbidden in ("guarantee", "backend_pct", "deal_notes", "settlement",
-                          "ticket_tiers", "staff", "notes", "announce_date", "onsale_date"):
+                          "ticket_tiers", "settlement_ticket_tiers", "staff", "notes",
+                          "announce_date", "onsale_date"):
             self.assertNotIn(forbidden, mine,
                               f"crew's event dict leaked '{forbidden}'")
-        for forbidden in ("guarantee", "paid", "walkups"):
+        for forbidden in ("guarantee", "paid", "walkups", "payment_method", "payment_cleared"):
             self.assertNotIn(forbidden, mine["artists"][0],
                               f"crew's act dict leaked '{forbidden}'")
 
@@ -137,6 +138,8 @@ class CrewCannotSeeHoldsOrMoney(unittest.TestCase):
         self.assertAlmostEqual(float(confirmed["artists"][0]["guarantee"]), 750.0)
         self.assertAlmostEqual(float(confirmed["artists"][0]["paid"]), 800.0)
         self.assertEqual(confirmed["artists"][0]["walkups"], 12)
+        self.assertEqual(confirmed["artists"][0]["payment_method"], "Check")
+        self.assertTrue(confirmed["artists"][0]["payment_cleared"])
 
 
 if __name__ == "__main__":

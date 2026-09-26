@@ -371,6 +371,21 @@ legend{font-size:10.5px;font-weight:600;letter-spacing:.11em;text-transform:uppe
 .expenseline input[type=number]{text-align:right}
 .expenseline .x{justify-self:center}
 @media (max-width:660px){.expenseline{grid-template-columns:1fr 62px 62px 22px;gap:6px}}
+.settlementsheet-cols{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+.settlementsheet-cols .settlementsheet-section{margin-top:0;padding-top:0;border-top:none}
+@media (max-width:660px){.settlementsheet-cols{grid-template-columns:1fr;gap:18px}}
+.tierline{display:grid;grid-template-columns:1fr 55px 50px 65px 22px;gap:6px;align-items:center;margin-bottom:6px}
+.tierline input{width:100%;box-sizing:border-box;min-width:0}
+.tierline input[type=number]{text-align:right}
+.tierline .x{justify-self:center}
+.tierline-total{font-family:var(--display);text-align:right;font-size:12.5px;color:var(--ink-2);white-space:nowrap}
+@media (max-width:660px){.tierline{grid-template-columns:1fr 46px 40px 55px 20px;gap:4px;font-size:12px}}
+.artistlist{margin-top:4px}
+.artistline{display:grid;grid-template-columns:1fr 108px 90px 56px;gap:8px;align-items:center;margin-bottom:8px}
+.artistline select,.artistline input{width:100%;box-sizing:border-box}
+.artistline input[type=number]{text-align:right}
+.artistline-cleared{display:flex;align-items:center;justify-content:center;color:var(--ink-3)}
+@media (max-width:660px){.artistline{grid-template-columns:1fr 84px 70px 44px;gap:6px;font-size:12.5px}}
 
 .ticketsaleslist{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
 .ticketsalerow{display:flex;align-items:center;gap:10px;font-size:13.5px;padding:4px 0}
@@ -789,13 +804,19 @@ var EVENT_TYPES = [{value:"concert",label:"Concert"}, {value:"dance_party",label
 var FIXED_PROMOTERS = ["Innovation Concerts", "Kickstand", "Bravo"];
 var NO_DEAL = "Not recorded";
 var DEAL_TYPES = [NO_DEAL,"Guarantee","Guarantee vs %","Guarantee + %","Door split","Flat rental","Free / promo"];
+var PAYMENT_METHODS = ["", "Cash", "Check", "Deposit", "Wire", "Venmo"];
 // Real categories from Innovation Concerts' own offer/settlement sheets
 // (2026-09-25), not generic placeholders -- a booker still freely adds,
 // renames, or removes lines either way.
+// Touring Support / Local Band used to lead this list -- 2026-09-25, Broc:
+// "instead of putting tour support and local bands at the top, lets list
+// the bands all under artist" -- that's now the Artist Settlement
+// section, pulled from the show's real bill, so those two are gone from
+// the generic expense categories rather than double-counting a payout.
 var SETTLEMENT_TEMPLATES = {
-  simple: ["Touring Support","Local Band","Hospitality","Production (Sound/Lights)","Security",
+  simple: ["Hospitality","Production (Sound/Lights)","Security",
     "Box Office","Marketing","Promoter Profit","Venue Rental","Miscellaneous"],
-  detailed: ["Touring Support","Local Band","Hospitality","Production (Sound/Lights)","Security",
+  detailed: ["Hospitality","Production (Sound/Lights)","Security",
     "Box Office","Marketing","Promoter Profit","Venue Rental","Miscellaneous",
     "Advert","Backline","Barricade","Catering","Chair Rental","Cleanup","Damage","Dress Room",
     "Electrician","Electric Power","Equipment Rental","Firemen","Forklift","Furniture",
@@ -804,6 +825,13 @@ var SETTLEMENT_TEMPLATES = {
     "Setup","Spot Operator","Spots","Staff","Stage","Stage Hands","Stage Manager","Ticket Print",
     "Ticket Taker","Towels","Ushers","Age Differential"],
 };
+// Default ticket tiers on the settlement sheet -- Advance/Day-of-Advance
+// are pullable from Etix (once the account has settlement-report scope,
+// see etix.get_price_breakdown), Walk Up stays manual until SellHQ/Square
+// integration exists, but its PRICE auto-populates from the show card's
+// own ticket_tiers (Broc: "we will have the walk up price on the show
+// card so that can be auto populated from that section").
+var DEFAULT_TICKET_TIER_LABELS = ["Advance", "Day of Advance", "Walk Up"];
 // Live-preview mirror of settlement_calc.py's math, so the sheet updates
 // as you type instead of only after a save round-trip (2026-09-25, Broc:
 // "i am not seeing any sort of math going on when i enter numbers"). The
@@ -1541,19 +1569,34 @@ function renderSettlementEditor(host){
       expenses:0,door_split_from_dollar_one:false,template:"simple",artist_payout:0,settled:false,notes:"",
     };
     var expenses = ev.settlement_expenses ? JSON.parse(JSON.stringify(ev.settlement_expenses)) : [];
-    // Prepopulate from whatever's already known, so there's less to type
-    // by hand -- exactly what Broc asked for ("fields that can be
-    // prepopulated filled out").
-    if((s.gross === "" || s.gross == null) && ev.ticket_sales && ev.ticket_sales.length){
-      var latest = ev.ticket_sales[ev.ticket_sales.length - 1];
-      s.tickets_sold = latest.tickets_sold;
-      if(latest.gross != null) s.gross = latest.gross;
-    }
     if(!expenses.length) expenses = SETTLEMENT_TEMPLATES[s.template || "simple"].map(function(label,i){
       return {label:label, budget:"", actual:"", sort_order:i};
     });
+    // Prepopulate from whatever's already known, so there's less to type
+    // by hand -- exactly what Broc asked for. Walk Up's price comes from
+    // the show card's own ticket_tiers; Advance/Day of Advance start
+    // blank until pulled from Etix or typed by hand.
+    var tiers = ev.settlement_ticket_tiers && ev.settlement_ticket_tiers.length
+      ? JSON.parse(JSON.stringify(ev.settlement_ticket_tiers))
+      : DEFAULT_TICKET_TIER_LABELS.map(function(label, i){
+          var showTier = (ev.ticket_tiers||[]).find(function(t){ return t.label === label; });
+          return {label:label, price: (showTier && showTier.price !== "" && showTier.price != null) ? showTier.price : "",
+                  sold:"", source:"manual", sort_order:i};
+        });
+    // Every artist on the bill, not grouped into one lump payout (Broc:
+    // "we want the artists to be seperate not grouped together as one
+    // total") -- pulled straight from the show card's own bill, same
+    // event_artists rows the show editor manages; paid/payment_method/
+    // payment_cleared already live there (see schema.sql), so this is
+    // the same fields, just entered from the settlement sheet instead.
+    var artists = (ev.artists||[]).filter(function(a){ return !a.declined; }).map(function(a){
+      return JSON.parse(JSON.stringify(Object.assign({}, a, {
+        paid: a.paid != null ? a.paid : "", payment_method: a.payment_method || "",
+        payment_cleared: !!a.payment_cleared,
+      })));
+    });
     ui.settlementDraft = {
-      eventId: ev.id, version: ev.version, settlement: s, expenses: expenses,
+      eventId: ev.id, version: ev.version, settlement: s, expenses: expenses, tiers: tiers, artists: artists,
       dealType: ev.deal_type || NO_DEAL, guarantee: ev.guarantee, backendPct: ev.backend_pct,
     };
   }
@@ -1624,42 +1667,12 @@ function renderSettlementEditor(host){
     return {row:row, setValue:function(v){ valueEl.textContent = v; }};
   }
 
-  var ticketingSection = el("div","settlementsheet-section");
-  ticketingSection.appendChild(el("div","eyebrow","Ticket Sales"));
-  var pullBtn = el("button","btn btn-sm","Pull latest ticket sale");
-  pullBtn.type = "button";
-  pullBtn.style.margin = "6px 0 10px";
-  pullBtn.onclick = async function(){
-    pullBtn.disabled = true; pullBtn.textContent = "Pulling…";
-    var r = await api("/api/events/" + ev.id + "/ticket_sales/pull_etix", {method:"POST"});
-    pullBtn.disabled = false; pullBtn.textContent = "Pull latest ticket sale";
-    if(!r.ok){
-      window.alert(r.body.error === "no_matching_etix_event"
-        ? "No matching Etix event found for this venue and date."
-        : (r.body.detail || r.body.error || "Could not pull ticket sales."));
-      return;
-    }
-    // The endpoint only hands back tickets_sold -- gross comes from the
-    // ticket_sales row it just wrote, so reload events to see it (same
-    // pattern as the show card's own "Pull from Etix" button).
-    await loadEvents();
-    var freshEv = eventById(ev.id);
-    var sales = (freshEv && freshEv.ticket_sales) || [];
-    if(sales.length){
-      var latest = sales[sales.length - 1];
-      s.tickets_sold = latest.tickets_sold;
-      if(latest.gross != null) s.gross = latest.gross;
-    }
-    renderSettlementsView();
-  };
-  ticketingSection.appendChild(pullBtn);
-  var ticketsRow = settleRowInput("Tickets sold", s.tickets_sold, function(v){ s.tickets_sold = v; recalc(); });
-  var grossRow = settleRowInput("Gross (walk-up + presale)", s.gross, function(v){ s.gross = v; recalc(); });
-  ticketingSection.appendChild(ticketsRow.row);
-  ticketingSection.appendChild(grossRow.row);
-  sheet.appendChild(ticketingSection);
+  // Expenses (left) and Ticket Sales (right) side by side -- 2026-09-25,
+  // Broc: the expense boxes felt like "way too much empty space" stacked
+  // full-width; putting the two side by side uses that space instead of
+  // wasting it.
+  var colsWrap = el("div","settlementsheet-cols");
 
-  // ---- Expenses -> Net After Expenses ----
   var expSection = el("div","settlementsheet-section");
   expSection.appendChild(el("div","eyebrow","Expenses"));
   if(sd.dealType === "Door split"){
@@ -1702,7 +1715,83 @@ function renderSettlementEditor(host){
   expSection.appendChild(totalExpensesTotal.row);
   var netAfterExpensesTotal = settleRowTotal("NET AFTER EXPENSES");
   expSection.appendChild(netAfterExpensesTotal.row);
-  sheet.appendChild(expSection);
+  colsWrap.appendChild(expSection);
+
+  // ---- Ticket Sales -- Advance / Day of Advance / Walk Up by default
+  // (2026-09-25, Broc: "we should see the number of sold for each tier
+  // and the price and the total"). Walk Up's price auto-fills from the
+  // show card; Advance/Day of Advance are pullable from Etix's own
+  // settlement report once that scope is granted (see etix.py).
+  var ticketingSection = el("div","settlementsheet-section");
+  ticketingSection.appendChild(el("div","eyebrow","Ticket Sales"));
+  var tierPullBtn = el("button","btn btn-sm","Pull tiers from Etix");
+  tierPullBtn.type = "button";
+  tierPullBtn.style.margin = "6px 0 10px";
+  tierPullBtn.onclick = async function(){
+    tierPullBtn.disabled = true; tierPullBtn.textContent = "Pulling…";
+    var r = await api("/api/events/" + ev.id + "/settlement_ticket_tiers/pull_etix", {method:"POST"});
+    tierPullBtn.disabled = false; tierPullBtn.textContent = "Pull tiers from Etix";
+    if(!r.ok){
+      if(r.body.error === "etix_scope_missing"){
+        window.alert("Etix hasn't granted this app access to its Settlement API yet, so tier-level " +
+          "data isn't available. Add the VIEW_SETTLEMENT_DATA scope (Etix permission " +
+          "\"VIEW ACCOUNTING DATA\") to the API key in Etix's Manage API Keys screen, then try again.");
+      } else {
+        window.alert(r.body.error === "no_matching_etix_event"
+          ? "No matching Etix event found for this venue and date."
+          : (r.body.detail || r.body.error || "Could not pull ticket tiers."));
+      }
+      return;
+    }
+    // Update a tier we already have by matching label; anything Etix
+    // returns that isn't already one of our tiers gets appended as a new
+    // one (Broc: "if etix returns extra tiers as well it should auto add
+    // those tiers").
+    r.body.tiers.forEach(function(t){
+      var existing = sd.tiers.find(function(x){ return x.label.toLowerCase() === (t.label||"").toLowerCase(); });
+      if(existing){ existing.price = t.price; existing.sold = t.sold; existing.source = "etix"; }
+      else sd.tiers.push({label: t.label, price: t.price, sold: t.sold, source: "etix", sort_order: sd.tiers.length});
+    });
+    renderSettlementsView();
+  };
+  ticketingSection.appendChild(tierPullBtn);
+  var tierList = el("div","expenselist");
+  var tierHead = el("div","tierline");
+  tierHead.appendChild(el("span","eyebrow","Tier")); tierHead.appendChild(el("span","eyebrow","Price"));
+  tierHead.appendChild(el("span","eyebrow","Sold")); tierHead.appendChild(el("span","eyebrow","Total"));
+  tierHead.appendChild(el("span"));
+  tierList.appendChild(tierHead);
+  var tierTotalEls = [];
+  sd.tiers.forEach(function(tier, idx){
+    var row = el("div","tierline");
+    row.appendChild(input("text", tier.label, function(v){ tier.label = v; }));
+    row.appendChild(input("number", tier.price, function(v){ tier.price = v; tier.source = "manual"; recalc(); }));
+    row.appendChild(input("number", tier.sold, function(v){ tier.sold = v; tier.source = "manual"; recalc(); }));
+    var totalEl = el("span","tierline-total","$0");
+    row.appendChild(totalEl);
+    tierTotalEls.push(totalEl);
+    var del = el("button","x","✕"); del.type = "button"; del.title = "Remove tier";
+    del.onclick = function(){ sd.tiers.splice(idx,1); renderSettlementsView(); };
+    row.appendChild(del);
+    tierList.appendChild(row);
+  });
+  ticketingSection.appendChild(tierList);
+  var addTierBtn = el("button","btn btn-sm","+ Add tier");
+  addTierBtn.type = "button";
+  addTierBtn.style.marginTop = "8px";
+  addTierBtn.onclick = function(){
+    sd.tiers.push({label:"", price:"", sold:"", source:"manual", sort_order: sd.tiers.length});
+    renderSettlementsView();
+  };
+  ticketingSection.appendChild(addTierBtn);
+  var totalTicketsTotal = settleRowTotal("TOTAL TICKETS SOLD");
+  totalTicketsTotal.row.style.marginTop = "10px";
+  ticketingSection.appendChild(totalTicketsTotal.row);
+  var totalGrossTotal = settleRowTotal("TOTAL GROSS");
+  ticketingSection.appendChild(totalGrossTotal.row);
+  colsWrap.appendChild(ticketingSection);
+
+  sheet.appendChild(colsWrap);
 
   // ---- Deductions -> Net Gross ----
   var dedSection = el("div","settlementsheet-section");
@@ -1719,13 +1808,62 @@ function renderSettlementEditor(host){
   dedSection.appendChild(netGrossTotal.row);
   sheet.appendChild(dedSection);
 
-  // ---- Artist settlement ----
+  // ---- Artist settlement -- each artist separate, not grouped into one
+  // lump payout (2026-09-25, Broc: "we want the artists to be seperate
+  // not grouped together as one total"). Pulled from the show's real
+  // bill (event_artists); the payment method + amount entered here save
+  // back to that same bill on save, so it also lands on the artist's own
+  // card, not just this sheet.
   var artistSection = el("div","settlementsheet-section");
   artistSection.appendChild(el("div","eyebrow","Artist Settlement"));
   var explainEl = el("p","settlesheet-explain");
   artistSection.appendChild(explainEl);
-  var payoutTotal = settleRowTotal("ARTIST PAYOUT", "settlerow-payout");
-  artistSection.appendChild(payoutTotal.row);
+
+  var visibleArtists = sd.artists.filter(function(a){ return !a.declined; });
+  var artistList = el("div","artistlist");
+  if(visibleArtists.length){
+    var artistHead = el("div","artistline");
+    artistHead.appendChild(el("span","eyebrow","Artist")); artistHead.appendChild(el("span","eyebrow","Method"));
+    artistHead.appendChild(el("span","eyebrow","Paid")); artistHead.appendChild(el("span","eyebrow","Cleared"));
+    artistList.appendChild(artistHead);
+  } else {
+    artistList.appendChild(el("p","hint","No artists on this show's bill yet."));
+  }
+  visibleArtists.forEach(function(a){
+    var row = el("div","artistline");
+    row.appendChild(el("span",null,a.name));
+    row.appendChild(select(PAYMENT_METHODS, a.payment_method || "", function(v){ a.payment_method = v; renderSettlementsView(); }));
+    row.appendChild(input("number", a.paid, function(v){ a.paid = v; recalc(); }));
+    var clearedCell = el("div","artistline-cleared");
+    if(a.payment_method === "Check" || a.payment_method === "Venmo"){
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = !!a.payment_cleared;
+      cb.onchange = function(){ a.payment_cleared = cb.checked; };
+      clearedCell.appendChild(cb);
+    } else {
+      clearedCell.textContent = "—";
+    }
+    row.appendChild(clearedCell);
+    artistList.appendChild(row);
+  });
+  artistSection.appendChild(artistList);
+
+  var addArtistBtn = el("button","btn btn-sm","+ Add artist");
+  addArtistBtn.type = "button";
+  addArtistBtn.style.marginTop = "8px";
+  addArtistBtn.onclick = function(){
+    var name = (window.prompt("Artist name (missing from the show card)?") || "").trim();
+    if(!name) return;
+    sd.artists.push({name:name, confirmed:false, declined:false, notes:null, bill_role:null,
+      guarantee:null, paid:"", walkups:null, set_time:null, set_time_end:null,
+      payment_method:"", payment_cleared:false});
+    renderSettlementsView();
+  };
+  artistSection.appendChild(addArtistBtn);
+
+  var totalPaidTotal = settleRowTotal("TOTAL PAID TO ARTISTS", "settlerow-payout");
+  totalPaidTotal.row.style.marginTop = "10px";
+  artistSection.appendChild(totalPaidTotal.row);
   var netToRoomTotal = settleRowTotal("NET TO ROOM");
   artistSection.appendChild(netToRoomTotal.row);
   sheet.appendChild(artistSection);
@@ -1734,14 +1872,32 @@ function renderSettlementEditor(host){
 
   function dealExplainText(dealType, guarantee, backendPct, netGross, netAfterExpenses){
     guarantee = +guarantee || 0; backendPct = +backendPct || 0;
-    if(dealType === "Guarantee") return "Flat guarantee — turnout doesn't change it.";
-    if(dealType === "Guarantee vs %") return "Whichever's greater: " + money(guarantee) + " guarantee, or " + backendPct + "% of net after expenses (" + money(backendPct/100*netAfterExpenses) + ").";
-    if(dealType === "Guarantee + %") return money(guarantee) + " guarantee, plus " + backendPct + "% of whatever clears " + money(guarantee) + " + expenses.";
-    if(dealType === "Door split") return backendPct + "% of " + (s.door_split_from_dollar_one ? "net gross, from the first dollar." : "net after expenses.");
-    return "No artist split for this deal type — the room keeps net after expenses.";
+    var computed = settlementArtistPayout(dealType, guarantee, backendPct, netGross, netAfterExpenses, s.door_split_from_dollar_one);
+    var math;
+    if(dealType === "Guarantee") math = "Flat guarantee — turnout doesn't change it.";
+    else if(dealType === "Guarantee vs %") math = "Whichever's greater: " + money(guarantee) + " guarantee, or " + backendPct + "% of net after expenses (" + money(backendPct/100*netAfterExpenses) + ").";
+    else if(dealType === "Guarantee + %") math = money(guarantee) + " guarantee, plus " + backendPct + "% of whatever clears " + money(guarantee) + " + expenses.";
+    else if(dealType === "Door split") math = backendPct + "% of " + (s.door_split_from_dollar_one ? "net gross, from the first dollar." : "net after expenses.");
+    else math = "No artist split for this deal type — the room keeps net after expenses.";
+    return math + " This deal computes to " + money(computed) + " — enter what's actually being paid to each artist below.";
   }
 
   function recalc(){
+    // Ticket tiers feed tickets_sold/gross -- same sync-from-children
+    // convention as settlement_expenses feeding `expenses` (mirrors the
+    // server's own _recompute_settlement).
+    var ticketsTotal = 0, grossTotal = 0;
+    sd.tiers.forEach(function(tier, idx){
+      var lineTotal = (+tier.sold || 0) * (+tier.price || 0);
+      tierTotalEls[idx].textContent = money(lineTotal);
+      ticketsTotal += (+tier.sold || 0);
+      grossTotal += lineTotal;
+    });
+    s.tickets_sold = ticketsTotal;
+    s.gross = grossTotal;
+    totalTicketsTotal.setValue(String(ticketsTotal));
+    totalGrossTotal.setValue(money(grossTotal));
+
     var ng = settlementNetGross(s.gross, s.sales_tax_rate, s.facility_fee_per_ticket, s.tickets_sold, s.ticketing_fee_rate);
     salesTaxComputed.setValue(money(ng.salesTax));
     facilityFeeComputed.setValue(money(ng.facilityFee));
@@ -1753,9 +1909,9 @@ function renderSettlementEditor(host){
     var netAfterExpenses = ng.netGross - expensesTotal;
     netAfterExpensesTotal.setValue(money(netAfterExpenses));
 
-    var payout = settlementArtistPayout(sd.dealType, sd.guarantee, sd.backendPct, ng.netGross, netAfterExpenses, s.door_split_from_dollar_one);
-    payoutTotal.setValue(money(payout));
-    netToRoomTotal.setValue(money(netAfterExpenses - payout));
+    var totalPaid = sd.artists.reduce(function(sum,a){ return a.declined ? sum : sum + (+a.paid || 0); }, 0);
+    totalPaidTotal.setValue(money(totalPaid));
+    netToRoomTotal.setValue(money(netAfterExpenses - totalPaid));
     explainEl.textContent = dealExplainText(sd.dealType, sd.guarantee, sd.backendPct, ng.netGross, netAfterExpenses);
   }
   recalc();
@@ -1785,9 +1941,16 @@ function renderSettlementEditor(host){
       if(!rDeal.ok){ saveErr.textContent = rDeal.body.error || "Could not save the deal terms."; return; }
       sd.version = rDeal.body.version;
     }
+    if(sd.artists.length){
+      var rArtists = await api("/api/events/" + ev.id + "/artists", {method:"PUT", body: JSON.stringify({artists: sd.artists})});
+      if(!rArtists.ok){ saveErr.textContent = rArtists.body.error || "Could not save artist payouts."; return; }
+    }
     var lines = sd.expenses.filter(function(l){ return (l.label||"").trim(); });
     var r1 = await api("/api/events/" + ev.id + "/settlement_expenses", {method:"PUT", body: JSON.stringify({lines: lines})});
     if(!r1.ok){ saveErr.textContent = r1.body.error || "Could not save expenses."; return; }
+    var tiers = sd.tiers.filter(function(t){ return (t.label||"").trim(); });
+    var rTiers = await api("/api/events/" + ev.id + "/settlement_ticket_tiers", {method:"PUT", body: JSON.stringify({tiers: tiers})});
+    if(!rTiers.ok){ saveErr.textContent = rTiers.body.error || "Could not save ticket tiers."; return; }
     var r2 = await api("/api/events/" + ev.id + "/settlement", {method:"PUT", body: JSON.stringify(s)});
     if(!r2.ok){ saveErr.textContent = r2.body.error || "Could not save finals."; return; }
     await loadEvents();
@@ -2566,7 +2729,7 @@ async function openEvent(id, dateHint){
       artists:[], status:"hold1", show_date: dateHint || todayISO(), doors:"19:00", show_time:"20:00",
       deal_type:NO_DEAL, guarantee:"", backend_pct:"", deal_notes:"",
       event_types:["concert"], promoters:["Innovation Concerts"],
-      ticket_tiers:[{label:"Advance",price:""},{label:"Day of show",price:""}], ticket_link:"",
+      ticket_tiers:[{label:"Advance",price:""},{label:"Day of Advance",price:""},{label:"Walk Up",price:""}], ticket_link:"",
       announce_date:"", onsale_date:"", notes:"", messages:[], files:[], extraDates:[], group_members:[],
       tasks:[], staff:[],
       settlement:{tickets_sold:"",gross:"",sales_tax_rate:"",facility_fee_per_ticket:"",ticketing_fee_rate:"",
@@ -3748,7 +3911,7 @@ function openSetTimeSheet(ev){
   var w = window.open("", "_blank");
   if(!w) return;
   var acts = (ev.artists || []).filter(function(a){ return !a.declined; });
-  var dayOfTier = (ev.ticket_tiers || []).find(function(t){ return t.label === "Day of show"; });
+  var dayOfTier = (ev.ticket_tiers || []).find(function(t){ return t.label === "Walk Up"; });
   var blocks = acts.map(function(a){
     var when = a.set_time ? (escHtml(time12(a.set_time)) + " - " + (a.set_time_end ? escHtml(time12(a.set_time_end)) : "?")) : "TBD";
     return "<div class=\"act\"><div class=\"sname\">" + escHtml(a.name) + "</div><div class=\"stime\">" + when + "</div></div>";

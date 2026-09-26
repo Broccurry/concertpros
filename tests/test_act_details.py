@@ -97,6 +97,46 @@ class ActDetailsAndContactLog(unittest.TestCase):
         })
         self.assertEqual(put.status_code, 400)
 
+    def test_payment_method_and_cleared_round_trip(self):
+        """2026-09-25: how each band on the bill was actually paid, set
+        from the settlement sheet -- travels through the same whole-bill
+        PUT .../artists as everything else on an act, so there's still
+        only one function deciding how a bill gets saved (rule 2)."""
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book(client)
+
+        put = client.put(f"/api/events/{self.event_id}/artists", json={
+            "artists": [{"name": self.artist_name, "paid": 500, "payment_method": "Check", "payment_cleared": False}],
+        })
+        self.assertEqual(put.status_code, 200, put.get_json())
+        act = self._get_act(client)
+        self.assertAlmostEqual(float(act["paid"]), 500.0)
+        self.assertEqual(act["payment_method"], "Check")
+        self.assertFalse(act["payment_cleared"])
+
+        # Ticking "cleared" later must not require re-typing everything else.
+        put2 = client.put(f"/api/events/{self.event_id}/artists", json={
+            "artists": [{"name": self.artist_name, "paid": 500, "payment_method": "Check", "payment_cleared": True}],
+        })
+        self.assertEqual(put2.status_code, 200, put2.get_json())
+        act2 = self._get_act(client)
+        self.assertTrue(act2["payment_cleared"])
+
+    def test_invalid_payment_method_is_rejected(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._book(client)
+        put = client.put(f"/api/events/{self.event_id}/artists", json={
+            "artists": [{"name": self.artist_name, "payment_method": "Bitcoin"}],
+        })
+        self.assertEqual(put.status_code, 400)
+
+    def _get_act(self, client):
+        events = client.get("/api/events").get_json()["events"]
+        mine = next(e for e in events if e["id"] == self.event_id)
+        return mine["artists"][0]
+
     def test_set_time_round_trips_and_survives_a_second_save(self):
         client = self.app.test_client()
         self._login(client, self.booker_email)

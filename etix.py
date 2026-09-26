@@ -16,6 +16,7 @@ now) is a different, more limited registration type.
 import json
 import os
 import time as time_module
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
@@ -23,6 +24,13 @@ from zoneinfo import ZoneInfo
 
 TOKEN_URL = "https://authorization.etix.com/v1/token/authorize"
 API_BASE = "https://api.etix.com/v3"
+
+
+class ScopeMissing(Exception):
+    """Etix rejected a call because this app's API key doesn't have the
+    OAuth scope that endpoint needs -- distinct from a generic failure so
+    a caller can surface a real, actionable message (go add the scope in
+    Etix's "Manage API Keys" screen) instead of a dead-end error."""
 
 # Looked up by hand via the public events feed before private access
 # worked (see project memory) -- kept as the known-good mapping now that
@@ -157,6 +165,56 @@ def get_daily_sales(performance_id):
     )
     with urllib.request.urlopen(req, timeout=20) as resp:
         return json.loads(resp.read()).get("dailySales", [])
+
+
+# Etix price-code names observed to mean "not a real sale" -- comps and
+# pre-printed/killed tickets shouldn't count toward a settlement's real
+# sold figures (Broc: "do not include pre prints in the numbers"). This
+# list is a best-effort guess from common Etix naming, UNVERIFIED against
+# real data as of 2026-09-25 -- unlike the snapshot's pulledTickets
+# exclusion above (confirmed against a real show), the only endpoint with
+# this breakdown needs a scope this app's API key doesn't have yet (see
+# ScopeMissing), so there was no real settlement-report response to check
+# this against. Verify it the first time this actually runs for real.
+_NON_SALE_PRICE_CODE_MARKERS = ("comp", "kill", "pre-print", "preprint", "print")
+
+
+def get_price_breakdown(performance_id):
+    """Ticket counts and prices broken out by Etix price code (Advance,
+    Day of Advance, etc), straight from Etix's own Settlement API -- the
+    only endpoint in Etix's spec that exposes a per-tier breakdown; the
+    snapshot/daily-sales endpoints above only ever give one aggregate
+    total. Requires OAuth scope VIEW_SETTLEMENT_DATA (Etix permission
+    "VIEW ACCOUNTING DATA"), which this app's API key does NOT have as of
+    2026-09-25 -- confirmed live: a real call for a real performance
+    returned 406 invalid_scope. Raises ScopeMissing in that case so a
+    caller can tell a booker exactly what to go grant, rather than a dead
+    502."""
+    token = _get_token()
+    req = urllib.request.Request(
+        f"{API_BASE}/settlements/{performance_id}?includeZeroSales=false",
+        headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", "replace")
+        if e.code in (403, 406) and "scope" in body.lower():
+            raise ScopeMissing(
+                "Etix rejected this call for a missing scope -- add VIEW_SETTLEMENT_DATA "
+                "(Etix permission 'VIEW ACCOUNTING DATA') to this app's API key in Etix's "
+                "Manage API Keys screen."
+            ) from e
+        raise
+    tiers = []
+    for channel in data.get("salesChannels", []):
+        for code in channel.get("priceCodes", []):
+            name = code.get("priceLevelName") or code.get("priceCodeName") or "Unknown"
+            if any(marker in name.lower() for marker in _NON_SALE_PRICE_CODE_MARKERS):
+                continue
+            tiers.append({"label": name, "price": code.get("ticketPrice"), "sold": code.get("ticketCount")})
+    return tiers
 
 
 def pull_and_store_snapshot(conn, event_id, venue_name, show_date, sale_date=None):

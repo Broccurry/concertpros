@@ -129,7 +129,7 @@ def _artists_by_event(conn, ids: list[int], include_money: bool = False) -> dict
     rather than fetching and hiding them. The contact log is booker/owner
     only for the same reason it exists at all (which booker already
     reached out) — crew has no path to it either way."""
-    money_cols = ", ea.guarantee, ea.paid, ea.walkups" if include_money else ""
+    money_cols = ", ea.guarantee, ea.paid, ea.walkups, ea.payment_method, ea.payment_cleared" if include_money else ""
     with conn.cursor() as cur:
         cur.execute(
             f"SELECT ea.event_id, ea.id, ea.artist_id, a.name, ea.confirmed, ea.declined, "
@@ -311,11 +311,24 @@ def _events_for_booker(conn, date_from, date_to, venue_id) -> list[dict]:
             d = dict(zip(cols, row))
             sales_by_event.setdefault(d.pop("event_id"), []).append(d)
 
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT event_id, id, label, price, sold, source, sort_order FROM settlement_ticket_tiers "
+            "WHERE event_id = ANY(%(ids)s) ORDER BY sort_order",
+            {"ids": ids},
+        )
+        settle_tiers_by_event: dict[int, list[dict]] = {}
+        cols = [c.name for c in cur.description]
+        for row in cur.fetchall():
+            d = dict(zip(cols, row))
+            settle_tiers_by_event.setdefault(d.pop("event_id"), []).append(d)
+
     for e in events:
         eid = effective_id(e)
         e["artists"] = artists_by_event.get(eid, [])
         e["settlement"] = settlements.get(eid)
         e["settlement_expenses"] = expenses_by_event.get(eid, [])
+        e["settlement_ticket_tiers"] = settle_tiers_by_event.get(eid, [])
         e["ticket_tiers"] = tiers_by_event.get(eid, [])
         e["staff"] = staff_by_event.get(eid, [])
         e["tasks"] = tasks_by_event.get(eid, [])

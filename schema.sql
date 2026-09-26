@@ -185,6 +185,14 @@ CREATE TABLE event_artists (
     bill_role   TEXT CHECK (bill_role IN ('Touring', 'Direct Support', 'Support', 'Local') OR bill_role IS NULL),
     set_time      TIME,             -- when this act actually plays, for the printed set time sheet
     set_time_end  TIME,             -- NULL = open-ended ("10:30-?"), true for every headliner
+    -- How this band's payout was actually paid, and (for a check or Venmo,
+    -- where handing it over isn't the same as it clearing) whether it's
+    -- cleared yet. Set from the settlement sheet, not the bill editor --
+    -- unknown until the show is settled -- but travels through the same
+    -- PUT .../artists whole-bill replace as everything else on this row,
+    -- so there's still only one function deciding how a bill gets saved.
+    payment_method    TEXT CHECK (payment_method IN ('Cash','Check','Deposit','Wire','Venmo') OR payment_method IS NULL),
+    payment_cleared   BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE (event_id, artist_id)
 );
 
@@ -289,6 +297,28 @@ CREATE TABLE settlement_expenses (
     sort_order  INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_settlement_expenses_event ON settlement_expenses(event_id, sort_order);
+
+-- One row per ticket price tier's real sold count for a settlement --
+-- Innovation Concerts sells Advance / Day of Advance / Walk Up at three
+-- different prices, and Broc wants each one broken out rather than
+-- folded into settlements.tickets_sold/gross as one lump figure. Those
+-- two columns stay as a SYNCED total (same convention as `expenses`) --
+-- see app.py's _recompute_settlement -- but ONLY once at least one tier
+-- row exists, so a show settled before this table existed (real
+-- production data, one show already has tickets_sold/gross recorded
+-- with no tiers behind it) keeps its number rather than reading as zero.
+-- source distinguishes a manual count from an Etix settlement-report
+-- pull, same convention as ticket_sales.source.
+CREATE TABLE settlement_ticket_tiers (
+    id          SERIAL PRIMARY KEY,
+    event_id    INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+    label       TEXT NOT NULL,
+    price       NUMERIC,
+    sold        INTEGER,
+    source      TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'etix')),
+    sort_order  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_settlement_ticket_tiers_event ON settlement_ticket_tiers(event_id, sort_order);
 
 -- Auth sessions. Long-lived on purpose (crew checking a schedule on their
 -- phone should not be re-logging-in constantly) — the opposite tradeoff

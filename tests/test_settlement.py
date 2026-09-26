@@ -244,6 +244,153 @@ class SettlingAShow(unittest.TestCase):
         )
         self.assertEqual(cur.fetchone()[0], 1)
 
+    def test_crew_cannot_touch_ticket_tiers(self):
+        client = self.app.test_client()
+        self._login(client, self.crew_email)
+        r = client.put(f"/api/events/{self.event_id}/settlement_ticket_tiers", json={"tiers": []})
+        self.assertEqual(r.status_code, 403)
+
+    def test_ticket_tiers_feed_tickets_sold_and_gross(self):
+        """2026-09-25: Broc wants Advance/Day-of-Advance/Walk-Up broken out
+        with their own sold count and price, not one lump tickets_sold/
+        gross -- those two become a synced total of the tier rows, same
+        convention as `expenses` syncing from settlement_expenses."""
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        self._set_deal(client, "Guarantee", guarantee=500)
+
+        r = client.put(f"/api/events/{self.event_id}/settlement_ticket_tiers", json={"tiers": [
+            {"label": "Advance", "price": 20, "sold": 100},
+            {"label": "Day of Advance", "price": 25, "sold": 40},
+            {"label": "Walk Up", "price": 30, "sold": 10},
+        ]})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(r.get_json()["tickets_sold"], 150)
+        # 100*20 + 40*25 + 10*30 = 2000 + 1000 + 300 = 3300
+        self.assertAlmostEqual(r.get_json()["gross"], 3300.0)
+
+        mine = self._get_settlement(client)
+        self.assertEqual(int(mine["settlement"]["tickets_sold"]), 150)
+        self.assertAlmostEqual(float(mine["settlement"]["gross"]), 3300.0)
+        self.assertEqual([t["label"] for t in mine["settlement_ticket_tiers"]],
+                          ["Advance", "Day of Advance", "Walk Up"])
+
+    def test_a_settlement_with_no_tiers_keeps_its_existing_tickets_sold_and_gross(self):
+        """A show settled before this feature existed (real production
+        data: one already-settled show has tickets_sold/gross recorded
+        with no tier rows behind it) must keep its number rather than
+        reading as zero the moment a tier row doesn't exist yet."""
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        client.put(f"/api/events/{self.event_id}/settlement", json={"tickets_sold": 475, "gross": 16320})
+        # A save that touches something else entirely (an expense line)
+        # must not blank out the pre-tiers tickets_sold/gross.
+        r = client.put(f"/api/events/{self.event_id}/settlement_expenses", json={"lines": [
+            {"label": "Security", "actual": 100},
+        ]})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        mine = self._get_settlement(client)
+        self.assertEqual(int(mine["settlement"]["tickets_sold"]), 475)
+        self.assertAlmostEqual(float(mine["settlement"]["gross"]), 16320.0)
+
+    def test_replacing_tiers_removes_ones_left_out(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        client.put(f"/api/events/{self.event_id}/settlement_ticket_tiers", json={"tiers": [
+            {"label": "Advance", "price": 20, "sold": 100}, {"label": "Walk Up", "price": 30, "sold": 10},
+        ]})
+        client.put(f"/api/events/{self.event_id}/settlement_ticket_tiers", json={"tiers": [
+            {"label": "Advance", "price": 20, "sold": 100},
+        ]})
+        mine = self._get_settlement(client)
+        self.assertEqual([t["label"] for t in mine["settlement_ticket_tiers"]], ["Advance"])
+
+    def test_a_blank_tier_label_is_rejected(self):
+        client = self.app.test_client()
+        self._login(client, self.booker_email)
+        r = client.put(f"/api/events/{self.event_id}/settlement_ticket_tiers", json={"tiers": [
+            {"label": "", "price": 20, "sold": 100},
+        ]})
+        self.assertEqual(r.status_code, 400)
+
+
+class PullingEtixTicketTiers(unittest.TestCase):
+    """The settlement sheet's per-tier "pull from Etix" -- separate from
+    the plain ticket_sales pull, which only ever gives one aggregate
+    count. Mocks etix itself; the real Settlement API call is covered by
+    manual verification in etix.py's own docstring (confirmed live
+    2026-09-25 that this app's API key doesn't have the needed scope
+    yet)."""
+
+    def setUp(self):
+        self.conn = db.get_connection()
+        cur = self.conn.cursor()
+        self.password = "correct horse battery staple"
+        cur.execute(
+            """INSERT INTO people (name, email, password_hash, access_level)
+               VALUES ('Test Booker', %s, %s, 'booker') RETURNING id""",
+            (f"pulltier-test-booker-{id(self)}@example.invalid", auth.hash_password(self.password)),
+        )
+        self.booker_id = cur.fetchone()[0]
+        cur.execute("SELECT id, name FROM venues WHERE name = 'Frankies'")
+        self.venue_id, self.venue_name = cur.fetchone()
+        cur.execute(
+            "INSERT INTO events (venue_id, show_date, status, created_by) VALUES (%s, '2027-03-01', 'complete', %s) RETURNING id",
+            (self.venue_id, self.booker_id),
+        )
+        self.event_id = cur.fetchone()[0]
+        self.conn.commit()
+        cur.execute("SELECT email FROM people WHERE id = %s", (self.booker_id,))
+        self.booker_email = cur.fetchone()[0]
+        self.app = app_module.create_app()
+        self.app.config["TESTING"] = True
+
+    def tearDown(self):
+        cur = self.conn.cursor()
+        cur.execute("DELETE FROM audit_log WHERE entity_type = 'event' AND entity_id = %s", (self.event_id,))
+        cur.execute("DELETE FROM events WHERE id = %s", (self.event_id,))
+        cur.execute("DELETE FROM sessions WHERE person_id = %s", (self.booker_id,))
+        cur.execute("DELETE FROM people WHERE id = %s", (self.booker_id,))
+        self.conn.commit()
+        self.conn.close()
+
+    def _login(self, client):
+        r = client.post("/api/login", json={"email": self.booker_email, "password": self.password})
+        self.assertEqual(r.status_code, 200, r.get_json())
+
+    def test_a_real_breakdown_comes_back_as_tiers(self):
+        client = self.app.test_client()
+        self._login(client)
+        with patch("app.etix._find_public_event", return_value={"id": 999}), \
+             patch("app.etix.get_price_breakdown", return_value=[
+                 {"label": "Advance", "price": 20.0, "sold": 100},
+                 {"label": "Day of Advance", "price": 25.0, "sold": 40},
+             ]):
+            r = client.post(f"/api/events/{self.event_id}/settlement_ticket_tiers/pull_etix")
+        self.assertEqual(r.status_code, 200, r.get_json())
+        self.assertEqual(r.get_json()["tiers"], [
+            {"label": "Advance", "price": 20.0, "sold": 100},
+            {"label": "Day of Advance", "price": 25.0, "sold": 40},
+        ])
+
+    def test_missing_scope_is_a_clear_403_not_a_dead_502(self):
+        import etix
+        client = self.app.test_client()
+        self._login(client)
+        with patch("app.etix._find_public_event", return_value={"id": 999}), \
+             patch("app.etix.get_price_breakdown", side_effect=etix.ScopeMissing("go grant it")):
+            r = client.post(f"/api/events/{self.event_id}/settlement_ticket_tiers/pull_etix")
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(r.get_json()["error"], "etix_scope_missing")
+
+    def test_no_matching_show_is_a_404(self):
+        client = self.app.test_client()
+        self._login(client)
+        with patch("app.etix._find_public_event", return_value=None), \
+             patch("app.etix._find_private_event", return_value=None):
+            r = client.post(f"/api/events/{self.event_id}/settlement_ticket_tiers/pull_etix")
+        self.assertEqual(r.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()
