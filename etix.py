@@ -170,9 +170,38 @@ def _price_label(price):
     return f"${int(price)}" if price == int(price) else f"${price:.2f}"
 
 
+# Maps an Etix priceCode down to the broad tier category a booker actually
+# thinks in -- Broc's own vocabulary (2026-09-26): "most of the time it
+# will be simple advance and day of but at cz we do offer seated and
+# tables and mezzanine depending on the show." UNVERIFIED beyond the two
+# real shows checked so far (Merkules -> Advance/Day Of, Crystal Bowersox
+# -> Floor/Table); a future show with a genuinely new price-code wording
+# falls through to the raw code name rather than crashing or guessing
+# wrong, but may need a new keyword added here once seen for real.
+_TIER_CATEGORY_KEYWORDS = [
+    ("advance", "Advance"),
+    ("day of", "Day Of"),
+    ("walk", "Walk Up"),
+    ("mezzanine", "Mezzanine"),
+    ("floor", "Floor"),
+    ("table", "Table"),
+    ("balcony", "Balcony"),
+    ("box", "Box"),
+    ("vip", "VIP"),
+]
+
+
+def _tier_category(price_code):
+    name = (price_code or "").lower()
+    for keyword, category in _TIER_CATEGORY_KEYWORDS:
+        if keyword in name:
+            return category
+    return price_code or "Unknown"
+
+
 def get_price_breakdown(performance_id):
-    """Ticket counts broken out by real price point (a settlement-sheet
-    tier), built from real per-ticket order data -- NOT Etix's
+    """Ticket counts broken out by tier category + price (e.g. "Advance",
+    "Floor $35"), built from real per-ticket order data -- NOT Etix's
     "Settlement API" (/settlements/{id}), which would be the more obvious
     source but needs a VIEW_SETTLEMENT_DATA scope this app's API key
     doesn't have (confirmed live: a real call returned 406 invalid_scope).
@@ -190,22 +219,22 @@ def get_price_breakdown(performance_id):
     exact figure get_daily_sales already independently produces. Real,
     cross-checked, not a guess.
 
-    Groups by real price alone -- NOT by Etix's priceCode/seat section.
-    On a reserved-seating show (Crystal Bowersox, Cla-Zel) grouping by
-    section produced 11 rows, several of them the same price under
-    different section names (Floor A/B/C/D, several table tiers) --
-    Broc: "no need to have it as section d row 1-4 $50," a settlement
-    tier is a price point, not a seat section. This also fixed a real
-    correctness bug along the way: a single priceCode isn't always one
-    uniform price ("Floor D seats" carried both $35 and $50 tickets under
-    the identical code), so the old code-based grouping understated real
-    revenue by hundreds of dollars once the sheet does price*sold; price-
-    only grouping can't have that problem since every group IS one price.
-    The label here is a plain "$X" -- pull_etix_ticket_tiers's caller (the
-    settlement editor) matches an incoming price against an EXISTING
-    tier's own price first, so a pre-priced "Advance" tier keeps its name
-    and just gets its sold count filled in; only a price with no matching
-    planned tier falls back to this plain label."""
+    Groups by (tier category, price) -- neither Etix's raw priceCode
+    alone nor price alone. Raw priceCode was too granular: on a real
+    reserved-seating show (Crystal Bowersox, Cla-Zel) it produced 11 rows
+    for what's really 3 kinds of seating (Floor/Table/Mezzanine) split
+    across sub-sections (Floor A/B/C/D) and price tweaks. Price alone was
+    tried next and was too coarse the other way -- Broc: "right now it is
+    just putting the price as the name... so we don't know what tier it
+    is" -- a bare "$50" doesn't say whether that's a floor seat or a
+    table. A tier category (see _tier_category) carries the price in its
+    label ONLY when that category actually has more than one real price
+    (e.g. "Floor $50" and "Floor $35"); a category with just one price
+    stays plain ("Advance", "Table") since the row's own Price column
+    already shows the number. pull_etix_ticket_tiers's caller (the
+    settlement editor) still matches an incoming row to an EXISTING tier
+    by price first, so a pre-priced "Advance" tier keeps its name and
+    just gets its sold count filled in."""
     token = _get_token()
     qs = urllib.parse.urlencode({"eventId": performance_id, "pageSize": 1000, "excludeVoidTickets": "true"})
     req = urllib.request.Request(
@@ -220,9 +249,18 @@ def get_price_breakdown(performance_id):
             continue
         for ticket in order.get("tickets", []):
             price = ticket.get("price")
-            entry = tiers.setdefault(price, {"label": _price_label(price), "price": price, "sold": 0})
+            category = _tier_category(ticket.get("priceCode"))
+            key = (category, price)
+            entry = tiers.setdefault(key, {"category": category, "price": price, "sold": 0})
             entry["sold"] += 1
-    return list(tiers.values())
+    categories_seen = {}
+    for category, _price in tiers:
+        categories_seen[category] = categories_seen.get(category, 0) + 1
+    result = []
+    for (category, price), entry in tiers.items():
+        label = f"{category} {_price_label(price)}" if categories_seen[category] > 1 else category
+        result.append({"label": label, "price": entry["price"], "sold": entry["sold"]})
+    return result
 
 
 def pull_and_store_snapshot(conn, event_id, venue_name, show_date, sale_date=None):
